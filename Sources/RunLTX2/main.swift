@@ -304,6 +304,21 @@ func audioDecodeGate() throws {
     if !pass { exit(1) }
 }
 
+/// Spatial-x2 upsampler parity: latent → 2×-spatial latent vs oracle golden (fp32).
+func upsamplerGate() throws {
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/upsampler"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/spatial_upscaler_x2_v1_1.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let up = try Upsampler.load(path: URL(fileURLWithPath: weightsPath))
+    let out = up(io["latent"]!)
+    eval(out)
+    let cos = cosine(out, io["out"]!), m = maxAbs(out, io["out"]!)
+    print(String(format: "[upsampler-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(out.shape)" as NSString, "\(io["out"]!.shape)" as NSString))
+    let pass = cos >= 0.999
+    print(pass ? "[upsampler-gate] PASS ✅" : "[upsampler-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -330,6 +345,8 @@ if args.contains("--connector-gate") {
     try vocoderGate()
 } else if args.contains("--audio-decode-gate") {
     try audioDecodeGate()
+} else if args.contains("--upsampler-gate") {
+    try upsamplerGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {
