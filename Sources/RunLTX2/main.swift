@@ -254,6 +254,21 @@ func e2eGate() throws {
     if !pass { exit(1) }
 }
 
+/// Audio VAE decode parity: audio latent → mel vs oracle golden (fp32).
+func audioVaeDecodeGate() throws {
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/audio_vae_decode"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dec = try AudioVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
+    let mel = dec.decode(io["latent"]!)
+    eval(mel)
+    let cos = cosine(mel, io["mel"]!), m = maxAbs(mel, io["mel"]!)
+    print(String(format: "[audio-vae-decode-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(mel.shape)" as NSString, "\(io["mel"]!.shape)" as NSString))
+    let pass = cos >= 0.999
+    print(pass ? "[audio-vae-decode-gate] PASS ✅" : "[audio-vae-decode-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -274,6 +289,8 @@ if args.contains("--connector-gate") {
     try vaeDecodeGate()
 } else if args.contains("--vae-encode-gate") {
     try vaeEncodeGate()
+} else if args.contains("--audio-vae-decode-gate") {
+    try audioVaeDecodeGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {
