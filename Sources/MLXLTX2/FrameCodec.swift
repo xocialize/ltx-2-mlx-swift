@@ -5,6 +5,7 @@
 
 import AVFoundation
 import CoreGraphics
+import CoreMedia
 import Foundation
 import MLX
 import MLXToolKit
@@ -46,9 +47,10 @@ private func pixelBuffer(rgb: [UInt8], width: Int, height: Int, pool: CVPixelBuf
     return buffer
 }
 
-/// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`.
+/// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`,
+/// optionally muxing a stereo audio track [1, 2, T_audio] in [-1, 1] at `audioSampleRate`.
 @InferenceActor
-func encodeMP4(frames: MLXArray, fps: Double) async throws -> Data {
+func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampleRate: Double = 48000) async throws -> Data {
     guard frames.ndim == 5, frames.dim(1) > 0 else {
         throw FrameCodecError.badFrames("expected [1,T,H,W,3], got \(frames.shape)")
     }
@@ -67,6 +69,17 @@ func encodeMP4(frames: MLXArray, fps: Double) async throws -> Data {
     ])
     guard writer.canAdd(input) else { throw FrameCodecError.writerSetup("cannot add input") }
     writer.add(input)
+
+    var audioInput: AVAssetWriterInput?
+    if audio != nil {
+        let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: audioSampleRate,
+            AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000,
+        ])
+        ai.expectsMediaDataInRealTime = false
+        if writer.canAdd(ai) { writer.add(ai); audioInput = ai }
+    }
+
     guard writer.startWriting() else {
         throw FrameCodecError.writerSetup(writer.error?.localizedDescription ?? "startWriting")
     }
@@ -83,9 +96,63 @@ func encodeMP4(frames: MLXArray, fps: Double) async throws -> Data {
         }
     }
     input.markAsFinished()
+
+    if let audioInput, let audio {
+        let buffer = try audioSampleBuffer(audio, sampleRate: audioSampleRate)
+        while !audioInput.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+        guard audioInput.append(buffer) else {
+            throw FrameCodecError.appendFailed("audio err=\(String(describing: writer.error))")
+        }
+        audioInput.markAsFinished()
+    }
+
     await writer.finishWriting()
     guard writer.status == .completed, FileManager.default.fileExists(atPath: url.path) else {
         throw FrameCodecError.writeIncomplete("status=\(writer.status.rawValue) err=\(String(describing: writer.error))")
     }
     return try Data(contentsOf: url)
+}
+
+/// Build an LPCM CMSampleBuffer from a stereo waveform [1, 2, T] in [-1, 1] (interleaved 16-bit).
+private func audioSampleBuffer(_ audio: MLXArray, sampleRate: Double) throws -> CMSampleBuffer {
+    let frames = audio.dim(2)
+    // (1,2,T) → (T,2) interleaved → int16 [2T]
+    let stereo = MLX.stacked([audio[0, 0, 0...], audio[0, 1, 0...]], axis: -1)  // (T,2)
+    let i16 = (clip(stereo, min: -1, max: 1) * Float(32767)).asType(.int16).reshaped(-1)
+    eval(i16)
+    let samples = i16.asArray(Int16.self)
+    let dataSize = samples.count * MemoryLayout<Int16>.size
+
+    var asbd = AudioStreamBasicDescription(
+        mSampleRate: sampleRate, mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+        mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
+        mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
+    var formatDesc: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &asbd,
+                                   layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+                                   extensions: nil, formatDescriptionOut: &formatDesc)
+
+    var blockBuffer: CMBlockBuffer?
+    CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil,
+                                       blockLength: dataSize, blockAllocator: kCFAllocatorDefault,
+                                       customBlockSource: nil, offsetToData: 0, dataLength: dataSize,
+                                       flags: 0, blockBufferOut: &blockBuffer)
+    try samples.withUnsafeBytes { raw in
+        let status = CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: blockBuffer!,
+                                                   offsetIntoDestination: 0, dataLength: dataSize)
+        guard status == kCMBlockBufferNoErr else { throw FrameCodecError.appendFailed("CMBlockBuffer \(status)") }
+    }
+
+    var sampleBuffer: CMSampleBuffer?
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
+        presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+    var sampleSize = 4
+    CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, dataReady: true,
+                         makeDataReadyCallback: nil, refcon: nil, formatDescription: formatDesc,
+                         sampleCount: CMItemCount(frames), sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                         sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize, sampleBufferOut: &sampleBuffer)
+    guard let buf = sampleBuffer else { throw FrameCodecError.appendFailed("CMSampleBufferCreate") }
+    return buf
 }

@@ -284,6 +284,26 @@ func vocoderGate() throws {
     if !pass { exit(1) }
 }
 
+/// Composed audio-decode parity: audio tokens (1,T,128) → unpatchify → AudioVAE → Vocoder → wav.
+/// Mirrors LTX2Pipeline.decodeAudio without loading the full pipeline.
+func audioDecodeGate() throws {
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/audio_decode"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let audioVAE = try AudioVAEDecoder.load(path: URL(fileURLWithPath: "\(base)/audio_vae.safetensors"))
+    let voc = try Vocoder.load(path: URL(fileURLWithPath: "\(base)/vocoder.safetensors"))
+    let tokens = io["tokens"]!
+    let B = tokens.dim(0), T = tokens.dim(1)
+    let audioLatent = tokens.reshaped(B, T, 8, 16).transposed(0, 2, 1, 3)  // AudioPatchifier.unpatchify
+    let wav = voc(audioVAE.decode(audioLatent))
+    eval(wav)
+    let cos = cosine(wav, io["wav"]!), m = maxAbs(wav, io["wav"]!)
+    print(String(format: "[audio-decode-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(wav.shape)" as NSString, "\(io["wav"]!.shape)" as NSString))
+    let pass = cos >= 0.999
+    print(pass ? "[audio-decode-gate] PASS ✅" : "[audio-decode-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -308,6 +328,8 @@ if args.contains("--connector-gate") {
     try audioVaeDecodeGate()
 } else if args.contains("--vocoder-gate") {
     try vocoderGate()
+} else if args.contains("--audio-decode-gate") {
+    try audioDecodeGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {

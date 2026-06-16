@@ -5,9 +5,10 @@ import MLXToolKit
 
 /// MLXEngine package: Lightricks **LTX-2.3** distilled, exposing the canonical
 /// `textToVideo` surface. One loaded pipeline = Gemma-3 text encoder + connector +
-/// joint-AV DiT + 128-ch video VAE decoder (all parity-validated vs the ltx-2-mlx
-/// oracle). Single-stage distilled t2v; video-only output for now (audio VAE/vocoder +
-/// the two-stage upsampler are follow-ups).
+/// joint-AV DiT + 128-ch video VAE + audio VAE + BigVGAN/BWE vocoder (all parity-
+/// validated vs the ltx-2-mlx oracle). Produces **synchronized audio-video** (the
+/// joint DiT denoises both; audio is muxed into the MP4 when the audio_vae/vocoder
+/// weights are present). Single-stage distilled; the two-stage upsampler is a follow-up.
 ///
 /// ⚠️ EVAL-ONLY: the weights ship under the **LTX-2 Community License** (non-permissive:
 /// §2 revenue gate, §3 derivative-copyleft, §A.20 non-compete). The manifest declares it
@@ -52,9 +53,9 @@ public final class MLXLTX2Package: ModelPackage {
                 T2VContract.descriptor(
                     name: "ltx-2.3-t2v",
                     summary: "Lightricks LTX-2.3 distilled text-to-video (MLX, eval-only). "
-                        + "Joint audio-video DiT with a Gemma-3 text encoder and a 128-ch video "
-                        + "VAE; single-stage distilled (8 steps). Video-only output currently "
-                        + "(synchronized audio decode is a follow-up).")
+                        + "Joint audio-video DiT with a Gemma-3 text encoder, a 128-ch video VAE, "
+                        + "and a BigVGAN/BWE audio vocoder; single-stage distilled (8 steps). "
+                        + "Output is an MP4 with synchronized 48kHz stereo audio.")
             ]
         )
     }
@@ -85,7 +86,7 @@ public final class MLXLTX2Package: ModelPackage {
         }
         try Task.checkCancellation()
         let fps = t2v.fps ?? 24
-        let pixels = pipeline.t2v(
+        let out = pipeline.t2v(
             prompt: t2v.prompt,
             height: t2v.height ?? 256,
             width: t2v.width ?? 256,
@@ -94,8 +95,9 @@ public final class MLXLTX2Package: ModelPackage {
             seed: t2v.seed)
         try Task.checkCancellation()
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).
-        let framesCL = pixels.transposed(0, 2, 3, 4, 1)
-        let mp4 = try await encodeMP4(frames: framesCL, fps: fps)
+        // out.audio is 48kHz stereo (1,2,T) when the audio components are present → muxed.
+        let framesCL = out.video.transposed(0, 2, 3, 4, 1)
+        let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: out.audio, audioSampleRate: 48000)
         return T2VResponse(video: Video(
             format: .mp4, data: mp4,
             durationSeconds: Double(framesCL.dim(1)) / fps, frameRate: fps))

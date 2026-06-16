@@ -15,31 +15,59 @@ public final class LTX2Pipeline {
     let connector: Connector
     let dit: DiT
     let vae: VideoVAEDecoder
+    let audioVAE: AudioVAEDecoder?
+    let vocoder: Vocoder?
 
-    init(gemma: GemmaEncoder, connector: Connector, dit: DiT, vae: VideoVAEDecoder) {
+    init(gemma: GemmaEncoder, connector: Connector, dit: DiT, vae: VideoVAEDecoder,
+         audioVAE: AudioVAEDecoder?, vocoder: Vocoder?) {
         self.gemma = gemma
         self.connector = connector
         self.dit = dit
         self.vae = vae
+        self.audioVAE = audioVAE
+        self.vocoder = vocoder
+    }
+
+    /// Output of a t2v run: video pixels (1,3,F,H,W) and optional 48kHz stereo audio (1,2,T).
+    public struct Output {
+        public let video: MLXArray
+        public let audio: MLXArray?
     }
 
     /// Load all components. `ltxDir` holds connector/transformer-distilled/vae_decoder
-    /// safetensors; `gemmaDir` is the Gemma-3 MLX weights directory.
+    /// (+ optional audio_vae/vocoder) safetensors; `gemmaDir` is the Gemma-3 weights dir.
+    /// Audio decode is enabled when both audio_vae.safetensors and vocoder.safetensors exist.
     public static func load(ltxDir: URL, gemmaDir: URL) async throws -> LTX2Pipeline {
         let gemma = try await GemmaEncoder.load(directory: gemmaDir)
         let connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
         let dit = try DiT.load(weightsPath: ltxDir.appending(path: "transformer-distilled.safetensors"),
                                config: DiTConfig(), computeDtype: .bfloat16)
         let vae = try VideoVAEDecoder.load(path: ltxDir.appending(path: "vae_decoder.safetensors"))
-        return LTX2Pipeline(gemma: gemma, connector: connector, dit: dit, vae: vae)
+        let audioPath = ltxDir.appending(path: "audio_vae.safetensors")
+        let vocPath = ltxDir.appending(path: "vocoder.safetensors")
+        let fm = FileManager.default
+        let audioVAE = fm.fileExists(atPath: audioPath.path) ? try AudioVAEDecoder.load(path: audioPath) : nil
+        let vocoder = fm.fileExists(atPath: vocPath.path) ? try Vocoder.load(path: vocPath) : nil
+        return LTX2Pipeline(gemma: gemma, connector: connector, dit: dit, vae: vae,
+                            audioVAE: audioVAE, vocoder: vocoder)
     }
 
-    /// Text-to-video. Returns pixels (1, 3, F_out, H, W) in [-1, 1] (channels-first).
-    /// `onStep` is invoked per denoise step for cancellation.
+    /// Decode a denoised audio latent (1, T, 128) → 48kHz stereo waveform (1, 2, T_48k).
+    /// AudioPatchifier.unpatchify: (B,T,128) → (B,8,T,16), then Audio VAE → mel → vocoder+BWE.
+    func decodeAudio(_ audioTokens: MLXArray) -> MLXArray? {
+        guard let audioVAE, let vocoder else { return nil }
+        let B = audioTokens.dim(0), T = audioTokens.dim(1)
+        let audioLatent = audioTokens.reshaped(B, T, 8, 16).transposed(0, 2, 1, 3)  // (B,8,T,16)
+        let mel = audioVAE.decode(audioLatent)                                       // (B,2,T',64)
+        return vocoder(mel)                                                          // (B,2,T_48k)
+    }
+
+    /// Text-to-video(+audio). Returns video pixels (1,3,F,H,W) in [-1,1] (channels-first)
+    /// and optional 48kHz stereo audio.
     public func t2v(
         prompt: String, height: Int = 256, width: Int = 256, numFrames: Int = 9,
         fps: Double = 24, seed: UInt64? = nil
-    ) -> MLXArray {
+    ) -> Output {
         // 1. Text encode (Gemma → connector)
         let (ids, mask) = gemma.tokenize(prompt)
         let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
@@ -57,14 +85,18 @@ public final class LTX2Pipeline {
         let videoPositions = Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps))
         let audioPositions = Positions.audio(tokens: audioT)
 
-        // 4. Distilled Euler denoise
-        let (vfinal, _) = DenoiseLoop.run(
+        // 4. Distilled Euler denoise (joint video + audio)
+        let (vfinal, afinal) = DenoiseLoop.run(
             dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions)
 
-        // 5. Unpatchify → (1, 128, F, H, W) → VAE decode → pixels
+        // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
-        return vae.decode(vspatial)
+        let pixels = vae.decode(vspatial)
+
+        // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
+        let waveform = decodeAudio(afinal)
+        return Output(video: pixels, audio: waveform)
     }
 }
