@@ -319,6 +319,22 @@ func upsamplerGate() throws {
     if !pass { exit(1) }
 }
 
+/// Two-stage upscale-step parity: half-res latent → denorm → upsample → renorm vs oracle.
+func upscaleStepGate() throws {
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/upscale_step"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: "\(base)/vae_encoder.safetensors"))
+    let up = try Upsampler.load(path: URL(fileURLWithPath: "\(base)/spatial_upscaler_x2_v1_1.safetensors"))
+    let renorm = enc.normalizeLatent(up(enc.denormalizeLatent(io["half"]!)))
+    eval(renorm)
+    let cos = cosine(renorm, io["renorm"]!), m = maxAbs(renorm, io["renorm"]!)
+    print(String(format: "[upscale-step-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(renorm.shape)" as NSString, "\(io["renorm"]!.shape)" as NSString))
+    let pass = cos >= 0.999
+    print(pass ? "[upscale-step-gate] PASS ✅" : "[upscale-step-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -347,6 +363,8 @@ if args.contains("--connector-gate") {
     try audioDecodeGate()
 } else if args.contains("--upsampler-gate") {
     try upsamplerGate()
+} else if args.contains("--upscale-step-gate") {
+    try upscaleStepGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {

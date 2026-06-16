@@ -86,13 +86,12 @@ public final class MLXLTX2Package: ModelPackage {
         }
         try Task.checkCancellation()
         let fps = t2v.fps ?? 24
-        let out = pipeline.t2v(
-            prompt: t2v.prompt,
-            height: t2v.height ?? 256,
-            width: t2v.width ?? 256,
-            numFrames: t2v.numFrames ?? 9,
-            fps: fps,
-            seed: t2v.seed)
+        let h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
+        // Prefer the two-stage distilled path (half-res → upsample → refine) when the
+        // encoder + upsampler are present; else single-stage at target resolution.
+        let out = pipeline.supportsTwoStage
+            ? pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            : pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         try Task.checkCancellation()
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).
         // out.audio is 48kHz stereo (1,2,T) when the audio components are present → muxed.

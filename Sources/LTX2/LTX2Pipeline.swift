@@ -17,16 +17,24 @@ public final class LTX2Pipeline {
     let vae: VideoVAEDecoder
     let audioVAE: AudioVAEDecoder?
     let vocoder: Vocoder?
+    let vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats
+    let upsampler: Upsampler?          // spatial_x2
 
     init(gemma: GemmaEncoder, connector: Connector, dit: DiT, vae: VideoVAEDecoder,
-         audioVAE: AudioVAEDecoder?, vocoder: Vocoder?) {
+         audioVAE: AudioVAEDecoder?, vocoder: Vocoder?,
+         vaeEncoder: VideoVAEEncoder?, upsampler: Upsampler?) {
         self.gemma = gemma
         self.connector = connector
         self.dit = dit
         self.vae = vae
         self.audioVAE = audioVAE
         self.vocoder = vocoder
+        self.vaeEncoder = vaeEncoder
+        self.upsampler = upsampler
     }
+
+    /// True when the two-stage (half-res → upsample → refine) path is available.
+    public var supportsTwoStage: Bool { vaeEncoder != nil && upsampler != nil }
 
     /// Output of a t2v run: video pixels (1,3,F,H,W) and optional 48kHz stereo audio (1,2,T).
     public struct Output {
@@ -48,8 +56,27 @@ public final class LTX2Pipeline {
         let fm = FileManager.default
         let audioVAE = fm.fileExists(atPath: audioPath.path) ? try AudioVAEDecoder.load(path: audioPath) : nil
         let vocoder = fm.fileExists(atPath: vocPath.path) ? try Vocoder.load(path: vocPath) : nil
+        let encPath = ltxDir.appending(path: "vae_encoder.safetensors")
+        let upPath = ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors")
+        let vaeEncoder = fm.fileExists(atPath: encPath.path) ? try VideoVAEEncoder.load(path: encPath) : nil
+        let upsampler = fm.fileExists(atPath: upPath.path) ? try Upsampler.load(path: upPath) : nil
         return LTX2Pipeline(gemma: gemma, connector: connector, dit: dit, vae: vae,
-                            audioVAE: audioVAE, vocoder: vocoder)
+                            audioVAE: audioVAE, vocoder: vocoder,
+                            vaeEncoder: vaeEncoder, upsampler: upsampler)
+    }
+
+    /// Flow-matching noised init: noise·σ + clean·(1-σ). Stage-1 (clean=0,σ=1)=noise;
+    /// stage-2 starts from the upscaled latent at σ₀.
+    static func noiseInit(clean: MLXArray, sigma: Float, shape: [Int], seed: UInt64?) -> MLXArray {
+        if let seed { MLXRandom.seed(seed) }
+        let noise = MLXRandom.normal(shape)
+        return noise * sigma + clean * (1.0 - sigma)
+    }
+
+    /// Re-patchify a (1,128,F,H,W) latent → tokens (1, F·H·W, 128).
+    static func patchify(_ latent: MLXArray) -> MLXArray {
+        let B = latent.dim(0), C = latent.dim(1), F = latent.dim(2), H = latent.dim(3), W = latent.dim(4)
+        return latent.transposed(0, 2, 3, 4, 1).reshaped(B, F * H * W, C)
     }
 
     /// Decode a denoised audio latent (1, T, 128) → 48kHz stereo waveform (1, 2, T_48k).
@@ -98,5 +125,54 @@ public final class LTX2Pipeline {
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
         return Output(video: pixels, audio: waveform)
+    }
+
+    /// Two-stage distilled t2v (the `generate --distilled` flow): stage-1 denoise at
+    /// HALF resolution → unpatchify → encoder-stats denorm → upsampler 2× → renorm →
+    /// re-patchify → stage-2 refine at full resolution. Requires `supportsTwoStage`.
+    public func t2vTwoStage(
+        prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
+        fps: Double = 24, seed: UInt64? = nil
+    ) -> Output {
+        guard let vaeEncoder, let upsampler else { return t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed) }
+
+        let (ids, mask) = gemma.tokenize(prompt)
+        let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let (videoEmbeds, audioEmbeds) = connector(hiddenStates: states, mask: mask)
+
+        let fLat = (numFrames + 7) / 8
+        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
+        let s2 = Positions.stage2Sigmas
+        let sigma0 = s2[0]
+
+        // --- Stage 1: half resolution ---
+        let hHalf = height / 2, wHalf = width / 2
+        let hLat1 = hHalf / 32, wLat1 = wHalf / 32, nv1 = fLat * hLat1 * wLat1
+        let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
+        let a1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, audioT, 128]), sigma: 1.0, shape: [1, audioT, 128], seed: seed.map { $0 &+ 1 })
+        let (v1f, a1f) = DenoiseLoop.run(
+            dit: dit, videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
+            videoText: videoEmbeds, audioText: audioEmbeds,
+            videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
+            audioPositions: Positions.audio(tokens: audioT))
+
+        // --- Upscale 2× in un-normalized latent space ---
+        let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
+        let upscaled = vaeEncoder.normalizeLatent(upsampler(vaeEncoder.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
+        eval(upscaled)
+        let hLat2 = hLat1 * 2, wLat2 = wLat1 * 2
+        let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F*2h1*2w1, 128)
+
+        // --- Stage 2: full resolution refine (init = noise·σ₀ + upscaled·(1-σ₀)) ---
+        let v2init = LTX2Pipeline.noiseInit(clean: v2tokens, sigma: sigma0, shape: v2tokens.shape, seed: seed.map { $0 &+ 2 })
+        let a2init = LTX2Pipeline.noiseInit(clean: a1f, sigma: sigma0, shape: a1f.shape, seed: seed.map { $0 &+ 2 })
+        let (v2f, a2f) = DenoiseLoop.run(
+            dit: dit, videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
+            videoText: videoEmbeds, audioText: audioEmbeds,
+            videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
+            audioPositions: Positions.audio(tokens: audioT))
+
+        let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
+        return Output(video: vae.decode(vspatial), audio: decodeAudio(a2f))
     }
 }

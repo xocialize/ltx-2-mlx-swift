@@ -15,10 +15,12 @@ public enum Positions {
     static let audioSampleRate: Float = 16000
     static let audioLatentsPerSecond: Float = 16000.0 / 160.0 / 4.0  // 25
 
-    /// Distilled Euler sigma schedule (includes terminal 0.0).
+    /// Distilled Euler sigma schedule (stage 1; includes terminal 0.0).
     public static let distilledSigmas: [Float] = [
         1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875, 0.0,
     ]
+    /// Stage-2 refine sigma schedule (two-stage distilled; 3 steps).
+    public static let stage2Sigmas: [Float] = [0.909375, 0.725, 0.421875, 0.0]
 
     public static func audioTokenCount(numFrames: Int, fps: Double) -> Int {
         Int((Double(numFrames) / fps * Double(audioLatentsPerSecond)).rounded())

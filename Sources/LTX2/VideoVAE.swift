@@ -211,6 +211,24 @@ public struct VideoVAEEncoder {
         return y
     }
 
+    /// Reverse per-channel normalization on a (B,C,F,H,W) latent → (B,C,F,H,W).
+    /// Used by the two-stage upsampler: the neural upsampler operates in
+    /// un-normalized latent space (denormalize → upsample → normalize).
+    public func denormalizeLatent(_ latent: MLXArray) -> MLXArray {
+        let x = latent.asType(.float32).transposed(0, 2, 3, 4, 1)  // NHWC
+        let mean = w["per_channel_statistics._mean_of_means"]!.reshaped(1, 1, 1, 1, -1)
+        let std = w["per_channel_statistics._std_of_means"]!.reshaped(1, 1, 1, 1, -1)
+        return (x * std + mean).transposed(0, 4, 1, 2, 3)
+    }
+
+    /// Apply per-channel normalization on a (B,C,F,H,W) latent → (B,C,F,H,W).
+    public func normalizeLatent(_ latent: MLXArray) -> MLXArray {
+        let x = latent.asType(.float32).transposed(0, 2, 3, 4, 1)  // NHWC
+        let mean = w["per_channel_statistics._mean_of_means"]!.reshaped(1, 1, 1, 1, -1)
+        let std = w["per_channel_statistics._std_of_means"]!.reshaped(1, 1, 1, 1, -1)
+        return ((x - mean) / std).transposed(0, 4, 1, 2, 3)
+    }
+
     private func normalize(_ x: MLXArray) -> MLXArray {
         let mean = w["per_channel_statistics._mean_of_means"]!.reshaped(1, 1, 1, 1, -1)
         let std = w["per_channel_statistics._std_of_means"]!.reshaped(1, 1, 1, 1, -1)
