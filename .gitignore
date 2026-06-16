@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+
+# Eval goldens: regenerable from the oracle via parity/dump_text_encode_goldens.py.
+# Large (~759MB) AND they are LTX-2 "Derivatives" — never distributed (license §3).
+parity/goldens/
