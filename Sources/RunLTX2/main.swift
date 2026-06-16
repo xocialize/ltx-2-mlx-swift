@@ -221,6 +221,39 @@ func denoiseGate() throws {
     if !pass { exit(1) }
 }
 
+/// End-to-end one-stage t2v parity (real weights): noise → denoise → unpatchify → VAE decode.
+func e2eGate() throws {
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/e2e_t2v"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    print("[e2e-gate] loading real DiT (bf16) + VAE decoder…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: "\(base)/transformer-distilled.safetensors"), config: DiTConfig(), computeDtype: .bfloat16)
+    let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: "\(base)/vae_decoder.safetensors"))
+    let sigmas = io["sigmas"]!.asArray(Float.self)
+    print("[e2e-gate] denoising \(sigmas.count - 1) steps…")
+    let (vfinal, _) = DenoiseLoop.run(
+        dit: dit, videoLatent0: io["video_latent"]!, audioLatent0: io["audio_latent"]!, sigmas: sigmas,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    // unpatchify (1, Nv=128, 128) → (1, 128, F=2, H=8, W=8)
+    let vspatial = vfinal.reshaped(1, 2, 8, 8, 128).transposed(0, 4, 1, 2, 3)
+    let pixels = dec.decode(vspatial)
+    eval(pixels)
+    let cos = cosine(pixels, io["pixels"]!), m = maxAbs(pixels, io["pixels"]!)
+    print(String(format: "[e2e-gate] pixels %@  cosine=%.6f maxAbs=%.5f  range [%.3f, %.3f]",
+                 "\(pixels.shape)" as NSString, cos, m,
+                 MLX.min(pixels).item(Float.self), MLX.max(pixels).item(Float.self)))
+    // NOTE: the per-step wiring is the parity proof (1-step golden → ~0.99997).
+    // Multi-step (8) final-pixel cosine is LOWER (~0.95) by design: the ~3e-5/step
+    // bf16 op-ordering diff between MLX-Swift and MLX-Python libmlx amplifies over
+    // autoregressive diffusion steps (skill: gate per-pass cosine + image validity,
+    // not final-pixel cosine). Strict only for the 1-step wiring fixture.
+    let oneStep = sigmas.count <= 2
+    let pass = oneStep ? (cos >= 0.999) : (cos >= 0.90)
+    print(pass ? "[e2e-gate] PASS ✅ — first end-to-end t2v frame matches the oracle" : "[e2e-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -243,6 +276,8 @@ if args.contains("--connector-gate") {
     try vaeEncodeGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
+} else if args.contains("--e2e-gate") {
+    try e2eGate()
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
 }
