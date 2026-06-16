@@ -64,7 +64,9 @@ with group-mean skip) → `PixelNorm→SiLU→conv_out (1024→129)` → take fi
 - [x] **decoder (latent→pixels) — BIT-EXACT** (`RunLTX2 --vae-decode-gate`, cosine 1.000000,
       maxAbs 1e-5 fp32). latent (1,128,2,4,4) → pixels (1,3,9,128,128) confirms 8×temporal/32×spatial.
       All pixel-shuffle channel orders + first-frame drops + PixelNorm + non-causal pad correct.
-- [ ] encoder parity gate (needed for i2v + upsampler denorm/renorm)
+- [x] **encoder (pixels→latent) — BIT-EXACT** (`RunLTX2 --vae-encode-gate`, cosine 1.000000,
+      maxAbs 1e-5 fp32). pixels (1,3,9,128,128) → latent (1,128,2,4,4). CAUSAL (replicate first
+      frame); SpaceToDepthDownsample group-mean skip; patchify(4×4) channel order all correct.
 - [ ] streaming / temporal tiling (LTX2_VAE_DECODE_BUDGET_GB) — defer; bit-exact non-tiled first
 
 ## Wan-dev takeaways (so far)

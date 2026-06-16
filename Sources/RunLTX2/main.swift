@@ -183,6 +183,21 @@ func vaeDecodeGate() throws {
     if !pass { exit(1) }
 }
 
+/// Video VAE encode parity: pixels → latent vs oracle golden (fp32).
+func vaeEncodeGate() throws {
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/vae_encode"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_encoder.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
+    let latent = enc.encode(io["pixels"]!)
+    eval(latent)
+    let cos = cosine(latent, io["latent"]!), m = maxAbs(latent, io["latent"]!)
+    print(String(format: "[vae-encode-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(latent.shape)" as NSString, "\(io["latent"]!.shape)" as NSString))
+    let pass = cos >= 0.999
+    print(pass ? "[vae-encode-gate] PASS ✅" : "[vae-encode-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -201,6 +216,8 @@ if args.contains("--connector-gate") {
     try ditFullGate()
 } else if args.contains("--vae-decode-gate") {
     try vaeDecodeGate()
+} else if args.contains("--vae-encode-gate") {
+    try vaeEncodeGate()
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
 }
