@@ -24,6 +24,8 @@ let package = Package(
     ],
     products: [
         .library(name: "LTX2", targets: ["LTX2"]),
+        // The MLXEngine wrapper: a conformant `ModelPackage` over the LTX2 pipeline.
+        .library(name: "MLXLTX2", targets: ["MLXLTX2"]),
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMinor(from: "0.31.3")),
@@ -33,6 +35,8 @@ let package = Package(
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.2.1"),
+        // MLXEngine contract (MLXToolKit) for the wrapper target.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.4.0"),
     ],
     targets: [
         .target(
@@ -41,6 +45,7 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
                 // Gemma 3 text encoder (Path A reuse) + the allHiddenStates seam.
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
@@ -50,6 +55,15 @@ let package = Package(
             ],
             path: "Sources/LTX2"
         ),
+        .target(
+            name: "MLXLTX2",
+            dependencies: [
+                "LTX2",
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+            ],
+            path: "Sources/MLXLTX2"
+        ),
         .executableTarget(
             name: "RunLTX2",
             dependencies: [
@@ -57,6 +71,14 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
             ],
             path: "Sources/RunLTX2"
+        ),
+        .testTarget(
+            name: "MLXLTX2Tests",
+            dependencies: [
+                "MLXLTX2",
+                .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+            ],
+            path: "Tests/MLXLTX2Tests"
         ),
     ]
 )

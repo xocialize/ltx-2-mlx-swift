@@ -48,7 +48,17 @@ public struct GemmaEncoder {
         return model.allHiddenStates(tokenIds.asType(.int32), mask: .array(mask))
     }
 
-    // NOTE: tokenize() (left-pad to maxLength, mirroring LTXVGemmaTokenizer) is
-    // deferred to the full text-encode pipeline — the parity gate feeds the
-    // oracle's golden token_ids directly to isolate the forward pass.
+    /// Tokenize + left-pad to `maxLength` (mirrors LTXVGemmaTokenizer, padding_side="left").
+    /// Returns (tokenIds (1,maxLength), attentionMask (1,maxLength)).
+    public func tokenize(_ text: String, maxLength: Int = 1024) -> (tokenIds: MLXArray, mask: MLXArray) {
+        let tk = context.tokenizer
+        var tokens = tk.encode(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        if tokens.count > maxLength { tokens = Array(tokens.suffix(maxLength)) }
+        let pad = maxLength - tokens.count
+        let padToken = tk.unknownTokenId ?? 0
+        let ids = Array(repeating: padToken, count: pad) + tokens
+        let m = Array(repeating: 0, count: pad) + Array(repeating: 1, count: tokens.count)
+        return (MLXArray(ids.map { Int32($0) }).reshaped(1, maxLength),
+                MLXArray(m.map { Int32($0) }).reshaped(1, maxLength))
+    }
 }
