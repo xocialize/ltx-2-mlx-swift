@@ -114,6 +114,39 @@ func textEncodeGate(goldensPath: String, gemmaDir: String, connectorPath: String
     if !pass { exit(1) }
 }
 
+func tinyDiTConfig() -> DiTConfig {
+    var c = DiTConfig()
+    c.numLayers = 2
+    c.videoDim = 64; c.videoNumHeads = 2; c.videoHeadDim = 32
+    c.audioDim = 32; c.audioNumHeads = 2; c.audioHeadDim = 16
+    c.avCrossNumHeads = 2; c.avCrossHeadDim = 16
+    c.videoPatchChannels = 8; c.audioPatchChannels = 8
+    c.ffMult = 2.0; c.timestepEmbeddingDim = 32
+    c.timestepScaleMultiplier = 1000.0; c.avCaTimestepScaleMultiplier = 1000.0
+    return c
+}
+
+/// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
+func ditTinyGate() throws {
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_tiny"
+    let weights = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/weights.safetensors"))
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    print("[dit-tiny-gate] \(weights.count) weight tensors")
+    let dit = DiT(weights: weights, config: tinyDiTConfig())
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    eval(video, audio)
+    let vCos = cosine(video, io["video_v"]!), vMax = maxAbs(video, io["video_v"]!)
+    let aCos = cosine(audio, io["audio_v"]!), aMax = maxAbs(audio, io["audio_v"]!)
+    print(String(format: "[dit-tiny-gate] VIDEO cosine=%.6f maxAbs=%.5f  shape %@ vs %@", vCos, vMax, "\(video.shape)" as NSString, "\(io["video_v"]!.shape)" as NSString))
+    print(String(format: "[dit-tiny-gate] AUDIO cosine=%.6f maxAbs=%.5f", aCos, aMax))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[dit-tiny-gate] PASS ✅" : "[dit-tiny-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -126,6 +159,8 @@ if args.contains("--connector-gate") {
     try await gemmaGate(goldensPath: goldens, gemmaDir: gemmaDir)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--dit-tiny-gate") {
+    try ditTinyGate()
 } else {
-    print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate  [goldens.safetensors] [path]")
+    print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
 }
