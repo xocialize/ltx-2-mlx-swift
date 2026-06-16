@@ -33,18 +33,23 @@ public struct DiTConfig {
 public struct DiT {
     let w: [String: MLXArray]
     let cfg: DiTConfig
+    let dtype: DType
 
-    public init(weights: [String: MLXArray], config: DiTConfig) {
-        // fp32 compute (parity gate vs the LTX2_DIT_FP32 golden). The full-scale
-        // tier will switch to bf16/quant to match the production oracle dtype.
+    /// - computeDtype: fp32 for the tiny gate (vs LTX2_DIT_FP32 golden); bf16 for
+    ///   full-scale real weights (matches the production oracle; 35GB stays 35GB).
+    public init(weights: [String: MLXArray], config: DiTConfig, computeDtype: DType = .float32) {
         var m: [String: MLXArray] = [:]
-        for (k, v) in weights { m[k] = v.asType(.float32) }
+        for (k, v) in weights {
+            let key = k.hasPrefix("transformer.") ? String(k.dropFirst("transformer.".count)) : k
+            m[key] = v.asType(computeDtype)
+        }
         self.w = m
         self.cfg = config
+        self.dtype = computeDtype
     }
 
-    public static func load(weightsPath: URL, config: DiTConfig) throws -> DiT {
-        DiT(weights: try MLX.loadArrays(url: weightsPath), config: config)
+    public static func load(weightsPath: URL, config: DiTConfig, computeDtype: DType = .float32) throws -> DiT {
+        DiT(weights: try MLX.loadArrays(url: weightsPath), config: config, computeDtype: computeDtype)
     }
 
     // Per-block conditioning, computed once in the prelude.
@@ -63,8 +68,8 @@ public struct DiT {
     ) -> (video: MLXArray, audio: MLXArray) {
         let vd = cfg.videoDim, ad = cfg.audioDim, tED = cfg.timestepEmbeddingDim
 
-        var videoHidden = dense(videoLatent.asType(.float32), "patchify_proj")
-        var audioHidden = dense(audioLatent.asType(.float32), "audio_patchify_proj")
+        var videoHidden = dense(videoLatent.asType(dtype), "patchify_proj")
+        var audioHidden = dense(audioLatent.asType(dtype), "audio_patchify_proj")
 
         let t = sigma.asType(.float32)
         let tEmb = timestepEmbedding(t * cfg.timestepScaleMultiplier, tED)

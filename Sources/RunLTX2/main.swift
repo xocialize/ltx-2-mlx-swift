@@ -147,6 +147,27 @@ func ditTinyGate() throws {
     if !pass { exit(1) }
 }
 
+/// Full-scale DiT parity: real distilled transformer (bf16) vs oracle goldens.
+func ditFullGate() throws {
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_full"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    print("[dit-full-gate] loading real distilled transformer (bf16)…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: weightsPath), config: DiTConfig(), computeDtype: .bfloat16)
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    eval(video, audio)
+    let vCos = cosine(video, io["video_v"]!), vMax = maxAbs(video, io["video_v"]!)
+    let aCos = cosine(audio, io["audio_v"]!), aMax = maxAbs(audio, io["audio_v"]!)
+    print(String(format: "[dit-full-gate] VIDEO cosine=%.6f maxAbs=%.4f  shape %@", vCos, vMax, "\(video.shape)" as NSString))
+    print(String(format: "[dit-full-gate] AUDIO cosine=%.6f maxAbs=%.4f  shape %@", aCos, aMax, "\(audio.shape)" as NSString))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[dit-full-gate] PASS ✅" : "[dit-full-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -161,6 +182,8 @@ if args.contains("--connector-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
 } else if args.contains("--dit-tiny-gate") {
     try ditTinyGate()
+} else if args.contains("--dit-full-gate") {
+    try ditFullGate()
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
 }
