@@ -198,6 +198,29 @@ func vaeEncodeGate() throws {
     if !pass { exit(1) }
 }
 
+/// Distilled denoise-loop parity (tiny scale): reuse the dit_tiny weights, run the
+/// Euler loop over a short sigma schedule, compare final latents to the oracle.
+func denoiseGate() throws {
+    let tinyW = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_tiny/weights.safetensors"
+    let dir = "/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_denoise"
+    let weights = try MLX.loadArrays(url: URL(fileURLWithPath: tinyW))
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dit = DiT(weights: weights, config: tinyDiTConfig())
+    let sigmas = io["sigmas"]!.asArray(Float.self)
+    let (video, audio) = DenoiseLoop.run(
+        dit: dit, videoLatent0: io["video_latent"]!, audioLatent0: io["audio_latent"]!, sigmas: sigmas,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    eval(video, audio)
+    let vCos = cosine(video, io["video_final"]!), vMax = maxAbs(video, io["video_final"]!)
+    let aCos = cosine(audio, io["audio_final"]!), aMax = maxAbs(audio, io["audio_final"]!)
+    print(String(format: "[denoise-gate] sigmas=%@", "\(sigmas)" as NSString))
+    print(String(format: "[denoise-gate] VIDEO cosine=%.6f maxAbs=%.5f  AUDIO cosine=%.6f maxAbs=%.5f", vCos, vMax, aCos, aMax))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[denoise-gate] PASS ✅" : "[denoise-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -218,6 +241,8 @@ if args.contains("--connector-gate") {
     try vaeDecodeGate()
 } else if args.contains("--vae-encode-gate") {
     try vaeEncodeGate()
+} else if args.contains("--denoise-gate") {
+    try denoiseGate()
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
 }
