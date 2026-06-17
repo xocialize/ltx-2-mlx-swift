@@ -5,8 +5,8 @@ Validates the new numerical composition in LTX2Pipeline.t2vTwoStage:
 vae_encoder.denormalize_latent → LatentUpsampler(2×) → vae_encoder.normalize_latent.
 
 Run in the oracle uv env:
-    cd ~/Development/ltx-2-mlx && \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_upscale_step_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_upscale_step_goldens.py
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
 MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
-OUT = Path("/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/upscale_step")
+OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/upscale_step")
 F, H, W = 2, 4, 4
 
 

@@ -8,8 +8,8 @@ inputs + the final denoised latents. Validates X0Model + euler_step + sigma
 pairing, independent of weights (the DiT is already gated).
 
 Run in the oracle uv env (LTX2_DIT_FP32 forces fp32 to match the fp32 Swift DiT):
-    cd ~/Development/ltx-2-mlx && LTX2_DIT_FP32=1 \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_denoise_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && LTX2_DIT_FP32=1 \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_denoise_goldens.py
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from ltx_core_mlx.conditioning.types.latent_cond import LatentState
 from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig, X0Model
 from ltx_pipelines_mlx.utils.samplers import denoise_loop
 
-OUT = Path("/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_denoise")
+OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_denoise")
 
 CFG = LTXModelConfig(
     num_layers=2,

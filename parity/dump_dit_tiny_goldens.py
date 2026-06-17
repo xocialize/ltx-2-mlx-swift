@@ -10,8 +10,8 @@ Validates the DiT forward MATH without the 35GB transformer download. Full-scale
 parity (real weights) follows once the transformer lands.
 
 Run in the oracle uv env:
-    cd ~/Development/ltx-2-mlx && \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_dit_tiny_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_dit_tiny_goldens.py
 """
 
 from __future__ import annotations

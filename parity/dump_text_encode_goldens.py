@@ -7,8 +7,8 @@ uses (utils/blocks.PromptEncoder) so there is no divergence between this
 fixture and production inference.
 
 Run inside the oracle uv env:
-    cd ~/Development/ltx-2-mlx && \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_text_encode_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_text_encode_goldens.py
 
 Outputs .npy goldens under ../goldens/text_encode/:
     token_ids.npy            (1, 1024)        int

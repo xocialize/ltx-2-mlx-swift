@@ -2,8 +2,8 @@
 """Vocoder+BWE parity fixture: mel → 48kHz stereo waveform (fp32).
 
 Run in the oracle uv env:
-    cd ~/Development/ltx-2-mlx && \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_vocoder_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_vocoder_goldens.py
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from ltx_core_mlx.model.audio_vae.bwe import VocoderWithBWE
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
 MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
-OUT = Path("/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/vocoder")
+OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vocoder")
 T = 16  # mel frames
 
 

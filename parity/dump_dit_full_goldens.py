@@ -11,8 +11,8 @@ the tiny gate can't cover — cf. the connector's 188160-projection bf16 NaN).
 Weights are NOT dumped (35GB — Swift loads transformer-distilled.safetensors直接).
 
 Run in the oracle uv env:
-    cd ~/Development/ltx-2-mlx && \
-        uv run python ~/Development/ltx-2-mlx-swift/parity/dump_dit_full_goldens.py
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_dit_full_goldens.py
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ from ltx_core_mlx.utils.positions import compute_video_positions, compute_audio_
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
 MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
-TE = Path("/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors")
-OUT = Path("/Users/dustinnielson/Development/ltx-2-mlx-swift/parity/goldens/dit_full")
+TE = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors")
+OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full")
 
 # Modest sizes to bound memory: 3 latent frames at 8x8 → Nv=192; Na=16.
 F, H, W, Na, FPS = 3, 8, 8, 16, 24.0
