@@ -83,17 +83,32 @@ public struct Connector {
     // MARK: - TextEncoderConnector.__call__
 
     private func connectorForward(_ stacked: MLXArray, mask: MLXArray) -> (video: MLXArray, audio: MLXArray) {
-        // TextEmbeddingProjection: rescale then project (separate video/audio)
+        // TextEmbeddingProjection: rescale then project (separate video/audio).
+        // The 188160-wide projection over all T tokens as ONE command buffer trips the macOS
+        // GPU watchdog on cold runs (AGENT_BRIDGE I5). Chunk over the token axis + eval per
+        // chunk so each command buffer is bounded (no effect on numerics — same matmul, sliced).
         let vScale = (Float(videoDim) / Float(embeddingDim)).squareRoot()
-        let video0 = dense(stacked * vScale,
-                           w["text_embedding_projection.video_aggregate_embed.weight"]!,
-                           w["text_embedding_projection.video_aggregate_embed.bias"])
         let aScale = (Float(audioDim) / Float(embeddingDim)).squareRoot()
-        let audio0 = dense(stacked * aScale,
-                           w["text_embedding_projection.audio_aggregate_embed.weight"]!,
-                           w["text_embedding_projection.audio_aggregate_embed.bias"])
+        let vW = w["text_embedding_projection.video_aggregate_embed.weight"]!
+        let vB = w["text_embedding_projection.video_aggregate_embed.bias"]
+        let aW = w["text_embedding_projection.audio_aggregate_embed.weight"]!
+        let aB = w["text_embedding_projection.audio_aggregate_embed.bias"]
 
-        eval(video0, audio0)  // _materialize (oracle): split the 188160-wide projection into its own buffer
+        let T = stacked.dim(1)
+        let chunk = 128
+        var vParts: [MLXArray] = [], aParts: [MLXArray] = []
+        var start = 0
+        while start < T {
+            let end = Swift.min(start + chunk, T)
+            let s = stacked[0..., start ..< end, 0...]
+            let v = dense(s * vScale, vW, vB)
+            let a = dense(s * aScale, aW, aB)
+            eval(v, a)  // bound each command buffer to `chunk` tokens of the wide projection
+            vParts.append(v); aParts.append(a)
+            start = end
+        }
+        let video0 = vParts.count == 1 ? vParts[0] : MLX.concatenated(vParts, axis: 1)
+        let audio0 = aParts.count == 1 ? aParts[0] : MLX.concatenated(aParts, axis: 1)
         dbg("video0", video0); dbg("audio0", audio0)
         let video = embeddings1D(video0, mask: mask, prefix: "video_embeddings_connector",
                                  dim: videoDim, headDim: videoHeadDim)

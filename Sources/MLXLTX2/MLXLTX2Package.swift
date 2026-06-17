@@ -36,12 +36,16 @@ public final class MLXLTX2Package: ModelPackage {
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma + connector + DiT + VAE)
             requirements: RequirementsManifest(
-                // DERIVED estimate (not yet memory-harnessed): bf16 resident ≈ Gemma-3-12B
-                // 4bit 7.5 + connector 5.9 + distilled DiT 35 + vae_decoder 0.8 ≈ 50 GB, plus
-                // activation/scratch headroom. Re-ground with a measured one-stage run
-                // (MemoryProbe) before claiming a tier below .max.
+                // MEASURED 2026-06-16 (Xcode agent, M5 Max / 128 GB, two-stage 704×512 × 9f,
+                // seed 42): peak OS phys_footprint = 82.81 GB (real working-set high-water — DiT
+                // denoise + VAE-decode activations on top of the ~52 GB weight residency).
+                // Declared as residentBytes ≈ 84 GB (measured peak + headroom) = the governor's
+                // true max-simultaneous basis (TI2V precedent), NOT the 52 GB weight estimate.
+                // PEAK SCALES WITH SEQ-LEN (resolution × frames); 84 GB is grounded at 704×512×9f
+                // — re-measure before claiming higher res/frames fit a tier. (Static manifest =
+                // one figure per quant.)
                 footprints: [
-                    QuantFootprint(quant: .bf16, residentBytes: 52_000_000_000),
+                    QuantFootprint(quant: .bf16, residentBytes: 84_000_000_000),
                 ],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0)),
