@@ -335,6 +335,27 @@ func upscaleStepGate() throws {
     if !pass { exit(1) }
 }
 
+/// q8 DiT parity: int8-quantized transformer (bf16 activations) vs oracle q8 golden.
+func ditQ8Gate() throws {
+    let q8 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx-q8/transformer-distilled.safetensors"
+    let base = "/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
+    let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q8/io.safetensors"))     // q8 outputs
+    print("[dit-q8-gate] loading int8 transformer…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: q8), config: DiTConfig(), computeDtype: .bfloat16)
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    eval(video, audio)
+    let vCos = cosine(video, exp["video_v"]!), vMax = maxAbs(video, exp["video_v"]!)
+    let aCos = cosine(audio, exp["audio_v"]!), aMax = maxAbs(audio, exp["audio_v"]!)
+    print(String(format: "[dit-q8-gate] VIDEO cosine=%.6f maxAbs=%.4f  AUDIO cosine=%.6f maxAbs=%.4f", vCos, vMax, aCos, aMax))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[dit-q8-gate] PASS ✅" : "[dit-q8-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -349,6 +370,8 @@ if args.contains("--connector-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
 } else if args.contains("--dit-tiny-gate") {
     try ditTinyGate()
+} else if args.contains("--dit-q8-gate") {
+    try ditQ8Gate()
 } else if args.contains("--dit-full-gate") {
     try ditFullGate()
 } else if args.contains("--vae-decode-gate") {

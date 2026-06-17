@@ -34,14 +34,23 @@ public struct DiT {
     let w: [String: MLXArray]
     let cfg: DiTConfig
     let dtype: DType
+    let quantGroupSize = 64
 
     /// - computeDtype: fp32 for the tiny gate (vs LTX2_DIT_FP32 golden); bf16 for
     ///   full-scale real weights (matches the production oracle; 35GB stays 35GB).
+    /// Quantized checkpoints (q8/q4): a Linear with `.scales`/`.biases` siblings is left
+    /// PACKED (uint32 weight + scales/biases untouched) — only plain params are cast to
+    /// computeDtype. `dense()` then dispatches to `quantizedMatmul` for those layers.
     public init(weights: [String: MLXArray], config: DiTConfig, computeDtype: DType = .float32) {
         var m: [String: MLXArray] = [:]
         for (k, v) in weights {
-            let key = k.hasPrefix("transformer.") ? String(k.dropFirst("transformer.".count)) : k
-            m[key] = v.asType(computeDtype)
+            m[k.hasPrefix("transformer.") ? String(k.dropFirst("transformer.".count)) : k] = v
+        }
+        for key in m.keys {
+            if key.hasSuffix(".scales") || key.hasSuffix(".biases") { continue }  // quant params: leave raw
+            // a packed quantized weight has a sibling ".scales" — leave it uint32-packed
+            if key.hasSuffix(".weight"), m[String(key.dropLast("weight".count)) + "scales"] != nil { continue }
+            m[key] = m[key]!.asType(computeDtype)
         }
         self.w = m
         self.cfg = config
@@ -246,7 +255,16 @@ public struct DiT {
     // MARK: - primitives
 
     private func dense(_ x: MLXArray, _ prefix: String) -> MLXArray {
-        var y = x.matmul(w["\(prefix).weight"]!.transposed())
+        let wt = w["\(prefix).weight"]!
+        var y: MLXArray
+        if let scales = w["\(prefix).scales"], let qb = w["\(prefix).biases"] {
+            // Quantized Linear (q8/q4): bits = weight_cols·32 / (scales_cols·groupSize).
+            let bits = Int((Double(wt.dim(-1)) * 32.0 / (Double(scales.dim(-1)) * Double(quantGroupSize))).rounded())
+            y = MLX.quantizedMatmul(x, wt, scales: scales, biases: qb,
+                                    transpose: true, groupSize: quantGroupSize, bits: bits)
+        } else {
+            y = x.matmul(wt.transposed())
+        }
         if let b = w["\(prefix).bias"] { y = y + b }
         return y
     }

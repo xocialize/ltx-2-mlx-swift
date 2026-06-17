@@ -45,11 +45,12 @@ public final class LTX2Pipeline {
     /// Load all components. `ltxDir` holds connector/transformer-distilled/vae_decoder
     /// (+ optional audio_vae/vocoder) safetensors; `gemmaDir` is the Gemma-3 weights dir.
     /// Audio decode is enabled when both audio_vae.safetensors and vocoder.safetensors exist.
-    public static func load(ltxDir: URL, gemmaDir: URL) async throws -> LTX2Pipeline {
+    public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil) async throws -> LTX2Pipeline {
         let gemma = try await GemmaEncoder.load(directory: gemmaDir)
         let connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
-        let dit = try DiT.load(weightsPath: ltxDir.appending(path: "transformer-distilled.safetensors"),
-                               config: DiTConfig(), computeDtype: .bfloat16)
+        // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
+        let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
+        let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
         let vae = try VideoVAEDecoder.load(path: ltxDir.appending(path: "vae_decoder.safetensors"))
         let audioPath = ltxDir.appending(path: "audio_vae.safetensors")
         let vocPath = ltxDir.appending(path: "vocoder.safetensors")

@@ -46,6 +46,11 @@ public final class MLXLTX2Package: ModelPackage {
                 // one figure per quant.)
                 footprints: [
                     QuantFootprint(quant: .bf16, residentBytes: 84_000_000_000),
+                    // int8: ONLY the transformer-block Linears are int8 (everything else stays
+                    // bf16). Weight residency drops ~17 GB vs bf16; activation working set is
+                    // dtype-independent (same bf16 compute) so it dominates the peak. DERIVED
+                    // ≈ 65 GB @ 704×512×9f (opens a 64 GB-class tier) — re-measure live like bf16.
+                    QuantFootprint(quant: .int8, residentBytes: 65_000_000_000),
                 ],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0)),
@@ -78,7 +83,8 @@ public final class MLXLTX2Package: ModelPackage {
                 expected: "LTX2Configuration with ltxDirectory + gemmaDirectory set",
                 got: "missing weight directories")
         }
-        pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir)
+        pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
+                                               transformerPath: configuration.transformerPath)
     }
 
     public func unload() async { pipeline = nil }
