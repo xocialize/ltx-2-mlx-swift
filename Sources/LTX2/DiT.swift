@@ -70,10 +70,17 @@ public struct DiT {
     }
 
     /// Forward: (video_latent, audio_latent, sigma, text embeds, positions) → (video_v, audio_v).
+    ///
+    /// `videoTimesteps`/`audioTimesteps` (B, N) opt into the **per-token timestep** path (i2v /
+    /// conditioning): conditioned tokens carry timestep 0 (clean), generated tokens carry sigma.
+    /// Per oracle `model.py`, ONLY `adaln_single` + `av_ca_video_scale_shift_adaln_single` (and the
+    /// audio mirror) go per-token; the AV-cross gate + prompt AdaLN ALWAYS use the scalar timestep
+    /// (text/gate embeddings don't correspond to individual latent tokens). nil ⇒ scalar t2v path.
     public func callAsFunction(
         videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
-        videoPositions: MLXArray, audioPositions: MLXArray
+        videoPositions: MLXArray, audioPositions: MLXArray,
+        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil
     ) -> (video: MLXArray, audio: MLXArray) {
         let vd = cfg.videoDim, ad = cfg.audioDim, tED = cfg.timestepEmbeddingDim
 
@@ -84,13 +91,16 @@ public struct DiT {
         let tEmb = timestepEmbedding(t * cfg.timestepScaleMultiplier, tED)
         let avFactor = cfg.avCaTimestepScaleMultiplier / cfg.timestepScaleMultiplier
         let tEmbAvGate = timestepEmbedding(t * cfg.timestepScaleMultiplier * avFactor, tED)
+        // Per-token timestep embedding (B,N,tED) when provided; else reuse the scalar tEmb.
+        let videoTEmb = videoTimesteps.map { timestepEmbedding($0.asType(.float32) * cfg.timestepScaleMultiplier, tED) } ?? tEmb
+        let audioTEmb = audioTimesteps.map { timestepEmbedding($0.asType(.float32) * cfg.timestepScaleMultiplier, tED) } ?? tEmb
 
-        let (videoAdaln, videoEmbeddedTs) = adalnSingle(tEmb, "adaln_single", 9, vd)
-        let (avCaVideo, _) = adalnSingle(tEmb, "av_ca_video_scale_shift_adaln_single", 4, vd)
+        let (videoAdaln, videoEmbeddedTs) = adalnSingle(videoTEmb, "adaln_single", 9, vd)
+        let (avCaVideo, _) = adalnSingle(videoTEmb, "av_ca_video_scale_shift_adaln_single", 4, vd)
         let (avA2vGate, _) = adalnSingle(tEmbAvGate, "av_ca_a2v_gate_adaln_single", 1, vd)
         let (videoPrompt, _) = adalnSingle(tEmb, "prompt_adaln_single", 2, vd)
-        let (audioAdaln, audioEmbeddedTs) = adalnSingle(tEmb, "audio_adaln_single", 9, ad)
-        let (avCaAudio, _) = adalnSingle(tEmb, "av_ca_audio_scale_shift_adaln_single", 4, ad)
+        let (audioAdaln, audioEmbeddedTs) = adalnSingle(audioTEmb, "audio_adaln_single", 9, ad)
+        let (avCaAudio, _) = adalnSingle(audioTEmb, "av_ca_audio_scale_shift_adaln_single", 4, ad)
         let (avV2aGate, _) = adalnSingle(tEmbAvGate, "av_ca_v2a_gate_adaln_single", 1, ad)
         let (audioPrompt, _) = adalnSingle(tEmb, "audio_prompt_adaln_single", 2, ad)
 
@@ -205,11 +215,18 @@ public struct DiT {
 
     // MARK: - conditioning helpers
 
-    /// Unpack AdaLN params (B, P*dim) + per-block table[:P] → P arrays each (B,1,dim).
+    /// Unpack AdaLN params + per-block table[:P] → P arrays broadcastable over the token axis.
+    /// Scalar params (B, P*dim) → P × (B,1,dim); per-token params (B, N, P*dim) → P × (B,N,dim).
     private func unpackAdaln(_ params: MLXArray, _ tableKey: String, _ numParams: Int, _ dim: Int) -> [MLXArray] {
         let table = w[tableKey]!                       // (P_full, dim)
+        let tableSlice = table[0 ..< numParams]        // (numParams, dim)
+        if params.ndim == 3 {                          // per-token: (B, N, P*dim)
+            let B = params.dim(0), N = params.dim(1)
+            let p = params.reshaped(B, N, numParams, dim) + tableSlice.reshaped(1, 1, numParams, dim)
+            return (0 ..< numParams).map { p[0..., 0..., $0, 0...] }  // (B,N,dim)
+        }
         let B = params.dim(0)
-        let p = params.reshaped(B, numParams, dim) + table[0 ..< numParams].expandedDimensions(axis: 0)
+        let p = params.reshaped(B, numParams, dim) + tableSlice.expandedDimensions(axis: 0)
         return (0 ..< numParams).map { p[0..., $0, 0...].expandedDimensions(axis: 1) }  // (B,1,dim)
     }
 

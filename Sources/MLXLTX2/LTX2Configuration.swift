@@ -50,3 +50,39 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable {
         case repo, revision, quant
     }
 }
+
+/// Cold-start weight prewarm (engine ≥0.7.0): page the LTX + Gemma weight files into the OS
+/// file cache before `load()` runs its GPU evals, so the cold load-time `eval` never faults
+/// weights off slow/external storage inside a live Metal command buffer (the I5 cold-load
+/// `kIOGPUCommandBufferCallbackErrorTimeout`). Only the config knows these resolved `/Volumes`
+/// paths — execution is the engine's (`WeightPrewarmer`, best-effort).
+///
+/// **Quant-aware exclusion.** When `transformerPath` (a quant override, e.g. the q8 transformer)
+/// is set, the default bf16 `transformer-distilled.safetensors` inside `ltxDirectory` is NEVER
+/// loaded — so paging the whole dir would read ~35 GB of cold cost for nothing. In that case we
+/// page `ltxDirectory`'s weight files *individually, minus that bf16 transformer*, plus the
+/// override. (bf16 path keeps the simple whole-dir prewarm.)
+extension LTX2Configuration: WeightPrewarming {
+    /// Basename of the bf16 transformer that a `transformerPath` override replaces.
+    static let defaultTransformerFile = "transformer-distilled.safetensors"
+
+    public var prewarmPaths: [URL] {
+        guard let ltxDir = ltxDirectory else {
+            return [gemmaDirectory, transformerPath].compactMap { $0 }
+        }
+        // bf16 (no override): whole LTX dir + Gemma — the bf16 transformer in ltxDir IS used.
+        guard let txPath = transformerPath else {
+            return [ltxDir, gemmaDirectory].compactMap { $0 }
+        }
+        // Quant override active: page ltxDir's weight files except the unused bf16 transformer.
+        let bf16 = ltxDir.appendingPathComponent(Self.defaultTransformerFile).standardizedFileURL
+        let ltxWeights = ((try? FileManager.default.contentsOfDirectory(
+            at: ltxDir, includingPropertiesForKeys: nil)) ?? [])
+            .filter { $0.pathExtension == "safetensors" && $0.standardizedFileURL != bf16 }
+        // Correctness-first fallback: if enumeration turned up nothing, page the whole dir.
+        var paths = ltxWeights.isEmpty ? [ltxDir] : ltxWeights
+        paths.append(txPath)
+        if let gemma = gemmaDirectory { paths.append(gemma) }
+        return paths
+    }
+}

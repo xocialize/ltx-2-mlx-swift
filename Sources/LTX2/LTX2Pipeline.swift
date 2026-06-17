@@ -128,6 +128,55 @@ public final class LTX2Pipeline {
         return Output(video: pixels, audio: waveform)
     }
 
+    /// Image-to-video (first-frame conditioning, frame_idx=0). `initFrame` is (1,3,1,H,W) in
+    /// [-1,1] at the target resolution. VAE-encodes it to the frame-0 latent and holds those
+    /// tokens clean — per-token timestep 0 in the DiT + a per-step clean re-blend — while the
+    /// rest denoise from noise. `strength` 1.0 = fully condition on the frame; <1.0 lets the
+    /// frame be partially re-noised (denoise_mask = 1-strength). One-stage distilled; requires
+    /// the VAE encoder (falls back to t2v if absent). Keyframe (frame_idx>0) + two-stage i2v
+    /// are follow-ups.
+    public func i2v(
+        prompt: String, initFrame: MLXArray, height: Int = 512, width: Int = 704, numFrames: Int = 9,
+        fps: Double = 24, seed: UInt64? = nil, strength: Float = 1.0
+    ) -> Output {
+        guard let vaeEncoder else {
+            return t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
+        }
+        // 1. Text encode
+        let (ids, mask) = gemma.tokenize(prompt)
+        let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let (videoEmbeds, audioEmbeds) = connector(hiddenStates: states, mask: mask)
+
+        // 2. Latent geometry
+        let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
+        let frame0 = hLat * wLat, nv = fLat * frame0
+        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
+
+        // 3. Encode the init frame → frame-0 clean latent tokens (1, frame0, 128), normalized.
+        let refLatent = vaeEncoder.encode(initFrame)            // (1,128,1,hLat,wLat)
+        let refTokens = LTX2Pipeline.patchify(refLatent)        // (1, frame0, 128)
+
+        // 4. Full-size clean latent (frame 0 = ref, rest 0) + denoise mask (1-strength at frame 0).
+        let cleanVideo = MLX.concatenated([refTokens, MLXArray.zeros([1, nv - frame0, 128])], axis: 1)
+        let maskHead = MLXArray.zeros([1, frame0, 1]) + (1.0 - strength)   // conditioned tokens
+        let videoMask = MLX.concatenated([maskHead, MLXArray.ones([1, nv - frame0, 1])], axis: 1)
+
+        // 5. Noised init + conditioned denoise (audio is unconditioned → scalar path).
+        if let seed { MLXRandom.seed(seed) }
+        let videoLatent = MLXRandom.normal([1, nv, 128])
+        let audioLatent = MLXRandom.normal([1, audioT, 128])
+        let (vfinal, afinal) = DenoiseLoop.runConditioned(
+            dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
+            videoText: videoEmbeds, audioText: audioEmbeds,
+            videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
+            audioPositions: Positions.audio(tokens: audioT),
+            videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
+
+        // 6. Decode
+        let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
+        return Output(video: vae.decode(vspatial), audio: decodeAudio(afinal))
+    }
+
     /// Two-stage distilled t2v (the `generate --distilled` flow): stage-1 denoise at
     /// HALF resolution → unpatchify → encoder-stats denorm → upsampler 2× → renorm →
     /// re-patchify → stage-2 refine at full resolution. Requires `supportsTwoStage`.

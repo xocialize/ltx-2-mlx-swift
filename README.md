@@ -2,36 +2,49 @@
 
 Swift/MLX port of Lightricks **LTX-2.3** — a DiT-based foundation model that jointly
 generates synchronized video **and** audio. Mirrors the Python oracle
-[`dgrauet/ltx-2-mlx`](https://github.com/dgrauet/ltx-2-mlx); intended for integration
-into MLXEngine.
+[`dgrauet/ltx-2-mlx`](https://github.com/dgrauet/ltx-2-mlx); integrates into MLXEngine as a
+`ModelPackage`.
 
 Unlike the Wan family this is a **standalone substrate** (Gemma-3 text encoder, 128-channel
 VAE, joint-AV DiT, BigVGAN + BWE audio) — it does **not** reuse `wan-core`.
 
-> ⚠️ **License posture — eval-only.** LTX-2.3 ships under the **LTX-2 Community License**
-> (source-available, non-Apache: §2 revenue gate, §3 derivative-copyleft, §A.20 non-compete).
-> This port is treated as an **eval-only / gated specialty** for internal capability
-> evaluation — **not shippable** and **not published** (the port code + converted weights are
-> "Derivatives" under §3). Kept local by design.
+## License
 
-## Status
+- **This port code is licensed [Apache-2.0](LICENSE).** It is our own implementation. Lightricks
+  releases their own LTX-2 *inference code* (`ltx-core` / `ltx-pipelines`, per the LTX-Desktop
+  `NOTICES.md`) under Apache-2.0 — inference code is not treated as a derivative of the weights.
+- **The model weights are NOT included and are NOT Apache-2.0.** LTX-2.3 weights ship under the
+  **[LTX-2 Community License](https://huggingface.co/Lightricks/LTX-2.3)** (source-available, with a
+  §2 revenue gate and a §A.20 non-compete). Obtain them from Lightricks / `mlx-community` and comply
+  with that license — those terms bind any *distribution* of generated output, independent of this code.
+- Parity goldens (`parity/goldens/`) are forward-outputs of the weights → weight-derivatives →
+  gitignored, never distributed.
 
-Text-encode front-end **ported and parity-validated** against the oracle:
+## Capabilities
 
-| Component | Gate | Result (cosine vs oracle) |
-|---|---|---|
-| Connector (dual-projection + 8× gated-attn/GEGLU + split-RoPE + registers) | `--connector-gate` | video 0.999988 / audio 0.999668 |
-| Gemma 3 49-state extraction (Path-A reuse of `mlx-swift-lm`) | `--gemma-gate` | worst layer 0.999338 |
-| Composed token_ids → Gemma → connector | `--text-encode-gate` | video 0.999989 / audio 0.999652 |
+Distilled **text-to-video** (one-stage + two-stage upsampled) and **image-to-video** (first-frame
+conditioning via `T2VRequest.initImage`), each across a **bf16 / int8 / int4** quant ladder. Output
+is an MP4 with synchronized 48 kHz stereo audio (the joint DiT denoises video + audio together).
 
-Remaining (Path-B cores): joint-AV DiT, 128-ch video VAE (streaming), audio VAE + BigVGAN +
-BWE, neural upsampler; then the distilled denoise loop and the MLXEngine `ModelPackage` wrapper.
+Pipeline: `prompt → Gemma-3 (49 hidden states) → connector → joint-AV DiT → distilled Euler
+denoise → 128-ch video VAE decode (+ audio VAE → BigVGAN + BWE) → MP4`.
+
+## Parity
+
+Every component is gated numerically against the oracle (per-op cosine ≥ 0.999; most hit ~1.0):
+connector, gemma, text-encode, dit-tiny, dit-full, **dit-q8 / dit-q4** (quant), **dit-pertoken**
+(i2v per-token timesteps), vae-decode / vae-encode, denoise, e2e, audio-vae-decode, vocoder,
+audio-decode, upsampler, upscale-step. (MLX-Swift ↔ MLX-Python is not bit-identical across a
+multi-step trajectory — that's expected FP non-determinism; the gate is per-op + perceptual.)
 
 ## Layout
 
-- `Sources/LTX2` — engine-agnostic core (`RoPE`, `Connector`, `GemmaEncoder`).
+- `Sources/LTX2` — engine-agnostic functional cores (RoPE, Gemma, Connector, DiT, DenoiseLoop,
+  Video/Audio VAE, Vocoder, Upsampler, Positions, LTX2Pipeline).
+- `Sources/MLXLTX2` — the MLXEngine `ModelPackage` wrapper (`MLXLTX2Package`, `LTX2Configuration`,
+  `FrameCodec`, `ImageInput`).
 - `Sources/RunLTX2` — CLI parity-gate driver.
-- `parity/dump_text_encode_goldens.py` — generates oracle goldens (run in the `ltx-2-mlx` uv env).
+- `parity/dump_*_goldens.py` — oracle golden dumpers (run in the `ltx-2-mlx` uv env).
 
 ## Build / gates
 
@@ -41,5 +54,5 @@ path dep at `../mlx-swift-lm`.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-xcrun swift run -c release RunLTX2 --text-encode-gate
+xcrun swift run -c release RunLTX2 --dit-full-gate
 ```

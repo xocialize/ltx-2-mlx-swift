@@ -356,6 +356,53 @@ func ditQ8Gate() throws {
     if !pass { exit(1) }
 }
 
+/// q4 DiT parity: int4-quantized transformer (bf16 activations) vs oracle q4 golden. Same
+/// quant-aware path as q8 — `DiT.load` auto-detects 4-bit from the scales shape; this gate just
+/// checks Swift-q4-forward == oracle-q4-forward on identical q4 weights (so the bar stays 0.999).
+func ditQ4Gate() throws {
+    let q4 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx-q4/transformer-distilled.safetensors"
+    let base = "/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
+    let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q4/io.safetensors"))     // q4 outputs
+    print("[dit-q4-gate] loading int4 transformer…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: q4), config: DiTConfig(), computeDtype: .bfloat16)
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    eval(video, audio)
+    let vCos = cosine(video, exp["video_v"]!), vMax = maxAbs(video, exp["video_v"]!)
+    let aCos = cosine(audio, exp["audio_v"]!), aMax = maxAbs(audio, exp["audio_v"]!)
+    print(String(format: "[dit-q4-gate] VIDEO cosine=%.6f maxAbs=%.4f  AUDIO cosine=%.6f maxAbs=%.4f", vCos, vMax, aCos, aMax))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[dit-q4-gate] PASS ✅" : "[dit-q4-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
+/// Per-token-timestep DiT parity (i2v foundation): bf16 transformer with mixed per-token
+/// timesteps (frame-0 tokens at 0, rest at sigma) vs oracle golden. Reuses dit_full inputs;
+/// timesteps + expected outputs come from the dit_pertoken fixture.
+func ditPerTokenGate() throws {
+    let bf16 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let base = "/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))       // base inputs
+    let pt = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_pertoken/io.safetensors"))   // timesteps + outputs
+    print("[dit-pertoken-gate] loading bf16 transformer…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: bf16), config: DiTConfig(), computeDtype: .bfloat16)
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"], audioText: io["audio_text"],
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
+        videoTimesteps: pt["video_timesteps"]!, audioTimesteps: pt["audio_timesteps"]!)
+    eval(video, audio)
+    let vCos = cosine(video, pt["video_v"]!), vMax = maxAbs(video, pt["video_v"]!)
+    let aCos = cosine(audio, pt["audio_v"]!), aMax = maxAbs(audio, pt["audio_v"]!)
+    print(String(format: "[dit-pertoken-gate] VIDEO cosine=%.6f maxAbs=%.4f  AUDIO cosine=%.6f maxAbs=%.4f", vCos, vMax, aCos, aMax))
+    let pass = vCos >= 0.999 && aCos >= 0.999
+    print(pass ? "[dit-pertoken-gate] PASS ✅" : "[dit-pertoken-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -372,6 +419,10 @@ if args.contains("--connector-gate") {
     try ditTinyGate()
 } else if args.contains("--dit-q8-gate") {
     try ditQ8Gate()
+} else if args.contains("--dit-q4-gate") {
+    try ditQ4Gate()
+} else if args.contains("--dit-pertoken-gate") {
+    try ditPerTokenGate()
 } else if args.contains("--dit-full-gate") {
     try ditFullGate()
 } else if args.contains("--vae-decode-gate") {

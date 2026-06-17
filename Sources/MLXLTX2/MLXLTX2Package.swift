@@ -10,11 +10,17 @@ import MLXToolKit
 /// joint DiT denoises both; audio is muxed into the MP4 when the audio_vae/vocoder
 /// weights are present). Single-stage distilled; the two-stage upsampler is a follow-up.
 ///
-/// ⚠️ EVAL-ONLY: the weights ship under the **LTX-2 Community License** (non-permissive:
-/// §2 revenue gate, §3 derivative-copyleft, §A.20 non-compete). The manifest declares it
-/// honestly as `LicenseRef-LTX-2-Community` on BOTH layers (the port code is itself a §3
-/// Derivative). The default `.permissiveOnly` gate REJECTS it by design — admission for
-/// capability-evaluation is an explicit host-side policy decision, never shippable.
+/// LICENSE (two layers, declared honestly):
+///   • **weights** → **LTX-2 Community License** (`LicenseRef-LTX-2-Community`): source-available
+///     with a §2 revenue gate, §3 terms, and a §A.20 non-compete.
+///   • **port code** → **Apache-2.0**: this is our own implementation. Lightricks licenses their
+///     own inference code (`ltx-core`/`ltx-pipelines`, see the open-source LTX-Desktop) as
+///     Apache-2.0 — i.e. the upstream authors do NOT treat inference code as a §3 derivative of
+///     the weights. Our port mirrors that posture.
+/// The engine (≥0.6.0) places LTX-2-Community on the `permissiveAllowlist`, so BOTH layers are
+/// admitted by the default `.permissiveOnly` policy — no eval-acknowledged relaxation needed.
+/// (The weights' own §2/§A.20 terms still bind any downstream use; that's a usage obligation,
+/// not an engine-admission gate.)
 ///
 /// Engine-owned lifecycle (C13): construct from `LTX2Configuration`, page in with `load()`,
 /// drive `run(_:)`, reclaim with `unload()`. Lifecycle isolated to `InferenceActor`; the
@@ -26,11 +32,13 @@ public final class MLXLTX2Package: ModelPackage {
 
     public nonisolated static var manifest: PackageManifest {
         PackageManifest(
-            // C7 weight + C8 port-code BOTH carry the LTX-2 Community License: the converted
-            // weights AND this port are "Derivatives" under §3. Non-permissive by design.
+            // C7 weights = LTX-2 Community License; C8 port code = Apache-2.0 (our own
+            // implementation, mirroring Lightricks' Apache-2.0 inference code). Both layers
+            // clear the default `.permissiveOnly` gate (LTX-2-Community is allowlisted as of
+            // engine 0.6.0).
             license: LicenseDeclaration(
-                weightLicense: "LicenseRef-LTX-2-Community",
-                portCodeLicense: "LicenseRef-LTX-2-Community"),
+                weightLicense: .ltx2Community,
+                portCodeLicense: .apache2),
             provenance: Provenance(
                 sourceRepo: "dgrauet/ltx-2.3-mlx",  // LTX-2.3 MLX collection (eval mirror)
                 revision: "main",
@@ -48,9 +56,17 @@ public final class MLXLTX2Package: ModelPackage {
                     QuantFootprint(quant: .bf16, residentBytes: 84_000_000_000),
                     // int8: ONLY the transformer-block Linears are int8 (everything else stays
                     // bf16). Weight residency drops ~17 GB vs bf16; activation working set is
-                    // dtype-independent (same bf16 compute) so it dominates the peak. DERIVED
-                    // ≈ 65 GB @ 704×512×9f (opens a 64 GB-class tier) — re-measure live like bf16.
-                    QuantFootprint(quant: .int8, residentBytes: 65_000_000_000),
+                    // dtype-independent (same bf16 compute) so it dominates the peak. MEASURED
+                    // 2026-06-16 (Xcode agent): peak phys_footprint = 62.39 GB @ 704×512×9f →
+                    // 64 GB-class tier. Declared 64 GB (measured + headroom). q8 transformer = 19 GB.
+                    QuantFootprint(quant: .int8, residentBytes: 64_000_000_000),
+                    // int4: same quant-aware path (bits auto-detected from the scales shape); q4
+                    // transformer = 11.3 GB (vs 19 int8 / 35 bf16). Activations still dominate, so the
+                    // peak floor is ~the same activation working set on a smaller weight base. MEASURED
+                    // 2026-06-16 (Xcode agent): peak phys_footprint = 53.33 GB @ 704×512×9f → 53 GB-class
+                    // tier. Declared 54 GB (measured + headroom). NB q4 is artifact-free but DIVERGES the
+                    // sample vs bf16/q8 (larger per-step quant error shifts the distilled trajectory).
+                    QuantFootprint(quant: .int4, residentBytes: 54_000_000_000),
                 ],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0)),
@@ -61,10 +77,10 @@ public final class MLXLTX2Package: ModelPackage {
             surfaces: [
                 T2VContract.descriptor(
                     name: "ltx-2.3-t2v",
-                    summary: "Lightricks LTX-2.3 distilled text-to-video (MLX, eval-only). "
+                    summary: "Lightricks LTX-2.3 distilled text/image-to-video (MLX, research port). "
                         + "Joint audio-video DiT with a Gemma-3 text encoder, a 128-ch video VAE, "
-                        + "and a BigVGAN/BWE audio vocoder; single-stage distilled (8 steps). "
-                        + "Output is an MP4 with synchronized 48kHz stereo audio.")
+                        + "and a BigVGAN/BWE audio vocoder; distilled (8 steps). Supports i2v via "
+                        + "`initImage` (first-frame conditioning). Output is an MP4 with synced 48kHz audio.")
             ]
         )
     }
@@ -97,11 +113,20 @@ public final class MLXLTX2Package: ModelPackage {
         try Task.checkCancellation()
         let fps = t2v.fps ?? 24
         let h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
-        // Prefer the two-stage distilled path (half-res → upsample → refine) when the
-        // encoder + upsampler are present; else single-stage at target resolution.
-        let out = pipeline.supportsTwoStage
-            ? pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-            : pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+        let out: LTX2Pipeline.Output
+        if let initImage = t2v.initImage {
+            // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
+            // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
+            let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)
+            out = pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
+                               height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+        } else {
+            // t2v: prefer the two-stage distilled path (half-res → upsample → refine) when the
+            // encoder + upsampler are present; else single-stage at target resolution.
+            out = pipeline.supportsTwoStage
+                ? pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                : pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+        }
         try Task.checkCancellation()
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).
         // out.audio is 48kHz stereo (1,2,T) when the audio components are present → muxed.
