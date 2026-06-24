@@ -42,7 +42,7 @@ let package = Package(
         //  • 0.7.0 added cold-start weight prewarm (the engine pages weight files into the OS
         //    cache before load()'s GPU evals → fixes the I5 cold-load watchdog abort). Opt-in via
         //    `LTX2Configuration: WeightPrewarming` (see LTX2Configuration.swift).
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", exact: "0.7.0"),
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.9.1"),
     ],
     targets: [
         .target(
