@@ -8,11 +8,13 @@ import MLXToolKit
 /// `ltxDirectory` holds the LTX safetensors (connector / transformer-distilled /
 /// vae_decoder). `gemmaDirectory` is the Gemma-3 MLX weights dir (mlx-community/
 /// gemma-3-12b-it-4bit). Both are environment-specific → excluded from Codable.
-public struct LTX2Configuration: PackageConfiguration, ModelStorable {
+public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfigured {
     /// Provenance repo id (the LTX-2.3 MLX collection).
     public var repo: String
     public var revision: String?
-    /// Backbone quant of the distilled transformer (selection metadata).
+    /// Backbone quant of the distilled transformer. `QuantConfigured` surfaces it to the engine's
+    /// `MemoryGovernor` so it charges the *registered* variant's `QuantFootprint` (bf16/int8/int4)
+    /// instead of the bf16 max (engine ≥0.9.1; closes the q8/q4 over-reservation, LTX ENHANCEMENTS E14).
     public var quant: Quant
     /// Resolved LTX component directory (connector/vae_decoder/vae_encoder/audio_vae/
     /// vocoder/upsampler — these stay bf16 across quant variants).
