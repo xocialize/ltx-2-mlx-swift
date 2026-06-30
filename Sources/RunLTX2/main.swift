@@ -403,6 +403,48 @@ func ditPerTokenGate() throws {
     if !pass { exit(1) }
 }
 
+/// L1 runtime-LoRA hook gate (real distilled DiT, dit_full goldens):
+///   1. lora-OFF forward matches the golden  → my dense hook didn't regress the base
+///   2. apply LoRA → output changes, stays finite (cosine < 1 vs base, no NaN)
+///   3. detach → output restores to the base exactly
+func loraGate(loraPath: String) throws {
+    let dir = "/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    print("[lora-gate] lora: \(loraPath)")
+    print("[lora-gate] loading real distilled transformer (bf16)…")
+    let dit = try DiT.load(weightsPath: URL(fileURLWithPath: weightsPath), config: DiTConfig(), computeDtype: .bfloat16)
+    func fwd() -> (MLXArray, MLXArray) {
+        let (v, a) = dit(
+            videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+            videoText: io["video_text"], audioText: io["audio_text"],
+            videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+        eval(v, a); return (v, a)
+    }
+    // 1. lora-off vs golden
+    let (vBase, _) = fwd()
+    let offCos = cosine(vBase, io["video_v"]!)
+    print(String(format: "[lora-gate] lora-OFF vs golden: video cosine=%.6f", offCos))
+    // 2. apply + forward
+    try LTX2LoRA.apply(URL(fileURLWithPath: loraPath), strength: 1.0, to: dit)
+    print("[lora-gate] applied \(dit.loraTargetCount) LoRA targets")
+    let (vOn, aOn) = fwd()
+    let onVsBase = cosine(vOn, vBase)
+    let vMax = vOn.asType(.float32).max().item(Float.self)
+    let aMax = aOn.asType(.float32).max().item(Float.self)
+    let finite = vMax.isFinite && aMax.isFinite
+    print(String(format: "[lora-gate] lora-ON vs base: video cosine=%.6f  finite=%@ (vmax=%.3f)",
+                 onVsBase, finite ? "yes" : "no", vMax))
+    // 3. detach → restore
+    LTX2LoRA.detach(dit)
+    let (vOff2, _) = fwd()
+    let restoreCos = cosine(vOff2, vBase)
+    print(String(format: "[lora-gate] detach vs base: video cosine=%.6f", restoreCos))
+    let pass = offCos >= 0.999 && finite && onVsBase < 0.9999 && restoreCos >= 0.99999
+    print(pass ? "[lora-gate] PASS ✅" : "[lora-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -425,6 +467,8 @@ if args.contains("--connector-gate") {
     try ditPerTokenGate()
 } else if args.contains("--dit-full-gate") {
     try ditFullGate()
+} else if args.contains("--lora-gate") {
+    try loraGate(loraPath: positional.first ?? "/tmp/ltx_transition_lora.safetensors")
 } else if args.contains("--vae-decode-gate") {
     try vaeDecodeGate()
 } else if args.contains("--vae-encode-gate") {

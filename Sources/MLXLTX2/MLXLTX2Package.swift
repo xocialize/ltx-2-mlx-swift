@@ -80,13 +80,21 @@ public final class MLXLTX2Package: ModelPackage {
                     summary: "Lightricks LTX-2.3 distilled text/image-to-video (MLX, research port). "
                         + "Joint audio-video DiT with a Gemma-3 text encoder, a 128-ch video VAE, "
                         + "and a BigVGAN/BWE audio vocoder; distilled (8 steps). Supports i2v via "
-                        + "`initImage` (first-frame conditioning). Output is an MP4 with synced 48kHz audio.")
+                        + "`initImage` (first-frame conditioning). Output is an MP4 with synced 48kHz audio. "
+                        + "Optional runtime LoRA via metaData: `loraId` (registry id of a style/motion "
+                        + "effect; absent = base) + `loraStrength` (override; default per entry), "
+                        + "hot-swapped on the resident DiT.")
             ]
         )
     }
 
     private let configuration: Configuration
     private var pipeline: LTX2Pipeline?
+    // Per-request runtime-LoRA state (the "extend" capability): curated registry + lazy HF cache,
+    // plus the currently-applied selection so an unchanged request doesn't re-apply.
+    private var registry: LoRARegistry?
+    private var cache: LoRACache?
+    private var appliedLoRA: (id: String, strength: Float)?
 
     public nonisolated init(configuration: Configuration) {
         self.configuration = configuration
@@ -101,9 +109,19 @@ public final class MLXLTX2Package: ModelPackage {
         }
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
                                                transformerPath: configuration.transformerPath)
+
+        // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
+        // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).
+        registry = try? LoRARegistry.bundled()
+        let cacheRoot = configuration.modelsRootDirectory
+            ?? (try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
+                                             appropriateFor: nil, create: true))
+            ?? FileManager.default.temporaryDirectory
+        cache = LoRACache(directory: cacheRoot.appendingPathComponent("ltx-lora-cache"))
+        appliedLoRA = nil
     }
 
-    public func unload() async { pipeline = nil }
+    public func unload() async { pipeline = nil; appliedLoRA = nil }
 
     public func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
         guard let pipeline else { throw PackageError.notLoaded }
@@ -111,6 +129,28 @@ public final class MLXLTX2Package: ModelPackage {
             throw PackageError.unsupportedCapability(request.capability)
         }
         try Task.checkCancellation()
+
+        // Per-request runtime LoRA (the "extend" capability), carried opaquely in metaData:
+        //   metaData["loraId"]       registry id of the effect (absent/empty → pristine base)
+        //   metaData["loraStrength"] optional strength override (else the entry default)
+        // Hot-swapped on the resident DiT (no reload); unchanged selection across calls is a no-op.
+        let selectedId = t2v.metaData[LoRAMetaKeys.id]?.asString.flatMap { $0.isEmpty ? nil : $0 }
+        if let id = selectedId {
+            guard let registry, let cache, let entry = registry.entry(id: id) else {
+                throw LoRARegistryError.unknownAdapter(id)
+            }
+            let strength = t2v.metaData[LoRAMetaKeys.strength]?.asFloat ?? entry.defaultStrength
+            if appliedLoRA?.id != id || appliedLoRA?.strength != strength {
+                let file = try await cache.ensure(entry)
+                try pipeline.setLoRAs([(file, strength)])
+                appliedLoRA = (id, strength)
+            }
+        } else if appliedLoRA != nil {
+            pipeline.clearLoRAs()
+            appliedLoRA = nil
+        }
+        try Task.checkCancellation()
+
         let fps = t2v.fps ?? 24
         let h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
         let out: LTX2Pipeline.Output

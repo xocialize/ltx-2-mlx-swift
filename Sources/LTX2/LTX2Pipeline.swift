@@ -36,6 +36,20 @@ public final class LTX2Pipeline {
     /// True when the two-stage (half-res → upsample → refine) path is available.
     public var supportsTwoStage: Bool { vaeEncoder != nil && upsampler != nil }
 
+    // MARK: - Runtime LoRA (extend, not swap) — public seam for the engine wrapper
+
+    /// Make `loras` the active runtime-LoRA set on the resident DiT (replaces any current set;
+    /// empty array detaches). Hot-swap: no base reload, only the small low-rank factors change.
+    public func setLoRAs(_ loras: [(url: URL, strength: Float)]) throws {
+        try LTX2LoRA.apply(loras, to: dit)
+    }
+
+    /// Restore the pristine base (drop all runtime LoRAs).
+    public func clearLoRAs() { LTX2LoRA.detach(dit) }
+
+    /// Number of currently-adapted DiT targets (0 = pristine base).
+    public var activeLoRATargets: Int { dit.loraTargetCount }
+
     /// Output of a t2v run: video pixels (1,3,F,H,W) and optional 48kHz stereo audio (1,2,T).
     public struct Output {
         public let video: MLXArray

@@ -35,6 +35,10 @@ public struct DiT {
     let cfg: DiTConfig
     let dtype: DType
     let quantGroupSize = 64
+    /// Runtime LoRA adapters, keyed on the `dense()` prefix (e.g. `transformer_blocks.0.attn1.to_q`).
+    /// A reference type so apply/detach mutate it without mutating this value-type struct (a struct
+    /// copy shares the same store); empty = pristine base, so `dense` is bit-identical when unused.
+    let lora = LoRAStore()
 
     /// - computeDtype: fp32 for the tiny gate (vs LTX2_DIT_FP32 golden); bf16 for
     ///   full-scale real weights (matches the production oracle; 35GB stays 35GB).
@@ -271,6 +275,13 @@ public struct DiT {
 
     // MARK: - primitives
 
+    /// Whether a `dense()`-style Linear weight exists at `prefix` (plain or packed-quantized — both
+    /// store the weight under `<prefix>.weight`). Used by `LTX2LoRA.apply` to keep only real targets.
+    func hasDenseWeight(_ prefix: String) -> Bool { w["\(prefix).weight"] != nil }
+
+    /// Count of currently-registered LoRA targets (0 = pristine base). Public read for harnesses.
+    public var loraTargetCount: Int { lora.adapters.count }
+
     private func dense(_ x: MLXArray, _ prefix: String) -> MLXArray {
         let wt = w["\(prefix).weight"]!
         var y: MLXArray
@@ -283,6 +294,12 @@ public struct DiT {
             y = x.matmul(wt.transposed())
         }
         if let b = w["\(prefix).bias"] { y = y + b }
+        // Runtime LoRA extend: y += (x · A) · B, where A=[in,rank], B=[rank,out] with the adapter's
+        // scale already baked into B. Added in the activation path (survives bf16/q8/q4 — factors
+        // stay full precision); no-op when no adapter is registered for this prefix.
+        if let ad = lora.adapters[prefix] {
+            y = y + x.matmul(ad.a).matmul(ad.b)
+        }
         return y
     }
 

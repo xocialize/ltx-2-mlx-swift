@@ -68,7 +68,8 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
             ],
-            path: "Sources/MLXLTX2"
+            path: "Sources/MLXLTX2",
+            resources: [.process("Resources")]  // ltx-lora-registry.json → Bundle.module
         ),
         .executableTarget(
             name: "RunLTX2",

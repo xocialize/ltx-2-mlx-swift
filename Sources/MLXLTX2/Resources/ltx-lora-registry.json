@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "base": "LTX-2.3-22b-distilled",
+  "adapters": [
+    {
+      "id": "transition",
+      "displayName": "Scene Transition (joyfox)",
+      "repo": "joyfox/LTX-2.3-Transition-LORA",
+      "weightFile": "ltx2.3-transition.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": "zhuanchang"
+    },
+    {
+      "id": "omnicine",
+      "displayName": "OmniCine — dynamic cinematic motion (Singularity)",
+      "repo": "WarmBloodAban/Singularity-LTX-2.3_OmniCine_V1",
+      "weightFile": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": ""
+    }
+  ]
+}
