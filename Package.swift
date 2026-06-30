@@ -35,13 +35,17 @@ let package = Package(
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.2.1"),
-        // MLXEngine contract (MLXToolKit) for the wrapper target. Pinned at 0.7.0:
+        // MLXEngine contract (MLXToolKit) for the wrapper target. `from: "0.9.1"` (resolves 0.14.0):
         //  • 0.6.0 revised the license stance — LTX-2-Community is on the `permissiveAllowlist`
         //    (admitted by the default `.permissiveOnly`), since Lightricks licenses their own
         //    inference code (ltx-core/ltx-pipelines) as Apache-2.0; only the weights are Community.
         //  • 0.7.0 added cold-start weight prewarm (the engine pages weight files into the OS
         //    cache before load()'s GPU evals → fixes the I5 cold-load watchdog abort). Opt-in via
         //    `LTX2Configuration: WeightPrewarming` (see LTX2Configuration.swift).
+        //  • 0.14.0 (contract 1.14.0) added the split footprint (`QuantFootprint.peakActivationBytes`
+        //    + `FootprintConfigured.peakActivationBytesHint`) and `BudgetAware`: the engine reserves
+        //    ONE transient activation across residents (serialized inference). Adopted in the manifest
+        //    (residentBytes = weight floor, peakActivationBytes = peak − floor) + the per-stage evict.
         .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.9.1"),
     ],
     targets: [

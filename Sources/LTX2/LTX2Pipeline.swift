@@ -1,40 +1,67 @@
-// LTX2Pipeline.swift — one-stage distilled t2v: prompt → frames.
+// LTX2Pipeline.swift — distilled t2v/i2v: prompt → frames(+audio).
 //
 // Assembles the parity-validated pieces: GemmaEncoder (49-state extract) →
 // Connector (video/audio embeds) → noised latents → DenoiseLoop (distilled
-// Euler) → unpatchify → VideoVAEDecoder → pixels. Video-only for now (audio
-// latent is denoised jointly but not decoded — Audio VAE/vocoder are a follow-up).
-// Single-stage at target resolution (no two-stage upsampler yet).
+// Euler) → unpatchify → VideoVAEDecoder → pixels, with a jointly-denoised audio
+// latent → Audio VAE + vocoder → 48kHz stereo. Single-stage and two-stage
+// (half-res → upsample → refine) distilled paths.
+//
+// MEMORY (per-stage load → use → evict, engine 1.14.0 efficiency sweep):
+// only the DiT backbone stays resident for the pipeline lifetime — it is the
+// runtime-LoRA hot-swap target AND the denoise peak. The text encoder (Gemma +
+// Connector ≈ 19 GB: gemma-3-12b-4bit + the fp32 connector), the VAE decoder
+// stack, and the two-stage encoder/upsampler are loaded around the phase that
+// uses them and evicted (ref→nil + `Memory.clearCache()`) before the next, so
+// they are NEVER co-resident with the DiT denoise activation peak. This is the
+// Wan T5 pattern generalized across all transient stages: the declared
+// `residentBytes` is the DiT floor, `peakActivationBytes` the denoise transient.
 
 import Foundation
 import MLX
 import MLXRandom
 
 public final class LTX2Pipeline {
-    let gemma: GemmaEncoder
-    let connector: Connector
+    /// Persistent backbone — stays resident the whole pipeline lifetime (the runtime-LoRA
+    /// hot-swap target and the denoise memory peak). Never evicted between requests.
     let dit: DiT
-    let vae: VideoVAEDecoder
-    let audioVAE: AudioVAEDecoder?
-    let vocoder: Vocoder?
-    let vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats
-    let upsampler: Upsampler?          // spatial_x2
 
-    init(gemma: GemmaEncoder, connector: Connector, dit: DiT, vae: VideoVAEDecoder,
-         audioVAE: AudioVAEDecoder?, vocoder: Vocoder?,
-         vaeEncoder: VideoVAEEncoder?, upsampler: Upsampler?) {
-        self.gemma = gemma
-        self.connector = connector
+    // Evictable stages — held only around the phase that needs them (load → use → evict).
+    // Stored loaders (`ltxDir`/`gemmaDir`) let a dropped stage re-load on the next request.
+    private let ltxDir: URL
+    private let gemmaDir: URL
+    private var gemma: GemmaEncoder?
+    private var connector: Connector?
+    private var vae: VideoVAEDecoder?
+    private var audioVAE: AudioVAEDecoder?
+    private var vocoder: Vocoder?
+    private var vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats + i2v encode
+    private var upsampler: Upsampler?          // spatial_x2
+
+    // File availability, probed once at load — drives `supportsTwoStage` / audio presence
+    // WITHOUT holding the components resident (they were `!= nil` checks before).
+    private let hasAudio: Bool
+    private let hasEncoder: Bool
+    private let hasUpsampler: Bool
+
+    /// Keep evictable stages resident after use instead of dropping them (the big-RAM-tier
+    /// refinement — trades residency for skipping the per-request reload). Default: evict, so the
+    /// denoise peak never carries idle encoder/decoder weights. The wrapper can flip this on a tier
+    /// with ample headroom; the footprint math (declared peak = DiT + denoise activation) assumes
+    /// the default.
+    public var keepStagesResident = false
+
+    init(dit: DiT, ltxDir: URL, gemmaDir: URL, hasAudio: Bool, hasEncoder: Bool, hasUpsampler: Bool) {
         self.dit = dit
-        self.vae = vae
-        self.audioVAE = audioVAE
-        self.vocoder = vocoder
-        self.vaeEncoder = vaeEncoder
-        self.upsampler = upsampler
+        self.ltxDir = ltxDir
+        self.gemmaDir = gemmaDir
+        self.hasAudio = hasAudio
+        self.hasEncoder = hasEncoder
+        self.hasUpsampler = hasUpsampler
     }
 
-    /// True when the two-stage (half-res → upsample → refine) path is available.
-    public var supportsTwoStage: Bool { vaeEncoder != nil && upsampler != nil }
+    /// True when the two-stage (half-res → upsample → refine) path is available. File-based now
+    /// (the encoder/upsampler are loaded on demand, not held resident), so this no longer pins them.
+    public var supportsTwoStage: Bool { hasEncoder && hasUpsampler }
 
     // MARK: - Runtime LoRA (extend, not swap) — public seam for the engine wrapper
 
@@ -50,34 +77,84 @@ public final class LTX2Pipeline {
     /// Number of currently-adapted DiT targets (0 = pristine base).
     public var activeLoRATargets: Int { dit.loraTargetCount }
 
+    // MARK: - Per-stage residency (load → use → evict)
+
+    /// Page in Gemma + Connector (the text-encode stage). Cheap relative to denoise.
+    /// `isolation` inherits the caller's actor (the wrapper's `@InferenceActor`) so the async
+    /// hop stays on-actor and the non-`Sendable` pipeline is never sent across an isolation boundary.
+    private func ensureTextEncoder(isolation: isolated (any Actor)? = #isolation) async throws {
+        if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
+        if connector == nil {
+            connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
+        }
+    }
+
+    /// Evict Gemma + Connector BEFORE the DiT denoise peak (≈19 GB freed: gemma-3-12b-4bit +
+    /// the fp32 connector). The caller MUST `eval` the produced embeds first — MLX is lazy, so an
+    /// unrealized graph would otherwise keep the encoder weights pinned past the `nil`.
+    private func dropTextEncoder() {
+        guard !keepStagesResident else { return }
+        gemma = nil; connector = nil
+        Memory.clearCache()
+    }
+
+    /// Page in the VAE decoder stack (video + optional audio) — deferred until AFTER denoise so it
+    /// is never co-resident with the denoise activation peak.
+    private func ensureDecoder() throws {
+        if vae == nil { vae = try VideoVAEDecoder.load(path: ltxDir.appending(path: "vae_decoder.safetensors")) }
+        if hasAudio {
+            if audioVAE == nil { audioVAE = try AudioVAEDecoder.load(path: ltxDir.appending(path: "audio_vae.safetensors")) }
+            if vocoder == nil { vocoder = try Vocoder.load(path: ltxDir.appending(path: "vocoder.safetensors")) }
+        }
+    }
+
+    private func dropDecoder() {
+        guard !keepStagesResident else { return }
+        vae = nil; audioVAE = nil; vocoder = nil
+        Memory.clearCache()
+    }
+
+    /// Page in the VAE encoder (two-stage denorm/renorm stats; i2v init-frame encode).
+    private func ensureVAEEncoder() throws {
+        if vaeEncoder == nil { vaeEncoder = try VideoVAEEncoder.load(path: ltxDir.appending(path: "vae_encoder.safetensors")) }
+    }
+
+    /// Page in the spatial 2× upsampler (two-stage only).
+    private func ensureUpsampler() throws {
+        if upsampler == nil { upsampler = try Upsampler.load(path: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors")) }
+    }
+
+    /// Evict the two-stage encoder + upsampler after the upscale step (before the stage-2 denoise
+    /// peak). Caller must `eval` the upscaled latent first. Also covers i2v (encoder only).
+    private func dropUpscaler() {
+        guard !keepStagesResident else { return }
+        vaeEncoder = nil; upsampler = nil
+        Memory.clearCache()
+    }
+
     /// Output of a t2v run: video pixels (1,3,F,H,W) and optional 48kHz stereo audio (1,2,T).
     public struct Output {
         public let video: MLXArray
         public let audio: MLXArray?
     }
 
-    /// Load all components. `ltxDir` holds connector/transformer-distilled/vae_decoder
-    /// (+ optional audio_vae/vocoder) safetensors; `gemmaDir` is the Gemma-3 weights dir.
-    /// Audio decode is enabled when both audio_vae.safetensors and vocoder.safetensors exist.
+    /// Load the pipeline. Eagerly loads ONLY the persistent DiT backbone (the resident floor + LoRA
+    /// target); every transient stage (Gemma/Connector text encoder, VAE decode stack, two-stage
+    /// encoder/upsampler) is loaded on demand around its phase and evicted after. `ltxDir` holds
+    /// connector/transformer-distilled/vae_decoder (+ optional audio_vae/vocoder/vae_encoder/
+    /// upsampler); `gemmaDir` is the Gemma-3 weights dir. Audio decode is enabled when both
+    /// audio_vae.safetensors and vocoder.safetensors exist.
     public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil) async throws -> LTX2Pipeline {
-        let gemma = try await GemmaEncoder.load(directory: gemmaDir)
-        let connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
         let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
-        let vae = try VideoVAEDecoder.load(path: ltxDir.appending(path: "vae_decoder.safetensors"))
-        let audioPath = ltxDir.appending(path: "audio_vae.safetensors")
-        let vocPath = ltxDir.appending(path: "vocoder.safetensors")
         let fm = FileManager.default
-        let audioVAE = fm.fileExists(atPath: audioPath.path) ? try AudioVAEDecoder.load(path: audioPath) : nil
-        let vocoder = fm.fileExists(atPath: vocPath.path) ? try Vocoder.load(path: vocPath) : nil
-        let encPath = ltxDir.appending(path: "vae_encoder.safetensors")
-        let upPath = ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors")
-        let vaeEncoder = fm.fileExists(atPath: encPath.path) ? try VideoVAEEncoder.load(path: encPath) : nil
-        let upsampler = fm.fileExists(atPath: upPath.path) ? try Upsampler.load(path: upPath) : nil
-        return LTX2Pipeline(gemma: gemma, connector: connector, dit: dit, vae: vae,
-                            audioVAE: audioVAE, vocoder: vocoder,
-                            vaeEncoder: vaeEncoder, upsampler: upsampler)
+        let hasAudio = fm.fileExists(atPath: ltxDir.appending(path: "audio_vae.safetensors").path)
+                    && fm.fileExists(atPath: ltxDir.appending(path: "vocoder.safetensors").path)
+        let hasEncoder = fm.fileExists(atPath: ltxDir.appending(path: "vae_encoder.safetensors").path)
+        let hasUpsampler = fm.fileExists(atPath: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors").path)
+        return LTX2Pipeline(dit: dit, ltxDir: ltxDir, gemmaDir: gemmaDir,
+                            hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler)
     }
 
     /// Flow-matching noised init: noise·σ + clean·(1-σ). Stage-1 (clean=0,σ=1)=noise;
@@ -96,6 +173,7 @@ public final class LTX2Pipeline {
 
     /// Decode a denoised audio latent (1, T, 128) → 48kHz stereo waveform (1, 2, T_48k).
     /// AudioPatchifier.unpatchify: (B,T,128) → (B,8,T,16), then Audio VAE → mel → vocoder+BWE.
+    /// Requires the decoder stage to be resident (`ensureDecoder()` ran).
     func decodeAudio(_ audioTokens: MLXArray) -> MLXArray? {
         guard let audioVAE, let vocoder else { return nil }
         let B = audioTokens.dim(0), T = audioTokens.dim(1)
@@ -108,12 +186,15 @@ public final class LTX2Pipeline {
     /// and optional 48kHz stereo audio.
     public func t2v(
         prompt: String, height: Int = 256, width: Int = 256, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil
-    ) -> Output {
-        // 1. Text encode (Gemma → connector)
-        let (ids, mask) = gemma.tokenize(prompt)
-        let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector(hiddenStates: states, mask: mask)
+        fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Output {
+        // 1. Text encode (Gemma → connector) — staged: load, encode, evict before denoise.
+        try await ensureTextEncoder()
+        let (ids, mask) = gemma!.tokenize(prompt)
+        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
+        eval(videoEmbeds, audioEmbeds)   // materialize before evicting the encoder weights
+        dropTextEncoder()
 
         // 2. Latent geometry
         let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
@@ -127,18 +208,21 @@ public final class LTX2Pipeline {
         let videoPositions = Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps))
         let audioPositions = Positions.audio(tokens: audioT)
 
-        // 4. Distilled Euler denoise (joint video + audio)
+        // 4. Distilled Euler denoise (joint video + audio) — the memory peak (DiT only resident).
         let (vfinal, afinal) = DenoiseLoop.run(
             dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions)
+        eval(vfinal, afinal)
 
-        // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels
+        // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
-        let pixels = vae.decode(vspatial)
-
+        try ensureDecoder()
+        let pixels = vae!.decode(vspatial)
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
+        eval(pixels); if let waveform { eval(waveform) }
+        dropDecoder()
         return Output(video: pixels, audio: waveform)
     }
 
@@ -151,15 +235,19 @@ public final class LTX2Pipeline {
     /// are follow-ups.
     public func i2v(
         prompt: String, initFrame: MLXArray, height: Int = 512, width: Int = 704, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil, strength: Float = 1.0
-    ) -> Output {
-        guard let vaeEncoder else {
-            return t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
+        fps: Double = 24, seed: UInt64? = nil, strength: Float = 1.0,
+        isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Output {
+        guard hasEncoder else {
+            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
         }
-        // 1. Text encode
-        let (ids, mask) = gemma.tokenize(prompt)
-        let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector(hiddenStates: states, mask: mask)
+        // 1. Text encode (staged)
+        try await ensureTextEncoder()
+        let (ids, mask) = gemma!.tokenize(prompt)
+        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
+        eval(videoEmbeds, audioEmbeds)
+        dropTextEncoder()
 
         // 2. Latent geometry
         let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
@@ -167,8 +255,11 @@ public final class LTX2Pipeline {
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
 
         // 3. Encode the init frame → frame-0 clean latent tokens (1, frame0, 128), normalized.
-        let refLatent = vaeEncoder.encode(initFrame)            // (1,128,1,hLat,wLat)
+        try ensureVAEEncoder()
+        let refLatent = vaeEncoder!.encode(initFrame)           // (1,128,1,hLat,wLat)
         let refTokens = LTX2Pipeline.patchify(refLatent)        // (1, frame0, 128)
+        eval(refTokens)
+        dropUpscaler()                                          // drop the VAE encoder before denoise
 
         // 4. Full-size clean latent (frame 0 = ref, rest 0) + denoise mask (1-strength at frame 0).
         let cleanVideo = MLX.concatenated([refTokens, MLXArray.zeros([1, nv - frame0, 128])], axis: 1)
@@ -185,10 +276,16 @@ public final class LTX2Pipeline {
             videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT),
             videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
+        eval(vfinal, afinal)
 
         // 6. Decode
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
-        return Output(video: vae.decode(vspatial), audio: decodeAudio(afinal))
+        try ensureDecoder()
+        let pixels = vae!.decode(vspatial)
+        let waveform = decodeAudio(afinal)
+        eval(pixels); if let waveform { eval(waveform) }
+        dropDecoder()
+        return Output(video: pixels, audio: waveform)
     }
 
     /// Two-stage distilled t2v (the `generate --distilled` flow): stage-1 denoise at
@@ -196,20 +293,26 @@ public final class LTX2Pipeline {
     /// re-patchify → stage-2 refine at full resolution. Requires `supportsTwoStage`.
     public func t2vTwoStage(
         prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil
-    ) -> Output {
-        guard let vaeEncoder, let upsampler else { return t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed) }
+        fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Output {
+        guard hasEncoder, hasUpsampler else {
+            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
+        }
 
-        let (ids, mask) = gemma.tokenize(prompt)
-        let states = gemma.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector(hiddenStates: states, mask: mask)
+        // 1. Text encode (staged)
+        try await ensureTextEncoder()
+        let (ids, mask) = gemma!.tokenize(prompt)
+        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
+        eval(videoEmbeds, audioEmbeds)
+        dropTextEncoder()
 
         let fLat = (numFrames + 7) / 8
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
         let s2 = Positions.stage2Sigmas
         let sigma0 = s2[0]
 
-        // --- Stage 1: half resolution ---
+        // --- Stage 1: half resolution (denoise peak #1, DiT only resident) ---
         let hHalf = height / 2, wHalf = width / 2
         let hLat1 = hHalf / 32, wLat1 = wHalf / 32, nv1 = fLat * hLat1 * wLat1
         let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
@@ -219,11 +322,14 @@ public final class LTX2Pipeline {
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT))
+        eval(v1f, a1f)
 
-        // --- Upscale 2× in un-normalized latent space ---
+        // --- Upscale 2× in un-normalized latent space (encoder+upsampler loaded only here) ---
+        try ensureVAEEncoder(); try ensureUpsampler()
         let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
-        let upscaled = vaeEncoder.normalizeLatent(upsampler(vaeEncoder.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
+        let upscaled = vaeEncoder!.normalizeLatent(upsampler!(vaeEncoder!.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
         eval(upscaled)
+        dropUpscaler()                                          // evict before the stage-2 denoise peak
         let hLat2 = hLat1 * 2, wLat2 = wLat1 * 2
         let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F*2h1*2w1, 128)
 
@@ -235,8 +341,14 @@ public final class LTX2Pipeline {
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT))
+        eval(v2f, a2f)
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
-        return Output(video: vae.decode(vspatial), audio: decodeAudio(a2f))
+        try ensureDecoder()
+        let pixels = vae!.decode(vspatial)
+        let waveform = decodeAudio(a2f)
+        eval(pixels); if let waveform { eval(waveform) }
+        dropDecoder()
+        return Output(video: pixels, audio: waveform)
     }
 }

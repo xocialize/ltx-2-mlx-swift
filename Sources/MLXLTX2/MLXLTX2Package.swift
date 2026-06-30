@@ -44,29 +44,36 @@ public final class MLXLTX2Package: ModelPackage {
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma + connector + DiT + VAE)
             requirements: RequirementsManifest(
-                // MEASURED 2026-06-16 (Xcode agent, M5 Max / 128 GB, two-stage 704×512 × 9f,
-                // seed 42): peak OS phys_footprint = 82.81 GB (real working-set high-water — DiT
-                // denoise + VAE-decode activations on top of the ~52 GB weight residency).
-                // Declared as residentBytes ≈ 84 GB (measured peak + headroom) = the governor's
-                // true max-simultaneous basis (TI2V precedent), NOT the 52 GB weight estimate.
-                // PEAK SCALES WITH SEQ-LEN (resolution × frames); 84 GB is grounded at 704×512×9f
-                // — re-measure before claiming higher res/frames fit a tier. (Static manifest =
-                // one figure per quant.)
+                // SPLIT FOOTPRINT (contract 1.14.0) — RE-MEASURED 2026-06-30 in LTXVideoTesting
+                // (M5 Max / 128 GB, two-stage 704×512 × 9f, seed 42) AFTER the per-stage
+                // load→use→evict refactor of `LTX2Pipeline`. Only the DiT backbone stays resident
+                // through the denoise peak; Gemma+Connector evict after text-encode and the VAE
+                // decode stack loads after denoise. Because weights are lazy-mmap, the DiT isn't
+                // even materialized during encode → the text encoder and the DiT are NEVER
+                // co-resident, so the peak is the DiT denoise ALONE. That dropped the bf16 peak
+                // from 82.81 GB (old all-resident, declared 84) to 51.95 GB measured.
+                //
+                //   residentBytes      = the DiT weight floor (post-run phys_footprint after the
+                //                        pipeline's stage-evict clearCache → DiT-only resident).
+                //   peakActivationBytes = the denoise transient (measured peak − floor). It is
+                //                        ~dtype-INDEPENDENT (same bf16 compute): 13.1 GB bf16 /
+                //                        12.1 GB int8 / 15.1 GB int4 — so the engine reserves ONE
+                //                        such transient across ALL residents (serialized inference),
+                //                        which is the co-residency win the split exists to capture.
+                //
+                // PEAK SCALES WITH SEQ-LEN (resolution × frames) — re-measure before claiming a
+                // higher res/frame envelope fits a tier. (Each value = measured + ~20% headroom.)
                 footprints: [
-                    QuantFootprint(quant: .bf16, residentBytes: 84_000_000_000),
-                    // int8: ONLY the transformer-block Linears are int8 (everything else stays
-                    // bf16). Weight residency drops ~17 GB vs bf16; activation working set is
-                    // dtype-independent (same bf16 compute) so it dominates the peak. MEASURED
-                    // 2026-06-16 (Xcode agent): peak phys_footprint = 62.39 GB @ 704×512×9f →
-                    // 64 GB-class tier. Declared 64 GB (measured + headroom). q8 transformer = 19 GB.
-                    QuantFootprint(quant: .int8, residentBytes: 64_000_000_000),
+                    // bf16 DiT = 37.99 GB on disk. MEASURED: floor 38.85 GB · peak 51.95 GB · act 13.10 GB.
+                    QuantFootprint(quant: .bf16, residentBytes: 40_000_000_000, peakActivationBytes: 16_000_000_000),
+                    // int8: ONLY the transformer-block Linears are int8 (everything else stays bf16);
+                    // q8 transformer = 20.6 GB on disk. MEASURED: floor 21.49 GB · peak 33.59 GB · act 12.10 GB.
+                    QuantFootprint(quant: .int8, residentBytes: 22_000_000_000, peakActivationBytes: 15_000_000_000),
                     // int4: same quant-aware path (bits auto-detected from the scales shape); q4
-                    // transformer = 11.3 GB (vs 19 int8 / 35 bf16). Activations still dominate, so the
-                    // peak floor is ~the same activation working set on a smaller weight base. MEASURED
-                    // 2026-06-16 (Xcode agent): peak phys_footprint = 53.33 GB @ 704×512×9f → 53 GB-class
-                    // tier. Declared 54 GB (measured + headroom). NB q4 is artifact-free but DIVERGES the
-                    // sample vs bf16/q8 (larger per-step quant error shifts the distilled trajectory).
-                    QuantFootprint(quant: .int4, residentBytes: 54_000_000_000),
+                    // transformer = 11.3 GB on disk. MEASURED: floor 12.19 GB · peak 27.25 GB · act 15.06 GB
+                    // (q4 dequant scratch nudges the transient up). NB q4 is artifact-free but DIVERGES
+                    // the distilled sample vs bf16/q8 (larger per-step quant error shifts the trajectory).
+                    QuantFootprint(quant: .int4, residentBytes: 13_000_000_000, peakActivationBytes: 18_000_000_000),
                 ],
                 requiredBackends: [.metalGPU],
                 os: OSRequirement(minMacOS: SemanticVersion(major: 26, minor: 0, patch: 0)),
@@ -158,14 +165,14 @@ public final class MLXLTX2Package: ModelPackage {
             // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
             // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
             let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)
-            out = pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
-                               height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            out = try await pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
+                                         height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         } else {
             // t2v: prefer the two-stage distilled path (half-res → upsample → refine) when the
             // encoder + upsampler are present; else single-stage at target resolution.
             out = pipeline.supportsTwoStage
-                ? pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-                : pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         }
         try Task.checkCancellation()
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).

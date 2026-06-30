@@ -445,6 +445,116 @@ func loraGate(loraPath: String) throws {
     if !pass { exit(1) }
 }
 
+// MARK: - Memory bench (efficiency-sweep harness, contract 1.14.0 split footprint)
+//
+// Runs the FULL staged pipeline at the declared 704×512×9f two-stage envelope and reports the
+// OS `phys_footprint` resident floor (post-run + clearCache = DiT-only, the stages self-evict) and
+// the peak high-water across the run. The split footprint is declared from THESE: residentBytes =
+// floor, peakActivationBytes = peak − floor. We sample `phys_footprint` (NOT `Memory.peakMemory`,
+// which counts cumulative allocations and misleads under the cache cap — the Wan profiler lesson).
+
+func gbOf(_ b: UInt64) -> Double { Double(b) / 1_000_000_000.0 }
+
+/// OS `phys_footprint` (bytes) via `task_info(TASK_VM_INFO)` — the figure the MemoryGovernor and
+/// Activity Monitor are grounded on. Returns 0 on failure.
+func physFootprintBytes() -> UInt64 {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+    let kr = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+        }
+    }
+    return kr == KERN_SUCCESS ? UInt64(info.phys_footprint) : 0
+}
+
+/// Background phys_footprint high-water sampler (the peak is a transient inside the denoise loop,
+/// not observable at a phase boundary — poll it).
+final class PhysSampler: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _max: UInt64 = 0
+    private var _running = false
+    func start() {
+        lock.lock(); _running = true; lock.unlock()
+        let t = Thread { [weak self] in
+            while self?.running == true {
+                let p = physFootprintBytes()
+                self?.observe(p)
+                Thread.sleep(forTimeInterval: 0.025)
+            }
+        }
+        t.stackSize = 1 << 20
+        t.start()
+    }
+    var running: Bool { lock.lock(); defer { lock.unlock() }; return _running }
+    func observe(_ p: UInt64) { lock.lock(); if p > _max { _max = p }; lock.unlock() }
+    func resetMax() { lock.lock(); _max = physFootprintBytes(); lock.unlock() }
+    func maxBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _max }
+    func stop() { lock.lock(); _running = false; lock.unlock() }
+}
+
+/// Page weight files into the OS cache before `load()`'s GPU evals so a cold fault off the archive
+/// volume never stalls a live Metal command buffer (the I5 watchdog abort; the engine's
+/// `WeightPrewarmer` does this in-app — the CLI bench replicates it). Streams + discards; no big alloc.
+func prewarmFiles(_ paths: [URL]) {
+    for p in paths {
+        guard let fh = try? FileHandle(forReadingFrom: p) else { continue }
+        defer { try? fh.close() }
+        while let chunk = try? fh.read(upToCount: 64 << 20), !chunk.isEmpty {}
+    }
+}
+
+func memBenchGate(quant: String) async throws {
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet"
+    let ltxDir = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx")
+    let gemmaDir = URL(fileURLWithPath: defaultGemma)
+    let transformerPath: URL?
+    switch quant {
+    case "int8", "q8": transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q8/transformer-distilled.safetensors")
+    case "int4", "q4": transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q4/transformer-distilled.safetensors")
+    default: transformerPath = nil  // bf16
+    }
+    let h = 512, w = 704, nf = 9
+    print("[mem-bench] quant=\(quant)  envelope=\(w)×\(h)×\(nf)f  path=two-stage  (per-stage evict)")
+
+    // Prewarm (mirror the engine's WeightPrewarmer): the DiT transformer + all LTX components + Gemma.
+    let p0 = Date()
+    var warm = [transformerPath ?? ltxDir.appendingPathComponent("transformer-distilled.safetensors")]
+    for f in ["connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
+              "audio_vae.safetensors", "vocoder.safetensors", "spatial_upscaler_x2_v1_1.safetensors"] {
+        warm.append(ltxDir.appendingPathComponent(f))
+    }
+    warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(at: gemmaDir, includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.pathExtension == "safetensors" })
+    prewarmFiles(warm)
+    print(String(format: "[mem-bench] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
+
+    let sampler = PhysSampler(); sampler.start()
+    let t0 = Date()
+    let pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir, transformerPath: transformerPath)
+    print(String(format: "[mem-bench] load %.1fs  phys-after-load(DiT only)=%.2f GB", Date().timeIntervalSince(t0), gbOf(physFootprintBytes())))
+
+    // Warmup (compiles size-specific kernels; not measured for peak).
+    _ = try await pipeline.t2vTwoStage(prompt: "a cat playing piano", height: h, width: w, numFrames: nf, fps: 24, seed: 42)
+    Memory.clearCache()
+    let floor = physFootprintBytes()  // stages self-evicted → DiT weights + framework
+    print(String(format: "[mem-bench] resident floor (post-run + clearCache): %.2f GB", gbOf(floor)))
+
+    // Measured run — the sampler tracks the phys high-water across every stage.
+    sampler.resetMax()
+    let r0 = Date()
+    let out = try await pipeline.t2vTwoStage(prompt: "a cat playing piano", height: h, width: w, numFrames: nf, fps: 24, seed: 42)
+    eval(out.video); if let a = out.audio { eval(a) }
+    let peak = sampler.maxBytes()
+    sampler.stop()
+    let activation = peak > floor ? peak - floor : 0
+    print(String(format: "[mem-bench] run %.1fs", Date().timeIntervalSince(r0)))
+    print(String(format: "[mem-bench] PEAK phys_footprint: %.2f GB", gbOf(peak)))
+    print(String(format: "[mem-bench] DECLARE → residentBytes ≈ %.2f GB (%llu)  peakActivationBytes ≈ %.2f GB (%llu)",
+                 gbOf(floor), floor, gbOf(activation), activation))
+    print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -487,6 +597,9 @@ if args.contains("--connector-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {
     try e2eGate()
+} else if args.contains("--mem-bench") {
+    try await memBenchGate(quant: positional.first ?? "bf16")
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
+    print("       RunLTX2 --mem-bench [bf16|int8|int4]   (efficiency-sweep footprint at 704×512×9f)")
 }
