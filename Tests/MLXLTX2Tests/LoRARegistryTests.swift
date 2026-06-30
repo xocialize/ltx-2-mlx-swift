@@ -42,6 +42,14 @@ struct LoRARegistryTests {
         #expect(reg.entry(id: "omnicine")?.inputKind == LoRAInputKind.none)
     }
 
+    @Test func fantasyAnimeEntryResolves() throws {
+        let reg = try LoRARegistry.bundled()
+        let e = try #require(reg.entry(id: "fantasy-anime"))
+        #expect(e.repo == "vrgamedevgirl84/LTX_2.3_Fantasy_Anime_Style_LoRa")
+        #expect(e.trigger == "f4nt4sy4n1m6")
+        #expect(e.inputKind == LoRAInputKind.none)
+    }
+
     @Test func unknownEntryIsNil() throws {
         let reg = try LoRARegistry.bundled()
         #expect(reg.entry(id: "does-not-exist") == nil)

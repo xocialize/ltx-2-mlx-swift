@@ -19,6 +19,14 @@
       "trigger": ""
     },
     {
+      "id": "fantasy-anime",
+      "displayName": "Fantasy Anime style (vrgamedevgirl)",
+      "repo": "vrgamedevgirl84/LTX_2.3_Fantasy_Anime_Style_LoRa",
+      "weightFile": "Fantasy_Anime.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": "f4nt4sy4n1m6"
+    },
+    {
       "id": "i2v-adapter",
       "displayName": "Image→Video adapter (MachineDelusions)",
       "repo": "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa",
