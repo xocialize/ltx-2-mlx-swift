@@ -37,6 +37,28 @@ connector, gemma, text-encode, dit-tiny, dit-full, **dit-q8 / dit-q4** (quant), 
 audio-decode, upsampler, upscale-step. (MLX-Swift ↔ MLX-Python is not bit-identical across a
 multi-step trajectory — that's expected FP non-determinism; the gate is per-op + perceptual.)
 
+## Memory
+
+Per-stage **load → use → evict** (MLXEngine 1.14 efficiency contract): only the DiT backbone stays
+resident through the denoise; the Gemma+Connector text encoder evicts before it, and the VAE-decode
+stack / two-stage encoder+upsampler load only around their phases. Because weights are lazy-mmap, the
+DiT isn't even materialized during text-encode — encoder and DiT are never co-resident, so the peak is
+the DiT denoise **alone**. The manifest declares a **split footprint** (`residentBytes` weights +
+`peakActivationBytes` transient); the engine reserves one transient across residents (serialized
+inference), so LTX co-resides with other models far better than a single-number floor allows.
+
+Measured in-app (M5 Max / 128 GB, two-stage **704×512×9f**, seed 42; peak scales with resolution×frames):
+
+| Quant | Resident (DiT) | Activation | **Peak** | vs. old all-resident |
+|---|---|---|---|---|
+| bf16 | 38.9 GB | 13.1 GB | **52.0 GB** | 82.8 GB |
+| int8 (q8) | 21.5 GB | 12.1 GB | **33.6 GB** | 62.4 GB |
+| int4 (q4) | 12.2 GB | 15.1 GB | **27.3 GB** | 53.3 GB |
+
+Activation is ~dtype-independent (same bf16 compute). int4 is artifact-free but **diverges the distilled
+sample** vs bf16/q8 (larger per-step quant error). Re-measure (`RunLTX2 --mem-bench`) before claiming a
+larger res/frame envelope fits a tier.
+
 ## Layout
 
 - `Sources/LTX2` — engine-agnostic functional cores (RoPE, Gemma, Connector, DiT, DenoiseLoop,
@@ -55,4 +77,9 @@ path dep at `../mlx-swift-lm`.
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 xcrun swift run -c release RunLTX2 --dit-full-gate
+xcrun swift run -c release RunLTX2 --mem-bench bf16   # split-footprint harness [bf16|int8|int4]
 ```
+
+> The `--mem-bench` CLI can trip the Metal GPU watchdog on the full two-stage run (beta-OS flakiness);
+> the reliable measurement surface is the in-app autorun (`LTX_AUTORUN=1 LTX_QUANT=bf16` in
+> LTXVideoTesting), which has the engine's weight prewarm + governor.
