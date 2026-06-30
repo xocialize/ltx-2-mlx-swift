@@ -128,7 +128,10 @@ public final class MLXLTX2Package: ModelPackage {
         appliedLoRA = nil
     }
 
-    public func unload() async { pipeline = nil; appliedLoRA = nil }
+    public func unload() async {
+        pipeline = nil; appliedLoRA = nil
+        MLX.Memory.clearCache()   // release the retained MLX pool so eviction frees RSS (not just drop refs)
+    }
 
     public func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
         guard let pipeline else { throw PackageError.notLoaded }
