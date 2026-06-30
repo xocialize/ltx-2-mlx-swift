@@ -28,6 +28,13 @@ struct LoRARegistryTests {
         #expect(e.weightFile.hasSuffix(".safetensors"))
     }
 
+    @Test func i2vAdapterEntryResolves() throws {
+        let reg = try LoRARegistry.bundled()
+        let e = try #require(reg.entry(id: "i2v-adapter"))
+        #expect(e.repo == "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa")
+        #expect(e.weightFile.hasSuffix(".safetensors"))
+    }
+
     @Test func unknownEntryIsNil() throws {
         let reg = try LoRARegistry.bundled()
         #expect(reg.entry(id: "does-not-exist") == nil)
