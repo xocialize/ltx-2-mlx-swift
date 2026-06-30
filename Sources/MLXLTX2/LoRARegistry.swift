@@ -12,6 +12,11 @@
 import Foundation
 import MLXToolKit
 
+/// The conditioning input an effect expects — drives which input picker the UI reveals.
+/// `none` = pure text-to-video; `image` = image-to-video (rides `T2VRequest.initImage`);
+/// `video` = video-to-video (reserved; needs a package v2v path before it's selectable).
+public enum LoRAInputKind: String, Codable, Sendable { case none, image, video }
+
 /// One selectable effect. `repo`/`weightFile` resolve to a HF `resolve/main` download URL.
 public struct LoRAEntry: Codable, Sendable, Equatable {
     public let id: String
@@ -20,6 +25,11 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     public let weightFile: String
     public let defaultStrength: Float
     public let trigger: String
+    /// Conditioning input this effect needs (optional in JSON; absent → `.none`).
+    public let input: LoRAInputKind?
+
+    /// Effective input kind (absent → `.none`).
+    public var inputKind: LoRAInputKind { input ?? .none }
 }
 
 /// The decoded registry plus id lookup + lazy file resolution.

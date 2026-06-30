@@ -33,6 +33,13 @@ struct LoRARegistryTests {
         let e = try #require(reg.entry(id: "i2v-adapter"))
         #expect(e.repo == "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa")
         #expect(e.weightFile.hasSuffix(".safetensors"))
+        #expect(e.inputKind == .image)
+    }
+
+    @Test func plainEntriesDefaultToNoInput() throws {
+        let reg = try LoRARegistry.bundled()
+        #expect(reg.entry(id: "transition")?.inputKind == LoRAInputKind.none)
+        #expect(reg.entry(id: "omnicine")?.inputKind == LoRAInputKind.none)
     }
 
     @Test func unknownEntryIsNil() throws {

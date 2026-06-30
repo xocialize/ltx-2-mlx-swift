@@ -20,11 +20,12 @@
     },
     {
       "id": "i2v-adapter",
-      "displayName": "Image→Video adapter (MachineDelusions, use with an init image)",
+      "displayName": "Image→Video adapter (MachineDelusions)",
       "repo": "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa",
       "weightFile": "LTX-2-Image2Vid-Adapter.safetensors",
       "defaultStrength": 1.0,
-      "trigger": ""
+      "trigger": "",
+      "input": "image"
     }
   ]
 }
