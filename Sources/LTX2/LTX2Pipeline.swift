@@ -109,6 +109,22 @@ public final class LTX2Pipeline {
         }
     }
 
+    /// LOW-TIER-PLAN T1: decode long clips in temporal chunks so the decode-stage peak is
+    /// window-bound, not clip-length-bound. Gate-validated (`--vae-chunk-gate`, 233f @704×512):
+    /// whole-frame 67.8 GB vs chunk8/halo5 window-bound; halo 5 = seam PSNR ≥66 dB / cosine 1.000000
+    /// (halo 4 → 59 dB, fails the 60 dB bar; exact receptive field is 13.5 latent frames — decayed
+    /// influence makes 5 perceptually exact). Engages only when the clip exceeds the chunk window
+    /// (below that, whole-frame is strictly cheaper). Env overrides: LTX_VAE_CHUNK / LTX_VAE_HALO
+    /// (0 disables chunking).
+    private func decodePixels(_ spatial: MLXArray) -> MLXArray {
+        let env = ProcessInfo.processInfo.environment
+        let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? 8
+        let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
+        let fLat = spatial.dim(2)
+        guard chunk > 0, fLat > chunk + 2 * halo else { return vae!.decode(spatial) }
+        return vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo)
+    }
+
     private func dropDecoder() {
         guard !keepStagesResident else { return }
         vae = nil; audioVAE = nil; vocoder = nil
@@ -236,7 +252,7 @@ public final class LTX2Pipeline {
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
         let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
-        let pixels = vae!.decode(vspatial)
+        let pixels = decodePixels(vspatial)
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
@@ -301,7 +317,7 @@ public final class LTX2Pipeline {
         // 6. Decode
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let pixels = vae!.decode(vspatial)
+        let pixels = decodePixels(vspatial)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
         dropDecoder()
@@ -376,7 +392,7 @@ public final class LTX2Pipeline {
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
         let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
-        let pixels = vae!.decode(vspatial)
+        let pixels = decodePixels(vspatial)
         eval(pixels)
         MLXProfiler.shared.end(decSpan)
         let audSpan = MLXProfiler.shared.begin("audio-decode", "audioVAE+vocoder")

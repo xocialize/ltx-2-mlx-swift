@@ -52,6 +52,17 @@ tier profiles (T3). Ordering below starts with the runway to the chunked-decode 
 
 **Acceptance:** decode curve captured; gate runs green in trivial mode (chunk = whole).
 
+> **T0 RESULTS (2026-07-01, DONE):** gate + `decodeChunked` landed together. Trim math
+> (`startTrim = a==0 ? 0 : 8·hl−7`, `endTrim = b==F ? 0 : 8·hr`) exact on first try (shape + totals).
+> Decode-peak-vs-frames is LINEAR at ~2.2 GB/latent-frame @704×512: F_lat 15 → 34.5 GB, F_lat 30
+> → **67.8 GB** (233 frames — this is what drove the 240f run's 110 GB total). Chunked is
+> window-bound. Halo sweep @F_lat 30, chunk 5 (seam-min PSNR): halo 2 → 38.5 dB ❌ · 3 → 51.4 ❌ ·
+> 4 → 59.1 ❌ (just under) · **5 → 66.2 dB / cosine 1.000000 ✅**; chunk 10 halo 5 → 67.1 dB ✅.
+> Exact temporal receptive field is **13.5 latent frames** (bit-exactness would defeat chunking);
+> conv influence decays, so **halo 5 is the perceptually-exact minimum — LOCKED**. Peaks: chunk 5
+> h5 (window 15) = 36.9 GB · chunk 10 h5 (window 20) = 47.3 GB vs 67.8 whole. Time cost = window/chunk
+> (chunk 5: ~2.9× whole; chunk 10: ~1.7×) — T3 picks per-tier chunk sizes on that tradeoff.
+
 ## T1 — Temporal-chunked VAE decode (M) — the headline
 
 Decode the (1,128,F,H,W) latent in **temporal chunks with halo overlap**, concatenating pixel outputs.
@@ -72,6 +83,13 @@ Structure that matters (`VideoVAE.swift`): NON-causal temporal convs (k=3, symme
 **Acceptance:** decode-stage peak ~flat vs frame count (tile-bound, the SeedVR2 property);
 240f bf16 total peak drops well below today's 110 GB; `--vae-chunk-gate` + `--vae-decode-gate` +
 `--e2e-gate` green; one in-app 240f run confirms output unchanged perceptually.
+
+> **T1 STATUS (2026-07-01): mechanics DONE, wired.** `decodeChunked` (gate-validated above) is wired
+> into all three pipeline paths via `decodePixels`: defaults **chunk 8 / halo 5** (window ≤ 18),
+> engaging only when `fLat > chunk + 2·halo` (below that whole-frame is strictly cheaper); env
+> overrides `LTX_VAE_CHUNK` / `LTX_VAE_HALO` (0 disables). REMAINING for T1 close-out: one in-app
+> long-clip run (e.g. the 240f case) confirming the total-peak drop + perceptual output — then
+> budget-driven chunk sizing folds into T3's tier profiles.
 
 ## T2 — Connector residency (S)
 

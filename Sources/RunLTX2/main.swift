@@ -590,6 +590,69 @@ func encodeStressGate(frames n: Int, software: Bool, hog: Bool, audio: Bool) asy
     _ = hogs.count  // keep pressure alive through the encode
 }
 
+// MARK: - VAE chunked-decode gate (LOW-TIER-PLAN T0/T1)
+//
+// Whole-frame decode = the EXACT reference; chunked decode must match it. Reports cosine + maxAbs +
+// the minimum per-frame PSNR around each chunk seam (the RIFE seam-eval pattern), plus the phys
+// peak of whole vs chunked — the memory win T1 exists for. Random latent: peak/parity are functions
+// of SHAPE, not content. Usage: --vae-chunk-gate [Flat] [chunk] [halo]  (defaults 15, 5, 4 —
+// F_lat 15 = 113 output frames @704×512).
+@InferenceActor
+func vaeChunkGate(fLat: Int, chunk: Int, halo: Int) async throws {
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"
+    let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
+    let hLat = 512 / 32, wLat = 704 / 32
+    MLXRandom.seed(7)
+    let latent = MLXRandom.normal([1, 128, fLat, hLat, wLat]).asType(.float32)
+    eval(latent)
+    print("[vae-chunk-gate] F_lat=\(fLat) (→\(8 * fLat - 7) frames @704×512)  chunk=\(chunk) halo=\(halo)")
+
+    // Whole-frame reference + its phys peak.
+    Memory.clearCache()
+    let base = physFootprintBytes()
+    let sampler = PhysSampler(); sampler.start(); sampler.resetMax()
+    let t0 = Date()
+    let whole = dec.decode(latent); eval(whole)
+    let wholePeak = sampler.maxBytes()
+    print(String(format: "[vae-chunk-gate] whole:   %.1fs  peakΔ=%.2f GB  out=%@",
+                 Date().timeIntervalSince(t0), gbOf(wholePeak > base ? wholePeak - base : 0),
+                 "\(whole.shape)" as NSString))
+
+    // Chunked + its phys peak.
+    Memory.clearCache()
+    sampler.resetMax()
+    let t1 = Date()
+    let chunked = dec.decodeChunked(latent, chunkFrames: chunk, halo: halo); eval(chunked)
+    let chunkPeak = sampler.maxBytes(); sampler.stop()
+    print(String(format: "[vae-chunk-gate] chunked: %.1fs  peakΔ=%.2f GB  out=%@",
+                 Date().timeIntervalSince(t1), gbOf(chunkPeak > base ? chunkPeak - base : 0),
+                 "\(chunked.shape)" as NSString))
+
+    guard whole.shape == chunked.shape else {
+        print("[vae-chunk-gate] FAIL ❌ shape mismatch \(whole.shape) vs \(chunked.shape) — trim math wrong")
+        exit(1)
+    }
+    let cos = cosine(chunked, whole), m = maxAbs(chunked, whole)
+    // Min per-frame PSNR across ±2 pixel frames around each chunk seam (seam = latent boundary ×8).
+    var minPSNR = Float.infinity; var minAt = -1
+    var boundary = chunk
+    while boundary < fLat {
+        let seam = 8 * boundary - 7
+        for f in max(0, seam - 2) ... min(whole.dim(2) - 1, seam + 2) {
+            let d = (chunked[0..., 0..., f] - whole[0..., 0..., f]).asType(.float32)
+            let mse = (d * d).mean().item(Float.self)
+            let psnr = mse <= 1e-12 ? Float(99) : 10 * log10(4.0 / mse)   // range [-1,1] → peak²=4
+            if psnr < minPSNR { minPSNR = psnr; minAt = f }
+        }
+        boundary += chunk
+    }
+    print(String(format: "[vae-chunk-gate] cosine=%.6f  maxAbs=%.5f  minSeamPSNR=%.1f dB (frame %d)",
+                 cos, m, minPSNR, minAt))
+    let pass = cos >= 0.9999 && minPSNR >= 60
+    print(pass ? "[vae-chunk-gate] PASS ✅" : "[vae-chunk-gate] FAIL ❌ (grow halo or fix trim math)")
+    if !pass { exit(1) }
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -632,6 +695,11 @@ if args.contains("--connector-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {
     try e2eGate()
+} else if args.contains("--vae-chunk-gate") {
+    let ints = positional.compactMap { Int($0) }
+    try await vaeChunkGate(fLat: ints.count > 0 ? ints[0] : 15,
+                           chunk: ints.count > 1 ? ints[1] : 5,
+                           halo: ints.count > 2 ? ints[2] : 4)
 } else if args.contains("--encode-stress") {
     let n = positional.first.flatMap { Int($0) } ?? 41
     try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"),

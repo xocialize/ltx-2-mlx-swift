@@ -10,6 +10,7 @@ import Foundation
 import MLX
 import MLXFast
 import MLXNN
+import MLXProfiling
 
 public struct VideoVAEDecoder {
     let w: [String: MLXArray]
@@ -34,14 +35,20 @@ public struct VideoVAEDecoder {
 
     /// latent: (B, C=128, F, H, W) PyTorch layout → pixels (B, 3, F*8-7, H*32, W*32) in [-1,1].
     public func decode(_ latent: MLXArray) -> MLXArray {
+        let prof = MLXProfiler.shared
         var x = latent.asType(.float32).transposed(0, 2, 3, 4, 1)  // BFHWC
         x = denormalize(x)
         x = conv3dBlock(x, "conv_in")
 
         var upIdx = 0
         for i in 0 ..< 9 {
+            // Per-up-block attribution (LOW-TIER-PLAN T0). Timing is only honest at an eval, so
+            // when profiling we also materialize the even (res) stages — profiler-off behavior is
+            // unchanged (evals only between upsample stages, as before).
+            let span = prof.begin("vae-decode", "up\(i)", note: "in=\(x.shape)")
             if i % 2 == 0 {
                 x = resStage(x, "up_blocks.\(i)", VideoVAEDecoder.resStageBlocks[i]!)
+                if prof.enabled { eval(x) }
             } else {
                 x = conv3dBlock(x, "up_blocks.\(i).conv")
                 let (sf, tf) = VideoVAEDecoder.upsampleConfig[upIdx]
@@ -50,11 +57,52 @@ public struct VideoVAEDecoder {
                 upIdx += 1
                 eval(x)  // materialize between upsample stages (memory)
             }
+            prof.end(span)
         }
 
+        let span = prof.begin("vae-decode", "out+unpatchify")
         x = conv3dBlock(silu(pixelNorm(x)), "conv_out")
         x = unpatchifySpatial(x, patchSize: 4)
-        return x.transposed(0, 4, 1, 2, 3)  // BCFHW
+        x = x.transposed(0, 4, 1, 2, 3)  // BCFHW
+        if prof.enabled { eval(x) }
+        prof.end(span)
+        return x
+    }
+
+    /// LOW-TIER-PLAN T1 seam (validated by `RunLTX2 --vae-chunk-gate`): decode the latent in
+    /// TEMPORAL CHUNKS with a halo per side so the decode-stage peak is chunk-bound, not
+    /// clip-length-bound. Frame math: F latent frames decode to `8F−7` pixel frames (three
+    /// temporal-2× upsamples, each dropping its first frame: F→2F−1→4F−3→8F−7); the −7 is absorbed
+    /// entirely at the CLIP start. For a chunk [a,b) decoded with left/right halos (hl,hr):
+    ///   window length W = (b−a)+hl+hr → decode gives 8W−7 pixel frames;
+    ///   keep [startTrim, len−endTrim) with startTrim = (a==0 ? 0 : 8·hl−7), endTrim = (b==F ? 0 : 8·hr)
+    ///   → exactly 8(b−a) interior pixels (8b−7 for the first chunk) — totals 8F−7 across chunks.
+    /// The halo absorbs the non-causal receptive field (k=3 convs at 4 temporal scales); its exact
+    /// safe minimum is derived empirically against the gate (start ≥1; T0 default 4). Each chunk is
+    /// eval'd and the pool cleared, so peak ≈ one chunk's decode.
+    public func decodeChunked(_ latent: MLXArray, chunkFrames: Int, halo: Int) -> MLXArray {
+        let F = latent.dim(2)
+        let chunk = max(1, chunkFrames), h = max(1, halo)
+        guard F > chunk else { return decode(latent) }
+        let prof = MLXProfiler.shared
+        var parts: [MLXArray] = []
+        var a = 0
+        while a < F {
+            let b = min(a + chunk, F)
+            let ws = max(0, a - h), we = min(F, b + h)
+            let hl = a - ws, hr = we - b
+            let span = prof.begin("vae-decode", "chunk[\(a),\(b))", note: "window[\(ws),\(we)) halo(\(hl),\(hr))")
+            var px = decode(latent[0..., 0..., ws ..< we])          // (1,3,8W−7,H,W)
+            let startTrim = (a == 0) ? 0 : 8 * hl - 7
+            let endTrim = (b == F) ? 0 : 8 * hr
+            px = px[0..., 0..., startTrim ..< (px.dim(2) - endTrim)]
+            eval(px)
+            prof.end(span)
+            parts.append(px)
+            Memory.clearCache()   // keep the pool chunk-bound
+            a = b
+        }
+        return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
     }
 
     // MARK: - blocks
