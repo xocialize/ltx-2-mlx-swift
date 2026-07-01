@@ -43,16 +43,23 @@ public struct Connector {
 
     public init(weights: [String: MLXArray]) {
         // Strip a leading "connector." if present (native safetensors keys carry it).
-        // Compute the connector in fp32: the 188160-wide text-embedding projection
-        // overflows in bf16 matmul (mlx-swift's libmlx differs from Python mlx here).
-        // Weights are bf16 on disk → lossless upcast; the connector stays bf16 *on disk*.
+        // RESIDENCY (LOW-TIER-PLAN T2): weights stay **bf16-resident** (as on disk, mmap-friendly)
+        // and are upcast to fp32 **per-op at use** — fp32 is a COMPUTE requirement (the 188160-wide
+        // text-embedding projection overflows in bf16 matmul; mlx-swift's libmlx differs from Python
+        // mlx here), not a storage one. This halves the connector's resident footprint
+        // (~12.7 → ~6.3 GB); the fp32 copies are transient graph nodes freed after the forward.
+        // Numerics are bit-identical to the old materialize-fp32-at-init (same bf16→fp32 cast).
         var stripped: [String: MLXArray] = [:]
         for (k, v) in weights {
             let key = k.hasPrefix("connector.") ? String(k.dropFirst("connector.".count)) : k
-            stripped[key] = v.asType(.float32)
+            stripped[key] = v
         }
         self.w = stripped
     }
+
+    /// fp32 view of a weight for compute (see init note) — a lazy graph node, transient.
+    @inline(__always) private func f32(_ key: String) -> MLXArray { w[key]!.asType(.float32) }
+    @inline(__always) private func f32opt(_ key: String) -> MLXArray? { w[key].map { $0.asType(.float32) } }
 
     /// Load connector weights from a safetensors file.
     public static func load(connectorPath: URL) throws -> Connector {
@@ -89,10 +96,12 @@ public struct Connector {
         // chunk so each command buffer is bounded (no effect on numerics — same matmul, sliced).
         let vScale = (Float(videoDim) / Float(embeddingDim)).squareRoot()
         let aScale = (Float(audioDim) / Float(embeddingDim)).squareRoot()
-        let vW = w["text_embedding_projection.video_aggregate_embed.weight"]!
-        let vB = w["text_embedding_projection.video_aggregate_embed.bias"]
-        let aW = w["text_embedding_projection.audio_aggregate_embed.weight"]!
-        let aB = w["text_embedding_projection.audio_aggregate_embed.bias"]
+        // Hoisted fp32 views: shared graph nodes across the chunk loop, so each big projection
+        // weight materializes fp32 ONCE per forward (transient), not per chunk.
+        let vW = f32("text_embedding_projection.video_aggregate_embed.weight")
+        let vB = f32opt("text_embedding_projection.video_aggregate_embed.bias")
+        let aW = f32("text_embedding_projection.audio_aggregate_embed.weight")
+        let aB = f32opt("text_embedding_projection.audio_aggregate_embed.bias")
 
         let T = stacked.dim(1)
         let chunk = 128
@@ -124,7 +133,7 @@ public struct Connector {
         let B = hidden.dim(0)
 
         // Replace padding tokens with tiled learnable registers (left-padded input)
-        let lr = w["\(prefix).learnable_registers"]!                  // (numReg, dim)
+        let lr = f32("\(prefix).learnable_registers")                 // (numReg, dim)
         let registers = MLX.broadcast(lr.expandedDimensions(axis: 0), to: [B, numRegisters, dim])
         var h = replacePaddingWithRegisters(hidden, mask: mask, registers: registers)
         dbg("\(prefix) afterRegisters", h)
@@ -161,13 +170,13 @@ public struct Connector {
         let B = x.dim(0), N = x.dim(1)
         let scale = 1.0 / Float(headDim).squareRoot()
 
-        var q = dense(x, w["\(prefix).to_q.weight"]!, w["\(prefix).to_q.bias"])
-        var k = dense(x, w["\(prefix).to_k.weight"]!, w["\(prefix).to_k.bias"])
-        let v0 = dense(x, w["\(prefix).to_v.weight"]!, w["\(prefix).to_v.bias"])
+        var q = dense(x, f32("\(prefix).to_q.weight"), f32opt("\(prefix).to_q.bias"))
+        var k = dense(x, f32("\(prefix).to_k.weight"), f32opt("\(prefix).to_k.bias"))
+        let v0 = dense(x, f32("\(prefix).to_v.weight"), f32opt("\(prefix).to_v.bias"))
 
         // QK RMSNorm over full inner_dim (nn.RMSNorm default eps 1e-5)
-        q = rmsW(q, w["\(prefix).q_norm.weight"]!, eps: 1e-5)
-        k = rmsW(k, w["\(prefix).k_norm.weight"]!, eps: 1e-5)
+        q = rmsW(q, f32("\(prefix).q_norm.weight"), eps: 1e-5)
+        k = rmsW(k, f32("\(prefix).k_norm.weight"), eps: 1e-5)
 
         q = q.reshaped(B, N, numHeads, headDim).transposed(0, 2, 1, 3)
         k = k.reshaped(B, N, numHeads, headDim).transposed(0, 2, 1, 3)
@@ -181,20 +190,20 @@ public struct Connector {
         var out = attn.matmul(v)  // (B,H,N,headDim)
 
         // per-head gate: 2 * sigmoid(logits)
-        let gateLogits = dense(x, w["\(prefix).to_gate_logits.weight"]!, w["\(prefix).to_gate_logits.bias"])  // (B,N,H)
+        let gateLogits = dense(x, f32("\(prefix).to_gate_logits.weight"), f32opt("\(prefix).to_gate_logits.bias"))  // (B,N,H)
         let gate = 2.0 * MLX.sigmoid(gateLogits)
         out = out * gate.transposed(0, 2, 1).expandedDimensions(axis: -1)  // (B,H,N,1)
 
         out = out.transposed(0, 2, 1, 3).reshaped(B, N, numHeads * headDim)
-        return dense(out, w["\(prefix).to_out.0.weight"]!, w["\(prefix).to_out.0.bias"])
+        return dense(out, f32("\(prefix).to_out.0.weight"), f32opt("\(prefix).to_out.0.bias"))
     }
 
     // MARK: - ConnectorFeedForward (GELU-approx)
 
     private func feedForward(_ x: MLXArray, prefix: String) -> MLXArray {
-        var h = dense(x, w["\(prefix).net.0.proj.weight"]!, w["\(prefix).net.0.proj.bias"])
+        var h = dense(x, f32("\(prefix).net.0.proj.weight"), f32opt("\(prefix).net.0.proj.bias"))
         h = geluApproximate(h)
-        return dense(h, w["\(prefix).net.2.weight"]!, w["\(prefix).net.2.bias"])
+        return dense(h, f32("\(prefix).net.2.weight"), f32opt("\(prefix).net.2.bias"))
     }
 
     // MARK: - _replace_padded_with_learnable_registers

@@ -104,6 +104,14 @@ Gates: `--connector-gate` + `--text-encode-gate` cosines unchanged (≥ 0.999).
 
 **Acceptance:** encode-stage phys drops ~6–9 GB (from ~27 toward ~13–19 measured); gates green.
 
+> **T2 RESULTS (2026-07-01, Step 1 DONE):** Connector weights now stay **bf16-resident** with lazy
+> `f32()` views at every use site (the two 188160-wide projection weights hoisted once per forward —
+> one transient fp32 materialization each, shared across the watchdog chunk loop; small block
+> weights upcast per-op). Math is bit-identical to the old materialize-at-init. Gates:
+> `--connector-gate` VIDEO 0.999988 / AUDIO 0.999666 · `--text-encode-gate` VIDEO 0.999989 /
+> AUDIO 0.999651 — **PASS**. Connector resident 12.7 → ~6.3 GB. Step 2 (int8 weights + fp32
+> compute, → ~3.2 GB) remains available if the 24 GB tier's encode-stage measurement needs it (T3).
+
 ## T3 — Tier profiles + `FootprintConfigured` hints + honest admission (S–M)
 
 Activation is seqLen-scaled, so small envelopes shrink the denoise term — declare it per tier instead
