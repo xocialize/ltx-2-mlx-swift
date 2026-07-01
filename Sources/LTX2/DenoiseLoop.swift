@@ -47,10 +47,14 @@ public enum DenoiseLoop {
     /// Distilled t2v Euler loop. `sigmas` includes the terminal 0.0; pairs are consecutive.
     public static func run(
         dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
-        videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray
+        videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
+        label: String = ""
     ) -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0, ax = audioLatent0
+        let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
         for i in 0 ..< (sigmas.count - 1) {
+            let span = LTX2Profiler.shared.begin("denoise", "\(label)step\(i)",
+                note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
             let (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
                                 videoText: videoText, audioText: audioText,
@@ -58,6 +62,7 @@ public enum DenoiseLoop {
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
             ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
             eval(vx, ax)
+            LTX2Profiler.shared.end(span)
         }
         return (vx, ax)
     }
@@ -71,13 +76,17 @@ public enum DenoiseLoop {
         dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         videoCleanLatent: MLXArray? = nil, videoDenoiseMask: MLXArray? = nil,
-        audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil
+        audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,
+        label: String = ""
     ) -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0.asType(.float32), ax = audioLatent0.asType(.float32)
         // Inject clean conditioned latents into the initial noised state.
         if let clean = videoCleanLatent, let m = videoDenoiseMask { vx = applyDenoiseMask(vx, clean: clean, mask: m) }
         if let clean = audioCleanLatent, let m = audioDenoiseMask { ax = applyDenoiseMask(ax, clean: clean, mask: m) }
+        let vN = vx.dim(1), aN = ax.dim(1)
         for i in 0 ..< (sigmas.count - 1) {
+            let span = LTX2Profiler.shared.begin("denoise", "\(label)step\(i)",
+                note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
             let vts = videoDenoiseMask.map { ($0 * sigma).squeezed(axis: -1) }   // (B,N) per-token σ
             let ats = audioDenoiseMask.map { ($0 * sigma).squeezed(axis: -1) }
@@ -90,6 +99,7 @@ public enum DenoiseLoop {
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
             ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
             eval(vx, ax)
+            LTX2Profiler.shared.end(span)
         }
         return (vx, ax)
     }

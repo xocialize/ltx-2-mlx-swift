@@ -145,6 +145,13 @@ public final class LTX2Pipeline {
     /// upsampler); `gemmaDir` is the Gemma-3 weights dir. Audio decode is enabled when both
     /// audio_vae.safetensors and vocoder.safetensors exist.
     public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil) async throws -> LTX2Pipeline {
+        // DIAGNOSTIC LEVER: `LTX_CACHE_LIMIT_GB=N` caps the MLX buffer pool (uncapped by default).
+        // An unbounded cache inflates phys_footprint until the OS pages — the suspected cause of the
+        // 48f "<10% GPU, 1000s" stall. Set this to test whether capping restores throughput.
+        if let g = ProcessInfo.processInfo.environment["LTX_CACHE_LIMIT_GB"], let gb = Int(g) {
+            Memory.cacheLimit = gb * 1_000_000_000
+            LTX2Profiler.shared.note("Memory.cacheLimit set to \(gb) GB (LTX_CACHE_LIMIT_GB)")
+        }
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
         let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
@@ -188,18 +195,23 @@ public final class LTX2Pipeline {
         prompt: String, height: Int = 256, width: Int = 256, numFrames: Int = 9,
         fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
+        // 2. Latent geometry
+        let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
+        let nv = fLat * hLat * wLat
+        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
+        LTX2Profiler.shared.beginRun(String(format:
+            "t2v(one-stage) %dx%d %df fps=%.0f | fLat=%d nv=%d audioT=%d | steps=%d",
+            width, height, numFrames, fps, fLat, nv, audioT, Positions.distilledSigmas.count - 1))
+
         // 1. Text encode (Gemma → connector) — staged: load, encode, evict before denoise.
+        let encSpan = LTX2Profiler.shared.begin("encode", "gemma+connector")
         try await ensureTextEncoder()
         let (ids, mask) = gemma!.tokenize(prompt)
         let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
         eval(videoEmbeds, audioEmbeds)   // materialize before evicting the encoder weights
+        LTX2Profiler.shared.end(encSpan)
         dropTextEncoder()
-
-        // 2. Latent geometry
-        let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
-        let nv = fLat * hLat * wLat
-        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
 
         // 3. Noised init (t2v starts from pure noise at σ_max)
         if let seed { MLXRandom.seed(seed) }
@@ -212,17 +224,20 @@ public final class LTX2Pipeline {
         let (vfinal, afinal) = DenoiseLoop.run(
             dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: videoPositions, audioPositions: audioPositions)
+            videoPositions: videoPositions, audioPositions: audioPositions, label: "")
         eval(vfinal, afinal)
 
         // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
+        let decSpan = LTX2Profiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
         let pixels = vae!.decode(vspatial)
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
+        LTX2Profiler.shared.end(decSpan)
         dropDecoder()
+        LTX2Profiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
     }
 
@@ -299,18 +314,26 @@ public final class LTX2Pipeline {
             return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
         }
 
+        let fLat = (numFrames + 7) / 8
+        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
+        let s2 = Positions.stage2Sigmas
+        let sigma0 = s2[0]
+        let nv2 = fLat * (height / 32) * (width / 32)          // stage-2 (full-res) video token count
+        let nv1p = fLat * (height / 2 / 32) * (width / 2 / 32) // stage-1 (half-res) token count
+        LTX2Profiler.shared.beginRun(String(format:
+            "t2vTwoStage %dx%d %df fps=%.0f | fLat=%d nv1=%d nv2=%d audioT=%d | steps s1=%d s2=%d",
+            width, height, numFrames, fps, fLat, nv1p, nv2, audioT,
+            Positions.distilledSigmas.count - 1, s2.count - 1))
+
         // 1. Text encode (staged)
+        let encSpan = LTX2Profiler.shared.begin("encode", "gemma+connector", note: "gemma-3-12b + fp32 connector")
         try await ensureTextEncoder()
         let (ids, mask) = gemma!.tokenize(prompt)
         let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
         eval(videoEmbeds, audioEmbeds)
+        LTX2Profiler.shared.end(encSpan)
         dropTextEncoder()
-
-        let fLat = (numFrames + 7) / 8
-        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
-        let s2 = Positions.stage2Sigmas
-        let sigma0 = s2[0]
 
         // --- Stage 1: half resolution (denoise peak #1, DiT only resident) ---
         let hHalf = height / 2, wHalf = width / 2
@@ -321,14 +344,16 @@ public final class LTX2Pipeline {
             dit: dit, videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT))
+            audioPositions: Positions.audio(tokens: audioT), label: "s1-")
         eval(v1f, a1f)
 
         // --- Upscale 2× in un-normalized latent space (encoder+upsampler loaded only here) ---
+        let upSpan = LTX2Profiler.shared.begin("upscale", "vae-enc+upsampler", note: "half→full latent")
         try ensureVAEEncoder(); try ensureUpsampler()
         let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
         let upscaled = vaeEncoder!.normalizeLatent(upsampler!(vaeEncoder!.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
         eval(upscaled)
+        LTX2Profiler.shared.end(upSpan)
         dropUpscaler()                                          // evict before the stage-2 denoise peak
         let hLat2 = hLat1 * 2, wLat2 = wLat1 * 2
         let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F*2h1*2w1, 128)
@@ -340,15 +365,21 @@ public final class LTX2Pipeline {
             dit: dit, videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT))
+            audioPositions: Positions.audio(tokens: audioT), label: "s2-")
         eval(v2f, a2f)
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
+        let decSpan = LTX2Profiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
         let pixels = vae!.decode(vspatial)
+        eval(pixels)
+        LTX2Profiler.shared.end(decSpan)
+        let audSpan = LTX2Profiler.shared.begin("audio-decode", "audioVAE+vocoder")
         let waveform = decodeAudio(a2f)
-        eval(pixels); if let waveform { eval(waveform) }
+        if let waveform { eval(waveform) }
+        LTX2Profiler.shared.end(audSpan)
         dropDecoder()
+        LTX2Profiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
     }
 }
