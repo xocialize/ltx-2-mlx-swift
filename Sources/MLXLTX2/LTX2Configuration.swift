@@ -1,6 +1,39 @@
 import Foundation
 import MLXToolKit
 
+/// Memory-tier profile (LOW-TIER-PLAN T3): an envelope clamp + path policy + VAE decode window that
+/// makes LTX-2.3 honestly declarable per tier. Activation is seqLen-scaled, so a profile that CLAMPS
+/// the envelope can declare a far smaller `peakActivationBytesHint` than the 704×512 default —
+/// requests beyond the envelope are clamped (not rejected). The recommended quant per tier is
+/// advisory (`recommendedQuant`); the registered `quant` still decides the checkpoint.
+/// 16 GB is deliberately ABSENT: the int4 DiT alone (11.3 GB) ≈ a 16 GB governor budget, and no
+/// smaller LTX-2 checkpoint exists.
+public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
+    /// 24 GB Macs (M5 MacBook Pro default): int4, one-stage, small envelope, tight decode window.
+    case compact24
+    /// 32 GB Macs: int4/int8, one-stage, mid envelope.
+    case balanced32
+    /// 64 GB Macs: int8, full two-stage at the standard envelope.
+    case standard64
+    /// 96–128 GB Macs: bf16 two-stage, long clips (240f proven at ~92 GB with chunked decode).
+    case max128
+
+    public var maxWidth: Int  { switch self { case .compact24: 512; case .balanced32: 576; default: 704 } }
+    public var maxHeight: Int { switch self { case .compact24: 288; case .balanced32: 320; default: 512 } }
+    public var maxFrames: Int {
+        switch self { case .compact24: 121; case .balanced32: 161; case .standard64: 161; case .max128: 241 }
+    }
+    /// One-stage skips the spatial upsampler + full-res stage-2 refine — the low-tier denoise path.
+    public var oneStage: Bool { self == .compact24 || self == .balanced32 }
+    /// VAE temporal-decode window knob (see `LTX2Pipeline.decodePixels`; halo is fixed at 5).
+    public var vaeChunkFrames: Int {
+        switch self { case .compact24: 4; case .balanced32: 6; default: 8 }
+    }
+    public var recommendedQuant: Quant {
+        switch self { case .compact24, .balanced32: .int4; case .standard64: .int8; case .max128: .bf16 }
+    }
+}
+
 /// Init-time configuration for `MLXLTX2Package` (C9): where the LTX-2.3 component
 /// weights and the Gemma-3 text encoder live. Per-request prompt/size/steps ride
 /// the canonical `T2VRequest`, not here.
@@ -29,6 +62,9 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     public var gemmaDirectory: URL?
     /// Engine-chosen models root (auto-materialization target). Environment-specific.
     public var modelsRootDirectory: URL?
+    /// Memory-tier profile (nil = unconstrained legacy behavior — no clamp, two-stage preferred,
+    /// footprint falls back to the per-quant `QuantFootprint` measured at 704×512).
+    public var profile: LTX2Profile?
 
     public init(
         repo: String = "dgrauet/ltx-2.3-mlx",
@@ -37,7 +73,8 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         ltxDirectory: URL? = nil,
         transformerPath: URL? = nil,
         gemmaDirectory: URL? = nil,
-        modelsRootDirectory: URL? = nil
+        modelsRootDirectory: URL? = nil,
+        profile: LTX2Profile? = nil
     ) {
         self.repo = repo
         self.revision = revision
@@ -46,10 +83,36 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         self.transformerPath = transformerPath
         self.gemmaDirectory = gemmaDirectory
         self.modelsRootDirectory = modelsRootDirectory
+        self.profile = profile
     }
 
     private enum CodingKeys: String, CodingKey {
-        case repo, revision, quant
+        case repo, revision, quant, profile
+    }
+}
+
+/// Per-profile transient hint (contract 1.14 `FootprintConfigured`): the activation peak is
+/// seqLen-scaled, so a clamped profile declares its OWN transient instead of the 704×512 default.
+/// `residentBytesHint` stays nil — the per-quant `QuantFootprint.residentBytes` (the DiT floor) is
+/// envelope-independent. Values are max-over-phase at the profile's envelope; measured entries are
+/// marked, others are estimates pending the T3 autorun re-baseline (LOW-TIER-PLAN).
+extension LTX2Configuration: FootprintConfigured {
+    public var residentBytesHint: UInt64? { nil }
+
+    public var peakActivationBytesHint: UInt64? {
+        guard let profile else { return nil }   // fall back to the per-quant QuantFootprint
+        // MEASURED 2026-07-01 (T3 autorun, clamp exercised; see LOW-TIER-PLAN T3 RESULTS). These are
+        // the HONEST current numbers — compact24/balanced32 do NOT yet fit their nominal tier
+        // budgets (encode stage is the peak: Gemma+connector co-resident + hoisted fp32 projection
+        // views; standard64's is the decode window's MLX-pool growth). T3b levers (sequential
+        // Gemma→connector, connector int8 quantizedMatmul, scoped cacheLimit during decode) tighten
+        // these toward the 0.7× budgets; re-baseline on each landing.
+        switch profile {
+        case .compact24:  return 25_000_000_000   // act 23.9 measured (peak 35.9 = encode-bound)
+        case .balanced32: return 25_000_000_000   // act 23.5 measured (encode-bound, same stage)
+        case .standard64: return 41_000_000_000   // act 39.1 measured (decode-window/cache-bound)
+        case .max128:     return 50_000_000_000   // act 47.9 measured (240f i2v bf16, chunked)
+        }
     }
 }
 

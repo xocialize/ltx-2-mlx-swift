@@ -163,7 +163,17 @@ public final class MLXLTX2Package: ModelPackage {
         try Task.checkCancellation()
 
         let fps = t2v.fps ?? 24
-        let h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
+        var h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
+        // Tier profile (LOW-TIER-PLAN T3): CLAMP the request to the profile's envelope (what makes
+        // the declared `peakActivationBytesHint` honest), select the one-stage path on low tiers,
+        // and set the VAE decode window. `LTX_ONE_STAGE=1` forces one-stage for headless measurement.
+        if let p = configuration.profile {
+            wd = min(wd, p.maxWidth); h = min(h, p.maxHeight); nf = min(nf, p.maxFrames)
+            wd = max(64, (wd / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
+            pipeline.vaeChunkFrames = p.vaeChunkFrames
+        }
+        let oneStage = configuration.profile?.oneStage
+            ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")
         let out: LTX2Pipeline.Output
         if let initImage = t2v.initImage {
             // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
@@ -172,9 +182,9 @@ public final class MLXLTX2Package: ModelPackage {
             out = try await pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
                                          height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         } else {
-            // t2v: prefer the two-stage distilled path (half-res → upsample → refine) when the
-            // encoder + upsampler are present; else single-stage at target resolution.
-            out = pipeline.supportsTwoStage
+            // t2v: two-stage (half-res → upsample → refine) when available AND the tier allows it;
+            // one-stage at target resolution otherwise (the low-tier denoise path).
+            out = (pipeline.supportsTwoStage && !oneStage)
                 ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
                 : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         }

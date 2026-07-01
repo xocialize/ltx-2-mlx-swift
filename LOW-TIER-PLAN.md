@@ -134,6 +134,33 @@ of charging every tier the 704×512 numbers. Define + MEASURE (app autorun `SPLI
 **Acceptance:** every declared profile's measured stage-max ≤ 0.7× its tier; the admissibility panel
 shows truthful ✅/❌ per tier; registry/manifest re-baselined from the measured `SPLIT` lines.
 
+> **T3 RESULTS (2026-07-01 — plumbing DONE + measured; budgets NOT yet met → T3b below):**
+> `LTX2Profile` (envelope clamp + one/two-stage + VAE window + `peakActivationBytesHint`) landed in
+> config/wrapper/pipeline/app (`LTX_TIER=` env). All three runs requested 704×512×240 and were
+> correctly clamped (headers prove it); one-stage path exercised on low tiers.
+>
+> | profile | geometry ran | peak | floor | act | budget 0.7× | peak STAGE (profiler) |
+> |---|---|---|---|---|---|---|
+> | compact24 (q4, chunk4) | 512×288×121 1-stage | **35.9** | 11.9 | 23.9 | 16.8 ❌ | **encode 36.1** (denoise 15.3 ✓, decode 26) |
+> | balanced32 (q4, chunk6) | 576×320×161 1-stage | **35.6** | 12.1 | 23.5 | 22.4 ❌ | **encode** (envelope-independent — same stage) |
+> | standard64 (q8, chunk8) | 704×512×161 2-stage | **60.7** | 21.7 | 39.1 | 44.8 ❌ | **decode chunk[8,16): act 23.7 + CACHE 36.7** (encode 45.4 #2, denoise 26 ✓) |
+> | max128 (bf16) | 704×512×240 i2v | 92.2 | 44.4 | 47.9 | 89.6 ✓ | decode window (T1 close-out) |
+>
+> Hints are declared at the MEASURED values (honest now), to be tightened by **T3b — the three
+> levers the attribution names precisely:**
+> 1. **Sequential Gemma→connector inside the encode stage** (drop Gemma after `allHiddenStates`,
+>    BEFORE the connector forward — they never need co-residency; hidden states are ~0.8 GB
+>    materialized). ~−6.5 GB off the encode peak on every tier.
+> 2. **Connector int8 (T2 step 2) via `quantizedMatmul` with fp32 activations** — kills BOTH the
+>    6.3 GB bf16 residency (→ ~3.2) AND the hoisted fp32 projection views (~4.6 GB transient),
+>    since quantized matmul needs no fp32 weight materialization. Gates: connector/text-encode.
+> 3. **Scoped `Memory.cacheLimit` during VAE decode** (the Wan `cacheLimit` lever): standard64's
+>    60.7 is act 23.7 + pool 36.7 — the pool retains window intermediates; a decode-scoped cap
+>    forces reuse (restore after). Expected: standard64 decode → ~25, compact24 decode 26 → ~15.
+> Post-T3b projections: compact24 ≈ 15–16 ✓ (16.8) · balanced32 ≈ 16–17 ✓ (22.4) · standard64
+> ≈ 34 (encode-bound after fixes) ✓ (44.8). If compact24 still misses, the remaining lever is
+> DiT-evict-before-decode on low tiers (reload cost accepted there).
+
 ## T4 — Validation + docs
 
 - In-app runs per profile on this box, peaks recorded against budgets (can't shrink RAM, CAN verify

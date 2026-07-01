@@ -116,9 +116,13 @@ public final class LTX2Pipeline {
     /// influence makes 5 perceptually exact). Engages only when the clip exceeds the chunk window
     /// (below that, whole-frame is strictly cheaper). Env overrides: LTX_VAE_CHUNK / LTX_VAE_HALO
     /// (0 disables chunking).
+    /// Decode window in latent frames — set from the tier profile by the wrapper (LOW-TIER-PLAN T3);
+    /// `LTX_VAE_CHUNK` env still overrides for experiments.
+    public var vaeChunkFrames = 8
+
     private func decodePixels(_ spatial: MLXArray) -> MLXArray {
         let env = ProcessInfo.processInfo.environment
-        let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? 8
+        let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? vaeChunkFrames
         let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else { return vae!.decode(spatial) }
