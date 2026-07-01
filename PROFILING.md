@@ -50,10 +50,15 @@ multi-core monitor), so it **looks like a hang**. MLX specializes kernels per sh
 frame count recompiles** — incrementing sizes pays it every time, and a cold OS shader cache is the
 worst case.
 
-Levers (not yet applied — need parity re-validation): warm the kernels during `load()` (moves the cost
-to the expected "Loading" phase); replace the manual `rms0`/`layerNormAffineFree`/`pixelNorm`
-(mean/rsqrt chains, hundreds of kernels across 48 layers) with fused `MLXFast.rmsNorm`/`layerNorm`
-(fewer kernels → faster compile *and* faster steps).
+**Fix (applied): `DiT.warmup()` — a tiny nv=1 forward during `load()`** pre-compiles the block
+kernels in the "Loading" phase. Measured 24f: s1-step0 **162 s → 4.1 s**, generation total **218.8 s →
+60.4 s**; the compile now shows as a `DiT kernel warmup: …s` line in load, not a mid-generation hang.
+(On a cold machine the warmup itself takes the full compile time — but it lands where slowness is
+expected. Disable with `LTX_NO_WARMUP=1`.)
+
+Further lever (not applied — needs parity re-validation): replace the manual
+`rms0`/`layerNormAffineFree`/`pixelNorm` (mean/rsqrt chains → hundreds of kernels across 48 layers)
+with fused `MLXFast.rmsNorm`/`layerNorm` — fewer kernels → faster compile *and* faster steps.
 
 ### 2. H.264 MP4-encode stall (post-generation — the ">1000s, looks like a loop")
 

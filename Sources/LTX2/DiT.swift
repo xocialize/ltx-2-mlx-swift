@@ -65,6 +65,23 @@ public struct DiT {
         DiT(weights: try MLX.loadArrays(url: weightsPath), config: config, computeDtype: computeDtype)
     }
 
+    /// Compile the block kernels with a tiny (nv=1) forward so the one-time Metal JIT cost (~50–160s
+    /// cold) is paid HERE — during load/"Loading" — instead of on the first denoise step, where it
+    /// idles the GPU and reads as a hang. Most DiT kernels are shape-agnostic, so the real first step
+    /// then pays only a small shape-specialization delta. Dummy text embeds are passed so the
+    /// text-cross-attn kernels compile too. Output is discarded. Disable with `LTX_NO_WARMUP=1`.
+    public func warmup() {
+        guard ProcessInfo.processInfo.environment["LTX_NO_WARMUP"] == nil else { return }
+        let v = MLXArray.zeros([1, 1, 128]), a = MLXArray.zeros([1, 1, 128])
+        let vText = MLXArray.zeros([1, 1, cfg.videoDim]), aText = MLXArray.zeros([1, 1, cfg.audioDim])
+        let (vo, ao) = self(
+            videoLatent: v, audioLatent: a, sigma: MLXArray([Float(1.0)]),
+            videoText: vText, audioText: aText,
+            videoPositions: Positions.video(F: 1, H: 1, W: 1, fps: 24),
+            audioPositions: Positions.audio(tokens: 1))
+        eval(vo, ao)
+    }
+
     // Per-block conditioning, computed once in the prelude.
     struct Cond {
         var videoAdaln, audioAdaln, videoPrompt, audioPrompt: MLXArray
