@@ -8,6 +8,7 @@
 
 import Foundation
 import MLX
+import MLXFast
 import MLXNN
 
 public struct VideoVAEDecoder {
@@ -94,8 +95,9 @@ public struct VideoVAEDecoder {
     }
 
     private func pixelNorm(_ x: MLXArray, eps: Float = 1e-8) -> MLXArray {
-        let v = MLX.mean(x * x, axis: -1, keepDims: true)
-        return x * MLX.rsqrt(v + eps)
+        // Affine-free RMS over the channel axis — fused kernel (fp32-internal) replaces the manual
+        // square/mean/rsqrt chain.
+        MLXFast.rmsNorm(x, weight: MLXArray.ones([x.dim(-1)]).asType(x.dtype), eps: eps)
     }
 
     // MARK: - pixel-shuffle helpers
@@ -236,8 +238,9 @@ public struct VideoVAEEncoder {
     }
 
     private func pixelNorm(_ x: MLXArray, eps: Float = 1e-8) -> MLXArray {
-        let v = MLX.mean(x * x, axis: -1, keepDims: true)
-        return x * MLX.rsqrt(v + eps)
+        // Affine-free RMS over the channel axis — fused kernel (fp32-internal) replaces the manual
+        // square/mean/rsqrt chain.
+        MLXFast.rmsNorm(x, weight: MLXArray.ones([x.dim(-1)]).asType(x.dtype), eps: eps)
     }
 
     /// space-to-depth: (B,D,H,W,C) → (B, D/st, H/sh, W/sw, C·st·sh·sw). Order (c, t, h, w).

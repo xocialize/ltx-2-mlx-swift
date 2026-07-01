@@ -320,20 +320,18 @@ public struct DiT {
         return y
     }
 
+    // Affine-free RMS norm. Fused `mlx_fast_rms_norm` (fp32-internal reduction, one kernel) replaces
+    // the manual cast→square→mean→rsqrt chain — fewer kernels to compile and dispatch. `weight=ones`
+    // gives the affine-free form (the block applies its own scale/shift externally).
     private func rms0(_ x: MLXArray, eps: Float? = nil) -> MLXArray {
-        let e = eps ?? cfg.normEps
-        let xf = x.asType(.float32)  // fp32-internal, like mx.fast.rms_norm
-        let v = MLX.mean(xf * xf, axis: -1, keepDims: true)
-        return (xf * MLX.rsqrt(v + e)).asType(x.dtype)
+        MLXFast.rmsNorm(x, weight: MLXArray.ones([x.dim(-1)]).asType(x.dtype), eps: eps ?? cfg.normEps)
     }
 
-    private func rmsW(_ x: MLXArray, _ weight: MLXArray, eps: Float) -> MLXArray { rms0(x, eps: eps) * weight }
+    private func rmsW(_ x: MLXArray, _ weight: MLXArray, eps: Float) -> MLXArray {
+        MLXFast.rmsNorm(x, weight: weight, eps: eps)
+    }
 
     private func layerNormAffineFree(_ x: MLXArray) -> MLXArray {
-        let xf = x.asType(.float32)  // fp32-internal, like mx.fast.layer_norm
-        let mean = MLX.mean(xf, axis: -1, keepDims: true)
-        let xc = xf - mean
-        let v = MLX.mean(xc * xc, axis: -1, keepDims: true)
-        return (xc * MLX.rsqrt(v + cfg.normEps)).asType(x.dtype)
+        MLXFast.layerNorm(x, weight: nil, bias: nil, eps: cfg.normEps)  // fused; fp32-internal
     }
 }
