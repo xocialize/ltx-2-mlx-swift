@@ -1,26 +1,27 @@
 # Profiling the LTX-2.3 pipeline
 
-An env-gated harness (`LTX2Profiler`) instruments generation so you can see **where wall-clock goes**
-and tell **compute-bound** from **memory-bound (paging)** from **a stalled encoder**.
+An env-gated harness (the shared **`MLXProfiling`** package — `MLXProfiler.shared`) instruments
+generation so you can see **where wall-clock goes** and tell **compute-bound** from **memory-bound
+(paging)** from **a stalled encoder**.
 
 ## Usage
 
-Set `LTX_PROFILE=1` in the environment of whatever drives the pipeline:
+Set `MLX_PROFILE=1` in the environment of whatever drives the pipeline:
 
 ```bash
 # Headless app autorun (LTXVideoTesting) — reproduce a specific envelope:
-LTX_AUTORUN=1 LTX_QUANT=bf16 LTX_FRAMES=48 LTX_PROFILE=1 <LTXVideoTesting.app binary>
+LTX_AUTORUN=1 LTX_QUANT=bf16 LTX_FRAMES=48 MLX_PROFILE=1 <LTXVideoTesting.app binary>
 #   LTX_QUANT = bf16 | q8 | q4        LTX_FRAMES / LTX_WIDTH / LTX_HEIGHT override the envelope
 ```
 
-Or set `LTX_PROFILE=1` in the Xcode scheme's environment and run normally (GUI). `LTX_PROFILE=csv`
-also writes `/tmp/ltx-profile.csv`.
+Or set `MLX_PROFILE=1` in the Xcode scheme's environment and run normally (GUI). `MLX_PROFILE=csv`
+also writes the CSV to `MLX_PROFILE_CSV` (default `/tmp/mlx-profile.csv`).
 
 Each region logs live as it completes:
 
 ```
-[LTX-PROF] denoise/s1-step0  162045.8ms  act=38.4 cache=2.5 phys=41.3/115 GB  vN=264 aN=25 σ=1.000
-                             ^wall-ms      ^MLX active/cache  ^phys/workingSet   ^geometry
+[MLXPROF] denoise/s1-step0  162045.8ms  act=38.4 cache=2.5 phys=41.3/115 GB  vN=264 aN=25 σ=1.000
+                            ^wall-ms      ^MLX active/cache  ^phys/workingSet   ^geometry
 ```
 
 `⚠PAGING` appears when `phys_footprint` crosses the Metal working-set ceiling — the GPU is paging
@@ -60,38 +61,48 @@ Further lever (not applied — needs parity re-validation): replace the manual
 `rms0`/`layerNormAffineFree`/`pixelNorm` (mean/rsqrt chains → hundreds of kernels across 48 layers)
 with fused `MLXFast.rmsNorm`/`layerNorm` — fewer kernels → faster compile *and* faster steps.
 
-### 2. H.264 MP4-encode stall (post-generation — the ">1000s, looks like a loop")
+### 2. MP4-encode stall (post-generation — the ">1000s, looks like a loop")
 
-After denoise+decode finish (~100 s for 48f), the wrapper's `encodeMP4` can **spin-wait forever** in
-`while !input.isReadyForMoreMediaData { … }` at ~0 % CPU — the VideoToolbox H.264 encoder stops
-draining at higher frame counts (GPU/memory contention with the 38 GB resident model + ~20 GB MLX
-cache). **24f encodes fine; 41 frames hung indefinitely** (confirmed by sampling the process at
-`FrameCodec.swift:93`). This is literally a loop and matches "slows to the point it looks like a loop,
-GPU <10%, may be processing." It was previously **uninstrumented** (post-pipeline), hence invisible.
+**ROOT CAUSE (corrected 2026-07-01): the AVAssetWriter two-track INTERLEAVE deadlock — not GPU
+contention.** After denoise+decode finish, `encodeMP4` **spin-waits forever** in
+`while !input.isReadyForMoreMediaData { … }` at ~0 % CPU. With TWO inputs (video + LTX's audio track)
+and `expectsMediaDataInRealTime = false`, AVAssetWriter interleaves tracks: once the appended video
+gets **~1.8 s ahead** of the still-empty audio track, it parks the video input's readiness *waiting
+for audio* — and the old code appended audio only **after** all video frames. Deadlock. This matches
+"slows to the point it looks like a loop, GPU <10 %, may be processing" exactly, and it was
+previously uninstrumented (post-pipeline), hence invisible.
 
-The `encode-mp4` span + per-frame progress + a **90 s stall timeout** (fail loud, not hang) pinpoint
-it: the encoder accepts frames 0–31 then **hangs at frame 32/41** — `isReadyForMoreMediaData` never
-recovers.
-
-**Isolated with `RunLTX2 --encode-stress N [--hog] [--software]`** (encodes N synthetic frames, no
-4-min generation):
+**Decisive isolation with `RunLTX2 --encode-stress N [--hog] [--software] [--audio]`** (synthetic
+frames, no generation, no model resident):
 
 | Experiment | Result |
 |---|---|
-| hardware, 41 frames, no pressure | ✅ 1.2 s |
-| hardware, 41 frames, +38 GB idle allocation | ✅ 1.2 s |
-| hardware, right after a real LTX generation | ❌ hangs at frame 32/41 |
-| **software, right after a real LTX generation** | ✅ **3.7 s, valid MP4** |
+| hardware, 41 frames, **no audio**, no pressure | ✅ 1.2 s |
+| hardware, 41 frames, **no audio**, +38 GB idle allocation | ✅ 1.2 s |
+| software, 113 frames, **no audio** | ✅ 3.1 s |
+| software, 113 frames, **+audio** | ❌ **stalls at frame 43/113** — zero MLX work involved |
+| software, 113 frames, +audio, **audio-first fix** | ✅ 3.2 s |
+| hardware, 113 frames, +audio, **audio-first fix** | ✅ 3.0 s |
 
-So it is **not** frame count and **not** memory pressure — the **hardware VideoToolbox media engine
-contends with MLX's active post-compute GPU context** (`AVAssetWriter` *is* VideoToolbox; it doesn't
-offload it). `Memory.clearCache()` before encode does **not** fix it.
+So it is **not** frame count, **not** memory pressure, and **not** the hardware media engine — it is
+the second (audio) track. 43 frames @24 fps = 1.79 s = the writer's interleave window.
 
-**Fix (applied): `encodeMP4` defaults to the SOFTWARE H.264 encoder.** It bypasses the hardware media
-engine — 41 frames in ~3.7 s, no stall, and the full 48f run completes. ~2.5 s slower than hardware's
-best case, trivial next to the ~100 s generation, and reliable (LTX output *always* follows heavy MLX
-compute). `LTX_ENCODE=hardware` (or `software: false`) opts back into hardware for callers that don't.
-A future hardware-speed option is driving `VTCompressionSession` directly with explicit
-`VTCompressionSessionCompleteFrames` drains (the pattern in `h00mankind/MetalVideoEngine`), plus a
-zero-copy IOSurface frame handoff to replace the current per-frame GPU→CPU readback + Swift pixel
-copy.
+**History of the misdiagnosis (kept honestly):** the first isolation pass tested hardware-vs-software
+and idle-vs-post-generation, but every stress run passed `audio: nil` while every real run muxes
+audio — so "hardware after a real generation" (stall at 32/41, WITH audio) vs "hardware idle" (pass,
+NO audio) looked like GPU contention. The "software fixes it" validation then passed only because
+that clip was **41 frames — just under the ~43-frame software threshold** (hardware's internal
+queueing trips a bit earlier, at 32). The user's 120-frame run crossed the threshold and re-stalled
+at exactly 43, exposing the misdiagnosis. Lesson: **the stress gate must reproduce ALL tracks the
+real path writes — a missing second track silently removes the failure mode.**
+
+**Fix (applied): append the audio sample buffer and `markAsFinished()` the audio input BEFORE the
+video frame loop.** The audio track is then complete and the writer never blocks video on interleave.
+Validated 113 frames + audio on BOTH encoders (table above). The wait loop also now surfaces
+`writer.status == .failed` immediately (a real writer error no longer masquerades as "not ready") and
+keeps the 90 s fail-loud timeout. The software default (`software: true` / `LTX_ENCODE`) is retained
+as a harmless belt-and-suspenders — note its `RequireSoftwareOnlyVideoEncoder` spec key does not
+exist in the SDK (only `EnableHardwareAcceleratedVideoEncoder: false` is real and effective).
+Cross-package note: single-track (video-only) writers — e.g. `frame-stream-native` used by
+RIFE/SeedVR2 — **cannot** hit this deadlock; their preemptive software-default is likely unnecessary
+(the bounded stall-timeout remains worthwhile everywhere).

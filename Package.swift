@@ -47,6 +47,11 @@ let package = Package(
         //    ONE transient activation across residents (serialized inference). Adopted in the manifest
         //    (residentBytes = weight floor, peakActivationBytes = peak − floor) + the per-stage evict.
         .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.9.1"),
+        // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
+        // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
+        // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
+        // LTX_PROFILE); MLX_PROFILE=csv writes MLX_PROFILE_CSV (default /tmp/mlx-profile.csv).
+        .package(url: "https://github.com/xocialize/mlx-profiling", from: "0.1.0"),
     ],
     targets: [
         .target(
@@ -62,6 +67,7 @@ let package = Package(
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
+                .product(name: "MLXProfiling", package: "mlx-profiling"),
             ],
             path: "Sources/LTX2"
         ),
@@ -71,6 +77,7 @@ let package = Package(
                 "LTX2",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                .product(name: "MLXProfiling", package: "mlx-profiling"),
             ],
             path: "Sources/MLXLTX2",
             resources: [.process("Resources")]  // ltx-lora-registry.json → Bundle.module

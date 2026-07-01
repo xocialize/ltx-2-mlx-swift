@@ -566,18 +566,23 @@ func memBenchGate(quant: String) async throws {
 // pin the cause: frames-only vs +hog isolates CONTENTION; hardware vs software isolates the HARDWARE
 // media engine.
 @InferenceActor
-func encodeStressGate(frames n: Int, software: Bool, hog: Bool) async throws {
-    print("[encode-stress] N=\(n) frames  software=\(software)  hog(38GB)=\(hog)")
+func encodeStressGate(frames n: Int, software: Bool, hog: Bool, audio: Bool) async throws {
+    print("[encode-stress] N=\(n) frames  software=\(software)  hog(38GB)=\(hog)  audio=\(audio)")
     var hogs: [MLXArray] = []
     if hog {
         for _ in 0 ..< 38 { let a = MLXArray.zeros([250_000_000]).asType(.float32); eval(a); hogs.append(a) }  // 38×1GB
         print(String(format: "[encode-stress] resident pressure ≈ %.0f GB held", 38.0))
     }
     let frames = MLXRandom.normal([1, n, 512, 704, 3]).asType(.float32)
-    eval(frames)
+    // --audio: a second (audio) track makes AVAssetWriter INTERLEAVE — the suspected real cause of the
+    // stall (video input readiness blocks waiting for audio, which we append only after all frames).
+    let waveform: MLXArray? = audio
+        ? MLXRandom.normal([1, 2, Int(Double(n) / 24.0 * 48000.0)]).asType(.float32) * 0.05
+        : nil
+    eval(frames); if let waveform { eval(waveform) }
     let t0 = Date()
     do {
-        let data = try await encodeMP4(frames: frames, fps: 24, audio: nil, software: software)
+        let data = try await encodeMP4(frames: frames, fps: 24, audio: waveform, software: software)
         print(String(format: "[encode-stress] PASS ✅  %.1fs  %d bytes", Date().timeIntervalSince(t0), data.count))
     } catch {
         print("[encode-stress] FAIL ❌  \(Int(Date().timeIntervalSince(t0)))s  \(error)")
@@ -629,7 +634,8 @@ if args.contains("--connector-gate") {
     try e2eGate()
 } else if args.contains("--encode-stress") {
     let n = positional.first.flatMap { Int($0) } ?? 41
-    try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"))
+    try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"),
+                               audio: args.contains("--audio"))
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
 } else {

@@ -1,6 +1,7 @@
 import Foundation
 import LTX2
 import MLX
+import MLXProfiling
 import MLXToolKit
 
 /// MLXEngine package: Lightricks **LTX-2.3** distilled, exposing the canonical
@@ -186,9 +187,9 @@ public final class MLXLTX2Package: ModelPackage {
         // (The H.264 post-generation stall is fixed by defaulting `encodeMP4` to the SOFTWARE encoder,
         // NOT by this — freeing the cache alone did not un-stall the hardware media engine.)
         Memory.clearCache()
-        let mp4Span = LTX2Profiler.shared.begin("encode-mp4", "h264+aac", note: "\(framesCL.dim(1)) frames")
+        let mp4Span = MLXProfiler.shared.begin("encode-mp4", "h264+aac", note: "\(framesCL.dim(1)) frames")
         let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: out.audio, audioSampleRate: 48000)
-        LTX2Profiler.shared.end(mp4Span)
+        MLXProfiler.shared.end(mp4Span)
         return T2VResponse(video: Video(
             format: .mp4, data: mp4,
             durationSeconds: Double(framesCL.dim(1)) / fps, frameRate: fps))

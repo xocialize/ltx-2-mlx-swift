@@ -18,6 +18,7 @@
 
 import Foundation
 import MLX
+import MLXProfiling
 import MLXRandom
 
 public final class LTX2Pipeline {
@@ -150,7 +151,7 @@ public final class LTX2Pipeline {
         // 48f "<10% GPU, 1000s" stall. Set this to test whether capping restores throughput.
         if let g = ProcessInfo.processInfo.environment["LTX_CACHE_LIMIT_GB"], let gb = Int(g) {
             Memory.cacheLimit = gb * 1_000_000_000
-            LTX2Profiler.shared.note("Memory.cacheLimit set to \(gb) GB (LTX_CACHE_LIMIT_GB)")
+            MLXProfiler.shared.note("Memory.cacheLimit set to \(gb) GB (LTX_CACHE_LIMIT_GB)")
         }
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
@@ -158,7 +159,7 @@ public final class LTX2Pipeline {
         // Pay the one-time Metal kernel-compile cost here (in "Loading"), not on the first denoise
         // step where it idles the GPU and looks like a hang. See DiT.warmup / PROFILING.md.
         let warm = Date(); dit.warmup()
-        LTX2Profiler.shared.note(String(format: "DiT kernel warmup: %.1fs", Date().timeIntervalSince(warm)))
+        MLXProfiler.shared.note(String(format: "DiT kernel warmup: %.1fs", Date().timeIntervalSince(warm)))
         let fm = FileManager.default
         let hasAudio = fm.fileExists(atPath: ltxDir.appending(path: "audio_vae.safetensors").path)
                     && fm.fileExists(atPath: ltxDir.appending(path: "vocoder.safetensors").path)
@@ -203,18 +204,18 @@ public final class LTX2Pipeline {
         let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
         let nv = fLat * hLat * wLat
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
-        LTX2Profiler.shared.beginRun(String(format:
+        MLXProfiler.shared.beginRun(String(format:
             "t2v(one-stage) %dx%d %df fps=%.0f | fLat=%d nv=%d audioT=%d | steps=%d",
             width, height, numFrames, fps, fLat, nv, audioT, Positions.distilledSigmas.count - 1))
 
         // 1. Text encode (Gemma → connector) — staged: load, encode, evict before denoise.
-        let encSpan = LTX2Profiler.shared.begin("encode", "gemma+connector")
+        let encSpan = MLXProfiler.shared.begin("encode", "gemma+connector")
         try await ensureTextEncoder()
         let (ids, mask) = gemma!.tokenize(prompt)
         let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
         eval(videoEmbeds, audioEmbeds)   // materialize before evicting the encoder weights
-        LTX2Profiler.shared.end(encSpan)
+        MLXProfiler.shared.end(encSpan)
         dropTextEncoder()
 
         // 3. Noised init (t2v starts from pure noise at σ_max)
@@ -234,14 +235,14 @@ public final class LTX2Pipeline {
         // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let decSpan = LTX2Profiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
         let pixels = vae!.decode(vspatial)
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
-        LTX2Profiler.shared.end(decSpan)
+        MLXProfiler.shared.end(decSpan)
         dropDecoder()
-        LTX2Profiler.shared.endRun()
+        MLXProfiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
     }
 
@@ -324,19 +325,19 @@ public final class LTX2Pipeline {
         let sigma0 = s2[0]
         let nv2 = fLat * (height / 32) * (width / 32)          // stage-2 (full-res) video token count
         let nv1p = fLat * (height / 2 / 32) * (width / 2 / 32) // stage-1 (half-res) token count
-        LTX2Profiler.shared.beginRun(String(format:
+        MLXProfiler.shared.beginRun(String(format:
             "t2vTwoStage %dx%d %df fps=%.0f | fLat=%d nv1=%d nv2=%d audioT=%d | steps s1=%d s2=%d",
             width, height, numFrames, fps, fLat, nv1p, nv2, audioT,
             Positions.distilledSigmas.count - 1, s2.count - 1))
 
         // 1. Text encode (staged)
-        let encSpan = LTX2Profiler.shared.begin("encode", "gemma+connector", note: "gemma-3-12b + fp32 connector")
+        let encSpan = MLXProfiler.shared.begin("encode", "gemma+connector", note: "gemma-3-12b + fp32 connector")
         try await ensureTextEncoder()
         let (ids, mask) = gemma!.tokenize(prompt)
         let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
         eval(videoEmbeds, audioEmbeds)
-        LTX2Profiler.shared.end(encSpan)
+        MLXProfiler.shared.end(encSpan)
         dropTextEncoder()
 
         // --- Stage 1: half resolution (denoise peak #1, DiT only resident) ---
@@ -352,12 +353,12 @@ public final class LTX2Pipeline {
         eval(v1f, a1f)
 
         // --- Upscale 2× in un-normalized latent space (encoder+upsampler loaded only here) ---
-        let upSpan = LTX2Profiler.shared.begin("upscale", "vae-enc+upsampler", note: "half→full latent")
+        let upSpan = MLXProfiler.shared.begin("upscale", "vae-enc+upsampler", note: "half→full latent")
         try ensureVAEEncoder(); try ensureUpsampler()
         let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
         let upscaled = vaeEncoder!.normalizeLatent(upsampler!(vaeEncoder!.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
         eval(upscaled)
-        LTX2Profiler.shared.end(upSpan)
+        MLXProfiler.shared.end(upSpan)
         dropUpscaler()                                          // evict before the stage-2 denoise peak
         let hLat2 = hLat1 * 2, wLat2 = wLat1 * 2
         let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F*2h1*2w1, 128)
@@ -374,16 +375,16 @@ public final class LTX2Pipeline {
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let decSpan = LTX2Profiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
         let pixels = vae!.decode(vspatial)
         eval(pixels)
-        LTX2Profiler.shared.end(decSpan)
-        let audSpan = LTX2Profiler.shared.begin("audio-decode", "audioVAE+vocoder")
+        MLXProfiler.shared.end(decSpan)
+        let audSpan = MLXProfiler.shared.begin("audio-decode", "audioVAE+vocoder")
         let waveform = decodeAudio(a2f)
         if let waveform { eval(waveform) }
-        LTX2Profiler.shared.end(audSpan)
+        MLXProfiler.shared.end(audSpan)
         dropDecoder()
-        LTX2Profiler.shared.endRun()
+        MLXProfiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
     }
 }

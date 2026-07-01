@@ -10,6 +10,7 @@
 
 import Foundation
 import MLX
+import MLXProfiling
 
 public enum DenoiseLoop {
 
@@ -53,7 +54,7 @@ public enum DenoiseLoop {
         var vx = videoLatent0, ax = audioLatent0
         let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
         for i in 0 ..< (sigmas.count - 1) {
-            let span = LTX2Profiler.shared.begin("denoise", "\(label)step\(i)",
+            let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
             let (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
@@ -62,7 +63,7 @@ public enum DenoiseLoop {
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
             ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
             eval(vx, ax)
-            LTX2Profiler.shared.end(span)
+            MLXProfiler.shared.end(span)
         }
         return (vx, ax)
     }
@@ -85,7 +86,7 @@ public enum DenoiseLoop {
         if let clean = audioCleanLatent, let m = audioDenoiseMask { ax = applyDenoiseMask(ax, clean: clean, mask: m) }
         let vN = vx.dim(1), aN = ax.dim(1)
         for i in 0 ..< (sigmas.count - 1) {
-            let span = LTX2Profiler.shared.begin("denoise", "\(label)step\(i)",
+            let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
             let vts = videoDenoiseMask.map { ($0 * sigma).squeezed(axis: -1) }   // (B,N) per-token σ
@@ -99,7 +100,7 @@ public enum DenoiseLoop {
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
             ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
             eval(vx, ax)
-            LTX2Profiler.shared.end(span)
+            MLXProfiler.shared.end(span)
         }
         return (vx, ax)
     }

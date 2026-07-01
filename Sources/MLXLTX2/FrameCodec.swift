@@ -9,6 +9,7 @@ import CoreMedia
 import Foundation
 import LTX2
 import MLX
+import MLXProfiling
 import MLXToolKit
 
 enum FrameCodecError: Error {
@@ -83,9 +84,9 @@ public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, aud
             "EnableHardwareAcceleratedVideoEncoder": false,
             "RequireSoftwareOnlyVideoEncoder": true,
         ] as [String: Any]
-        LTX2Profiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (hardware VideoToolbox bypassed)")
+        MLXProfiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (hardware VideoToolbox bypassed)")
     } else {
-        LTX2Profiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (LTX_ENCODE=hardware) — may stall after heavy MLX compute")
+        MLXProfiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (LTX_ENCODE=hardware) — may stall after heavy MLX compute")
     }
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
@@ -112,32 +113,15 @@ public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, aud
     }
     writer.startSession(atSourceTime: .zero)
 
-    let frameDuration = CMTime(value: CMTimeValue((600.0 / fps).rounded()), timescale: 600)
-    for i in 0 ..< t {
-        let (bytes, fw, fh) = rgbBytes(frames[0, i, 0..., 0..., 0...])
-        guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
-        let buffer = try pixelBuffer(rgb: bytes, width: fw, height: fh, pool: pool)
-        // The H.264/VideoToolbox encoder can stop draining at higher frame counts (GPU/memory
-        // contention with the resident model) — `isReadyForMoreMediaData` then stays false forever
-        // and this loop spins at ~0% CPU (the "looks like a loop / GPU <10%" hang). Bound the wait so
-        // a stall becomes a loud, localized error instead of an invisible forever-hang.
-        var waited = 0.0
-        while !input.isReadyForMoreMediaData {
-            try await Task.sleep(for: .milliseconds(5)); waited += 0.005
-            if waited.rounded() != (waited - 0.005).rounded(), Int(waited) % 5 == 0 {
-                LTX2Profiler.shared.note("encode-mp4 ⚠ waiting on H.264 encoder at frame \(i)/\(t) — \(Int(waited))s (isReadyForMoreMediaData=false)")
-            }
-            if waited > 90 {
-                throw FrameCodecError.appendFailed("H.264 encoder stalled at frame \(i)/\(t): isReadyForMoreMediaData=false for 90s — VideoToolbox is not draining (GPU/memory contention with the resident model). This is the post-generation hang, not the denoise.")
-            }
-        }
-        guard adaptor.append(buffer, withPresentationTime: CMTimeMultiply(frameDuration, multiplier: Int32(i))) else {
-            throw FrameCodecError.appendFailed("frame \(i)/\(t) err=\(String(describing: writer.error))")
-        }
-        if i % 8 == 0 { LTX2Profiler.shared.note("encode-mp4 frame \(i)/\(t)") }
-    }
-    input.markAsFinished()
-
+    // AUDIO FIRST — the load-bearing ordering. With two inputs and
+    // `expectsMediaDataInRealTime = false`, AVAssetWriter INTERLEAVES tracks: once the video track
+    // gets ~1.8 s (43 frames @24 fps) ahead of an empty audio track, it parks the video input's
+    // `isReadyForMoreMediaData` until audio catches up — appending audio only after the frames
+    // therefore DEADLOCKS on clips ≳43 frames (reproduced with `RunLTX2 --encode-stress 113 --audio`:
+    // stalls at exactly frame 43 with NO model resident and NO GPU work; 113 frames without audio
+    // pass in ~3 s). Appending the whole waveform and finishing the track up front means the writer
+    // never waits on audio. (This deadlock — not GPU/VideoToolbox contention — was the real cause of
+    // the historical "stalled at frame 32/41 after generation" hang.)
     if let audioInput, let audio {
         let buffer = try audioSampleBuffer(audio, sampleRate: audioSampleRate)
         while !audioInput.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
@@ -146,6 +130,34 @@ public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, aud
         }
         audioInput.markAsFinished()
     }
+
+    let frameDuration = CMTime(value: CMTimeValue((600.0 / fps).rounded()), timescale: 600)
+    for i in 0 ..< t {
+        let (bytes, fw, fh) = rgbBytes(frames[0, i, 0..., 0..., 0...])
+        guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
+        let buffer = try pixelBuffer(rgb: bytes, width: fw, height: fh, pool: pool)
+        // Bounded wait: a stall here must be a loud, localized error, never a silent forever-spin.
+        // With the audio-first fix the interleave deadlock is gone; a genuine encoder failure now
+        // surfaces via writer.status below instead of masquerading as "not ready".
+        var waited = 0.0
+        while !input.isReadyForMoreMediaData {
+            if writer.status == .failed {
+                throw FrameCodecError.appendFailed("writer FAILED at frame \(i)/\(t): \(String(describing: writer.error))")
+            }
+            try await Task.sleep(for: .milliseconds(5)); waited += 0.005
+            if waited.rounded() != (waited - 0.005).rounded(), Int(waited) % 5 == 0 {
+                MLXProfiler.shared.note("encode-mp4 ⚠ waiting on encoder at frame \(i)/\(t) — \(Int(waited))s (isReadyForMoreMediaData=false)")
+            }
+            if waited > 90 {
+                throw FrameCodecError.appendFailed("encoder stalled at frame \(i)/\(t): isReadyForMoreMediaData=false for 90s (writer.status=\(writer.status.rawValue)). If audio is present this smells like the AVAssetWriter interleave deadlock — audio must be appended BEFORE the video frames.")
+            }
+        }
+        guard adaptor.append(buffer, withPresentationTime: CMTimeMultiply(frameDuration, multiplier: Int32(i))) else {
+            throw FrameCodecError.appendFailed("frame \(i)/\(t) err=\(String(describing: writer.error))")
+        }
+        if i % 8 == 0 { MLXProfiler.shared.note("encode-mp4 frame \(i)/\(t)") }
+    }
+    input.markAsFinished()
 
     await writer.finishWriting()
     guard writer.status == .completed, FileManager.default.fileExists(atPath: url.path) else {
