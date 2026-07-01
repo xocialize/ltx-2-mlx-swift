@@ -80,23 +80,33 @@ public final class LTX2Pipeline {
 
     // MARK: - Per-stage residency (load → use → evict)
 
-    /// Page in Gemma + Connector (the text-encode stage). Cheap relative to denoise.
-    /// `isolation` inherits the caller's actor (the wrapper's `@InferenceActor`) so the async
-    /// hop stays on-actor and the non-`Sendable` pipeline is never sent across an isolation boundary.
-    private func ensureTextEncoder(isolation: isolated (any Actor)? = #isolation) async throws {
+    /// Text-encode stage, SEQUENTIAL (LOW-TIER-PLAN T3b lever 1): Gemma and the connector never
+    /// co-reside. Gemma loads → tokenize + 49 hidden states → **eval + drop Gemma** → connector
+    /// loads → embeds → eval + drop connector. The hidden states are small materialized
+    /// (49 × (1,1024,3840) ≈ 0.4 GB bf16), so sequencing cuts ~6.5 GB (Gemma 4-bit) off the
+    /// encode-stage peak — which T3 measurement showed is THE peak on low tiers. `isolation`
+    /// inherits the caller's actor (the wrapper's `@InferenceActor`).
+    private func encodePrompt(
+        _ prompt: String, isolation: isolated (any Actor)? = #isolation
+    ) async throws -> (video: MLXArray, audio: MLXArray) {
+        let prof = MLXProfiler.shared
+        let gSpan = prof.begin("encode", "gemma", note: "gemma-3-12b 4-bit")
         if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
+        let (ids, mask) = gemma!.tokenize(prompt)
+        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        eval(states); eval(mask)   // materialize BEFORE dropping Gemma (lazy graph would pin it)
+        prof.end(gSpan)
+        if !keepStagesResident { gemma = nil; Memory.clearCache() }
+
+        let cSpan = prof.begin("encode", "connector")
         if connector == nil {
             connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
         }
-    }
-
-    /// Evict Gemma + Connector BEFORE the DiT denoise peak (≈19 GB freed: gemma-3-12b-4bit +
-    /// the fp32 connector). The caller MUST `eval` the produced embeds first — MLX is lazy, so an
-    /// unrealized graph would otherwise keep the encoder weights pinned past the `nil`.
-    private func dropTextEncoder() {
-        guard !keepStagesResident else { return }
-        gemma = nil; connector = nil
-        Memory.clearCache()
+        let (video, audio) = connector!(hiddenStates: states, mask: mask)
+        eval(video, audio)
+        prof.end(cSpan)
+        if !keepStagesResident { connector = nil; Memory.clearCache() }
+        return (video, audio)
     }
 
     /// Page in the VAE decoder stack (video + optional audio) — deferred until AFTER denoise so it
@@ -124,6 +134,14 @@ public final class LTX2Pipeline {
         let env = ProcessInfo.processInfo.environment
         let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? vaeChunkFrames
         let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
+        // T3b lever 3 (the Wan `cacheLimit` lever): the MLX pool retains the decode's conv
+        // intermediates — measured +36.7 GB inside ONE 18-frame window @704×512 on top of ~24 GB
+        // active. A decode-scoped cap forces buffer reuse; restored after. `LTX_VAE_CACHE_GB`
+        // overrides (-1 = leave uncapped).
+        let capGB = env["LTX_VAE_CACHE_GB"].flatMap { Int($0) } ?? 0
+        let saved = Memory.cacheLimit
+        if capGB >= 0 { Memory.cacheLimit = capGB * 1_000_000_000 }
+        defer { if capGB >= 0 { Memory.cacheLimit = saved } }
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else { return vae!.decode(spatial) }
         return vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo)
@@ -228,15 +246,8 @@ public final class LTX2Pipeline {
             "t2v(one-stage) %dx%d %df fps=%.0f | fLat=%d nv=%d audioT=%d | steps=%d",
             width, height, numFrames, fps, fLat, nv, audioT, Positions.distilledSigmas.count - 1))
 
-        // 1. Text encode (Gemma → connector) — staged: load, encode, evict before denoise.
-        let encSpan = MLXProfiler.shared.begin("encode", "gemma+connector")
-        try await ensureTextEncoder()
-        let (ids, mask) = gemma!.tokenize(prompt)
-        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
-        eval(videoEmbeds, audioEmbeds)   // materialize before evicting the encoder weights
-        MLXProfiler.shared.end(encSpan)
-        dropTextEncoder()
+        // 1. Text encode — sequential Gemma → connector (never co-resident), self-evicting.
+        let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
 
         // 3. Noised init (t2v starts from pure noise at σ_max)
         if let seed { MLXRandom.seed(seed) }
@@ -281,13 +292,8 @@ public final class LTX2Pipeline {
         guard hasEncoder else {
             return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
         }
-        // 1. Text encode (staged)
-        try await ensureTextEncoder()
-        let (ids, mask) = gemma!.tokenize(prompt)
-        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
-        eval(videoEmbeds, audioEmbeds)
-        dropTextEncoder()
+        // 1. Text encode — sequential Gemma → connector (never co-resident), self-evicting.
+        let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
 
         // 2. Latent geometry
         let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
@@ -350,15 +356,8 @@ public final class LTX2Pipeline {
             width, height, numFrames, fps, fLat, nv1p, nv2, audioT,
             Positions.distilledSigmas.count - 1, s2.count - 1))
 
-        // 1. Text encode (staged)
-        let encSpan = MLXProfiler.shared.begin("encode", "gemma+connector", note: "gemma-3-12b + fp32 connector")
-        try await ensureTextEncoder()
-        let (ids, mask) = gemma!.tokenize(prompt)
-        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
-        let (videoEmbeds, audioEmbeds) = connector!(hiddenStates: states, mask: mask)
-        eval(videoEmbeds, audioEmbeds)
-        MLXProfiler.shared.end(encSpan)
-        dropTextEncoder()
+        // 1. Text encode — sequential Gemma → connector (never co-resident), self-evicting.
+        let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
 
         // --- Stage 1: half resolution (denoise peak #1, DiT only resident) ---
         let hHalf = height / 2, wHalf = width / 2

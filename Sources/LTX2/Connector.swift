@@ -41,25 +41,64 @@ public struct Connector {
         print(String(format: "  [dbg] %-40@ shape=%@ nan=%d absmax=%.4f", label as NSString, "\(x.shape)" as NSString, nan, amax))
     }
 
+    /// int8-packed Linear (T3b lever 2): uint32-packed weight + fp32 scales/biases for
+    /// `quantizedMatmul` with fp32 activations — fp32 accumulation (the compute requirement)
+    /// with NO fp32 weight materialization, ~3.6 GB resident vs 6.3 bf16 / 12.7 fp32.
+    private struct QLinear { let wq: MLXArray; let scales: MLXArray; let qb: MLXArray? }
+    private let q: [String: QLinear]
+    static let quantGroupSize = 64
+
     public init(weights: [String: MLXArray]) {
         // Strip a leading "connector." if present (native safetensors keys carry it).
-        // RESIDENCY (LOW-TIER-PLAN T2): weights stay **bf16-resident** (as on disk, mmap-friendly)
-        // and are upcast to fp32 **per-op at use** — fp32 is a COMPUTE requirement (the 188160-wide
-        // text-embedding projection overflows in bf16 matmul; mlx-swift's libmlx differs from Python
-        // mlx here), not a storage one. This halves the connector's resident footprint
-        // (~12.7 → ~6.3 GB); the fp32 copies are transient graph nodes freed after the forward.
-        // Numerics are bit-identical to the old materialize-fp32-at-init (same bf16→fp32 cast).
+        //
+        // RESIDENCY (LOW-TIER-PLAN T2 + T3b): fp32 is a COMPUTE requirement (the 188160-wide
+        // text-embedding projection overflows in bf16 matmul; mlx-swift's libmlx differs from
+        // Python mlx here), NOT a storage one. Storage ladder:
+        //   • default: Linear weights quantize to **int8 (group 64)** at load and run through
+        //     `quantizedMatmul` with fp32 activations (fp32 accumulate, no fp32 weight copies) —
+        //     ~3.6 GB resident. Parity-gated (--connector-gate / --text-encode-gate ≥ 0.999).
+        //   • `LTX_CONNECTOR_INT8=0`: keep bf16-resident + lazy fp32 views (T2 step 1, ~6.3 GB,
+        //     bit-identical math to the old fp32-at-init).
+        // Norm vectors / registers / biases stay unquantized (tiny), upcast fp32 at use.
+        let quantize = ProcessInfo.processInfo.environment["LTX_CONNECTOR_INT8"] != "0"
         var stripped: [String: MLXArray] = [:]
+        var packed: [String: QLinear] = [:]
+        var toEval: [MLXArray] = []
         for (k, v) in weights {
             let key = k.hasPrefix("connector.") ? String(k.dropFirst("connector.".count)) : k
-            stripped[key] = v
+            if quantize, key.hasSuffix(".weight"), v.ndim == 2,
+               v.dim(0) % Self.quantGroupSize == 0, v.dim(1) % Self.quantGroupSize == 0,
+               !key.contains("_norm") {
+                let (wq, scales, qb) = MLX.quantized(v, groupSize: Self.quantGroupSize, bits: 8)
+                let ql = QLinear(wq: wq, scales: scales.asType(.float32), qb: qb?.asType(.float32))
+                packed[key] = ql
+                toEval.append(ql.wq); toEval.append(ql.scales); if let b = ql.qb { toEval.append(b) }
+            } else {
+                stripped[key] = v
+            }
         }
+        if !toEval.isEmpty { eval(toEval) }   // materialize packed weights; bf16 originals drop
         self.w = stripped
+        self.q = packed
     }
 
     /// fp32 view of a weight for compute (see init note) — a lazy graph node, transient.
     @inline(__always) private func f32(_ key: String) -> MLXArray { w[key]!.asType(.float32) }
     @inline(__always) private func f32opt(_ key: String) -> MLXArray? { w[key].map { $0.asType(.float32) } }
+
+    /// Linear by key: int8 `quantizedMatmul` when packed (fp32 x → fp32 accumulate), else
+    /// fp32-view matmul. Bias (never quantized) added fp32.
+    private func linear(_ x: MLXArray, _ prefix: String) -> MLXArray {
+        var y: MLXArray
+        if let ql = q["\(prefix).weight"] {
+            y = MLX.quantizedMatmul(x, ql.wq, scales: ql.scales, biases: ql.qb,
+                                    transpose: true, groupSize: Self.quantGroupSize, bits: 8)
+        } else {
+            y = x.matmul(f32("\(prefix).weight").transposed())
+        }
+        if let b = f32opt("\(prefix).bias") { y = y + b }
+        return y
+    }
 
     /// Load connector weights from a safetensors file.
     public static func load(connectorPath: URL) throws -> Connector {
@@ -96,13 +135,6 @@ public struct Connector {
         // chunk so each command buffer is bounded (no effect on numerics — same matmul, sliced).
         let vScale = (Float(videoDim) / Float(embeddingDim)).squareRoot()
         let aScale = (Float(audioDim) / Float(embeddingDim)).squareRoot()
-        // Hoisted fp32 views: shared graph nodes across the chunk loop, so each big projection
-        // weight materializes fp32 ONCE per forward (transient), not per chunk.
-        let vW = f32("text_embedding_projection.video_aggregate_embed.weight")
-        let vB = f32opt("text_embedding_projection.video_aggregate_embed.bias")
-        let aW = f32("text_embedding_projection.audio_aggregate_embed.weight")
-        let aB = f32opt("text_embedding_projection.audio_aggregate_embed.bias")
-
         let T = stacked.dim(1)
         let chunk = 128
         var vParts: [MLXArray] = [], aParts: [MLXArray] = []
@@ -110,8 +142,8 @@ public struct Connector {
         while start < T {
             let end = Swift.min(start + chunk, T)
             let s = stacked[0..., start ..< end, 0...]
-            let v = dense(s * vScale, vW, vB)
-            let a = dense(s * aScale, aW, aB)
+            let v = linear(s * vScale, "text_embedding_projection.video_aggregate_embed")
+            let a = linear(s * aScale, "text_embedding_projection.audio_aggregate_embed")
             eval(v, a)  // bound each command buffer to `chunk` tokens of the wide projection
             vParts.append(v); aParts.append(a)
             start = end
@@ -170,9 +202,9 @@ public struct Connector {
         let B = x.dim(0), N = x.dim(1)
         let scale = 1.0 / Float(headDim).squareRoot()
 
-        var q = dense(x, f32("\(prefix).to_q.weight"), f32opt("\(prefix).to_q.bias"))
-        var k = dense(x, f32("\(prefix).to_k.weight"), f32opt("\(prefix).to_k.bias"))
-        let v0 = dense(x, f32("\(prefix).to_v.weight"), f32opt("\(prefix).to_v.bias"))
+        var q = linear(x, "\(prefix).to_q")
+        var k = linear(x, "\(prefix).to_k")
+        let v0 = linear(x, "\(prefix).to_v")
 
         // QK RMSNorm over full inner_dim (nn.RMSNorm default eps 1e-5)
         q = rmsW(q, f32("\(prefix).q_norm.weight"), eps: 1e-5)
@@ -190,20 +222,20 @@ public struct Connector {
         var out = attn.matmul(v)  // (B,H,N,headDim)
 
         // per-head gate: 2 * sigmoid(logits)
-        let gateLogits = dense(x, f32("\(prefix).to_gate_logits.weight"), f32opt("\(prefix).to_gate_logits.bias"))  // (B,N,H)
+        let gateLogits = linear(x, "\(prefix).to_gate_logits")  // (B,N,H)
         let gate = 2.0 * MLX.sigmoid(gateLogits)
         out = out * gate.transposed(0, 2, 1).expandedDimensions(axis: -1)  // (B,H,N,1)
 
         out = out.transposed(0, 2, 1, 3).reshaped(B, N, numHeads * headDim)
-        return dense(out, f32("\(prefix).to_out.0.weight"), f32opt("\(prefix).to_out.0.bias"))
+        return linear(out, "\(prefix).to_out.0")
     }
 
     // MARK: - ConnectorFeedForward (GELU-approx)
 
     private func feedForward(_ x: MLXArray, prefix: String) -> MLXArray {
-        var h = dense(x, f32("\(prefix).net.0.proj.weight"), f32opt("\(prefix).net.0.proj.bias"))
+        var h = linear(x, "\(prefix).net.0.proj")
         h = geluApproximate(h)
-        return dense(h, f32("\(prefix).net.2.weight"), f32opt("\(prefix).net.2.bias"))
+        return linear(h, "\(prefix).net.2")
     }
 
     // MARK: - _replace_padded_with_learnable_registers
@@ -233,13 +265,6 @@ public struct Connector {
     }
 
     // MARK: - helpers
-
-    /// y = x @ W.T (+ b). W stored (out, in) as in PyTorch/MLX Linear.
-    private func dense(_ x: MLXArray, _ weight: MLXArray, _ bias: MLXArray?) -> MLXArray {
-        var y = x.matmul(weight.transposed())
-        if let bias { y = y + bias }
-        return y
-    }
 
     /// Affine-free RMS norm (norm computed in fp32, like mx.fast.rms_norm).
     private func rms0(_ x: MLXArray, eps: Float) -> MLXArray {
