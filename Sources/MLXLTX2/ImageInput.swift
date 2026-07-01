@@ -1,8 +1,8 @@
 // ImageInput.swift — decode an engine `Image` into the i2v init-frame tensor.
 //
 // The VAE encoder wants pixels (1, 3, 1, H, W) in [-1,1] at the target video resolution.
-// We decode the image bytes (CoreGraphics), aspect-fill center-crop to (W×H), flip so the
-// pixel buffer is top-row-first, and normalize. NOTE: the oracle also runs a lossy H.264
+// We decode the image bytes (CoreGraphics), aspect-fill center-crop to (W×H) — the bitmap
+// context is already top-row-first, no flip — and normalize. NOTE: the oracle also runs a lossy H.264
 // CRF round-trip (default crf=33) before encoding as a quality-matching step — DEFERRED here
 // (a perceptual detail; i2v is not bit-matched to the oracle anyway, see ISSUES bf16 doctrine).
 
@@ -36,9 +36,11 @@ enum ImageInput {
         let scale = max(CGFloat(width) / iw, CGFloat(height) / ih)
         let dw = iw * scale, dh = ih * scale
         let ox = (CGFloat(width) - dw) / 2, oy = (CGFloat(height) - dh) / 2
-        // Flip vertically so buffer row 0 = top of the image (matches frame decode orientation).
-        ctx.translateBy(x: 0, y: CGFloat(height))
-        ctx.scaleBy(x: 1, y: -1)
+        // NO flip: `CGContext.draw(CGImage:)` into a bitmap context already yields a top-row-first
+        // buffer with correct orientation (verified empirically — a red-top/blue-bottom probe reads
+        // row0=RED unflipped, row0=BLUE with the old translate/scale flip). The previous flip here
+        // INVERTED the init frame → i2v videos opened with an upside-down first frame that "fell"
+        // upright as the conditioning released (only frame 0 is pinned).
         ctx.interpolationQuality = .high
         ctx.draw(cg, in: CGRect(x: ox, y: oy, width: dw, height: dh))
 
