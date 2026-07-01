@@ -79,7 +79,9 @@ let package = Package(
             name: "RunLTX2",
             dependencies: [
                 "LTX2",
+                "MLXLTX2",  // for the --encode-stress gate (calls the real encodeMP4)
                 .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXToolKit", package: "mlx-engine-swift"),
             ],
             path: "Sources/RunLTX2"
         ),

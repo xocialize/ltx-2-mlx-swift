@@ -50,8 +50,19 @@ private func pixelBuffer(rgb: [UInt8], width: Int, height: Int, pool: CVPixelBuf
 
 /// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`,
 /// optionally muxing a stereo audio track [1, 2, T_audio] in [-1, 1] at `audioSampleRate`.
+/// Encode frames [1,T,H,W,3] in [-1,1] → MP4 Data.
+///
+/// **Defaults to a SOFTWARE-only H.264 encoder.** The hardware VideoToolbox media engine STALLS when
+/// it contends with MLX's active post-generation GPU context: measured cold, the AVAssetWriter input
+/// stops draining (`isReadyForMoreMediaData` stuck) and hangs at frame 32/41 for a 48-frame clip,
+/// while the software encoder does the same 41 frames in ~3.7 s. Isolated with `RunLTX2
+/// --encode-stress`: hardware is fine for the same frames with idle memory OR a 38 GB idle
+/// allocation — it only stalls *after real MLX compute*, which is always the case for LTX output.
+/// `software: false` or `LTX_ENCODE=hardware` opts back into the faster (~1.2 s) hardware path for
+/// callers that don't encode right after heavy Metal work.
 @InferenceActor
-func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampleRate: Double = 48000) async throws -> Data {
+public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampleRate: Double = 48000,
+                      software: Bool = true) async throws -> Data {
     guard frames.ndim == 5, frames.dim(1) > 0 else {
         throw FrameCodecError.badFrames("expected [1,T,H,W,3], got \(frames.shape)")
     }
@@ -59,10 +70,25 @@ func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampl
     let url = FileManager.default.temporaryDirectory.appending(path: "ltx2-\(UUID().uuidString).mp4")
     defer { try? FileManager.default.removeItem(at: url) }
 
-    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-    let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+    // env overrides the param: LTX_ENCODE = "hardware" | "software" | (unset → the `software` arg).
+    let env = ProcessInfo.processInfo.environment["LTX_ENCODE"]
+    let forceSoftware = env == "software" || (env != "hardware" && software)
+    var videoSettings: [String: Any] = [
         AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h,
-    ])
+    ]
+    if forceSoftware {
+        // VideoToolbox encoder-specification keys (string form → no VideoToolbox import needed):
+        // require a software-only encoder so the hardware media engine is not used.
+        videoSettings[AVVideoEncoderSpecificationKey] = [
+            "EnableHardwareAcceleratedVideoEncoder": false,
+            "RequireSoftwareOnlyVideoEncoder": true,
+        ] as [String: Any]
+        LTX2Profiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (hardware VideoToolbox bypassed)")
+    } else {
+        LTX2Profiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (LTX_ENCODE=hardware) — may stall after heavy MLX compute")
+    }
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
     input.expectsMediaDataInRealTime = false
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,

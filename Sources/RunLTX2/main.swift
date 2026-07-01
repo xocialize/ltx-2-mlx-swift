@@ -10,7 +10,10 @@
 
 import Foundation
 import MLX
+import MLXRandom
 import LTX2
+import MLXLTX2
+import MLXToolKit
 
 let defaultGoldens = "/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors"
 let defaultConnector = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/connector.safetensors"
@@ -555,6 +558,33 @@ func memBenchGate(quant: String) async throws {
     print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
 }
 
+// MARK: - Encode stress gate — isolate the H.264 encoder stall (contention vs frame-count)
+//
+// Reproduces the encodeMP4 hang without the ~4min generation. Synthesizes N frames and encodes them,
+// optionally under ~38 GB of resident memory pressure (--hog, like the bf16 DiT) and/or with the
+// SOFTWARE encoder (--software, bypasses the hardware VideoToolbox media engine). Four combinations
+// pin the cause: frames-only vs +hog isolates CONTENTION; hardware vs software isolates the HARDWARE
+// media engine.
+@InferenceActor
+func encodeStressGate(frames n: Int, software: Bool, hog: Bool) async throws {
+    print("[encode-stress] N=\(n) frames  software=\(software)  hog(38GB)=\(hog)")
+    var hogs: [MLXArray] = []
+    if hog {
+        for _ in 0 ..< 38 { let a = MLXArray.zeros([250_000_000]).asType(.float32); eval(a); hogs.append(a) }  // 38×1GB
+        print(String(format: "[encode-stress] resident pressure ≈ %.0f GB held", 38.0))
+    }
+    let frames = MLXRandom.normal([1, n, 512, 704, 3]).asType(.float32)
+    eval(frames)
+    let t0 = Date()
+    do {
+        let data = try await encodeMP4(frames: frames, fps: 24, audio: nil, software: software)
+        print(String(format: "[encode-stress] PASS ✅  %.1fs  %d bytes", Date().timeIntervalSince(t0), data.count))
+    } catch {
+        print("[encode-stress] FAIL ❌  \(Int(Date().timeIntervalSince(t0)))s  \(error)")
+    }
+    _ = hogs.count  // keep pressure alive through the encode
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -597,6 +627,9 @@ if args.contains("--connector-gate") {
     try denoiseGate()
 } else if args.contains("--e2e-gate") {
     try e2eGate()
+} else if args.contains("--encode-stress") {
+    let n = positional.first.flatMap { Int($0) } ?? 41
+    try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"))
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
 } else {
