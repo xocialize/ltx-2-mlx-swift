@@ -84,12 +84,15 @@ Structure that matters (`VideoVAE.swift`): NON-causal temporal convs (k=3, symme
 240f bf16 total peak drops well below today's 110 GB; `--vae-chunk-gate` + `--vae-decode-gate` +
 `--e2e-gate` green; one in-app 240f run confirms output unchanged perceptually.
 
-> **T1 STATUS (2026-07-01): mechanics DONE, wired.** `decodeChunked` (gate-validated above) is wired
-> into all three pipeline paths via `decodePixels`: defaults **chunk 8 / halo 5** (window ≤ 18),
-> engaging only when `fLat > chunk + 2·halo` (below that whole-frame is strictly cheaper); env
-> overrides `LTX_VAE_CHUNK` / `LTX_VAE_HALO` (0 disables). REMAINING for T1 close-out: one in-app
-> long-clip run (e.g. the 240f case) confirming the total-peak drop + perceptual output — then
-> budget-driven chunk sizing folds into T3's tier profiles.
+> **T1 STATUS (2026-07-01): DONE — closed by an in-app 240f run.** `decodeChunked` (gate-validated
+> above) is wired into all three pipeline paths via `decodePixels`: defaults **chunk 8 / halo 5**
+> (window ≤ 18), engaging only when `fLat > chunk + 2·halo`; env overrides `LTX_VAE_CHUNK` /
+> `LTX_VAE_HALO` (0 disables).
+> **Close-out (240f i2v-adapter bf16 @704×512, identical settings to the pre-chunk run):**
+> peak **110.22 → 92.23 GB** (act 65.7 → 47.9), run 414.5 → 463.8 s (+12%, decode-phase only),
+> output valid. The remaining act peak IS the decode window (18 latent ≈ 43 GB @704×512) — i.e. the
+> knob now controls the decode peak: chunk 5 (window 15 ≈ 37 GB) would put this run near ~81 GB.
+> **Budget-driven window sizing folds into T3's tier profiles.**
 
 ## T2 — Connector residency (S)
 
