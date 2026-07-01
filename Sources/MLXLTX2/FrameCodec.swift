@@ -7,6 +7,7 @@ import AVFoundation
 import CoreGraphics
 import CoreMedia
 import Foundation
+import LTX2
 import MLX
 import MLXToolKit
 
@@ -90,10 +91,24 @@ func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampl
         let (bytes, fw, fh) = rgbBytes(frames[0, i, 0..., 0..., 0...])
         guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
         let buffer = try pixelBuffer(rgb: bytes, width: fw, height: fh, pool: pool)
-        while !input.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
+        // The H.264/VideoToolbox encoder can stop draining at higher frame counts (GPU/memory
+        // contention with the resident model) — `isReadyForMoreMediaData` then stays false forever
+        // and this loop spins at ~0% CPU (the "looks like a loop / GPU <10%" hang). Bound the wait so
+        // a stall becomes a loud, localized error instead of an invisible forever-hang.
+        var waited = 0.0
+        while !input.isReadyForMoreMediaData {
+            try await Task.sleep(for: .milliseconds(5)); waited += 0.005
+            if waited.rounded() != (waited - 0.005).rounded(), Int(waited) % 5 == 0 {
+                LTX2Profiler.shared.note("encode-mp4 ⚠ waiting on H.264 encoder at frame \(i)/\(t) — \(Int(waited))s (isReadyForMoreMediaData=false)")
+            }
+            if waited > 90 {
+                throw FrameCodecError.appendFailed("H.264 encoder stalled at frame \(i)/\(t): isReadyForMoreMediaData=false for 90s — VideoToolbox is not draining (GPU/memory contention with the resident model). This is the post-generation hang, not the denoise.")
+            }
+        }
         guard adaptor.append(buffer, withPresentationTime: CMTimeMultiply(frameDuration, multiplier: Int32(i))) else {
             throw FrameCodecError.appendFailed("frame \(i)/\(t) err=\(String(describing: writer.error))")
         }
+        if i % 8 == 0 { LTX2Profiler.shared.note("encode-mp4 frame \(i)/\(t)") }
     }
     input.markAsFinished()
 

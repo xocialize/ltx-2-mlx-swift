@@ -181,7 +181,15 @@ public final class MLXLTX2Package: ModelPackage {
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).
         // out.audio is 48kHz stereo (1,2,T) when the audio components are present → muxed.
         let framesCL = out.video.transposed(0, 2, 3, 4, 1)
+        eval(framesCL)                 // materialize pixels before we free the compute cache
+        // Free the MLX buffer pool (grows to ~20 GB during decode) BEFORE handing off to the H.264
+        // hardware encoder — VideoToolbox and MLX share the GPU, and the residual cache can starve
+        // the encoder so it stops draining (the frame-loop stall in encodeMP4). Mitigation for the
+        // post-generation hang; the encoder now also fails loudly on a >90s stall.
+        Memory.clearCache()
+        let mp4Span = LTX2Profiler.shared.begin("encode-mp4", "h264+aac", note: "\(framesCL.dim(1)) frames")
         let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: out.audio, audioSampleRate: 48000)
+        LTX2Profiler.shared.end(mp4Span)
         return T2VResponse(video: Video(
             format: .mp4, data: mp4,
             durationSeconds: Double(framesCL.dim(1)) / fps, frameRate: fps))
