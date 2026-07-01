@@ -22,9 +22,52 @@ import MLXProfiling
 import MLXRandom
 
 public final class LTX2Pipeline {
-    /// Persistent backbone — stays resident the whole pipeline lifetime (the runtime-LoRA
-    /// hot-swap target and the denoise memory peak). Never evicted between requests.
-    let dit: DiT
+    /// The DiT backbone — resident by default (the runtime-LoRA hot-swap target and the denoise
+    /// peak). On low tiers (`evictDiTBeforeDecode`) it is DROPPED after the last denoise step so
+    /// the decode stage never carries it (T3c: decode-with-DiT was the residual low-tier peak);
+    /// `ensureDiT()` reloads on the next request (kernels stay process-cached — no recompile,
+    /// weights re-fault from the mmap page cache). LoRA state lives on the DiT instance, so a
+    /// reload yields a PRISTINE base — `activeLoRATargets == 0` is the wrapper's re-apply signal.
+    private var ditStorage: DiT?
+    private let ditPath: URL
+    private var didWarmup = false
+
+    /// Evict the DiT after denoise, before the decode stage (set by the wrapper from the tier
+    /// profile; `LTX_EVICT_DIT=1/0` overrides for measurement).
+    public var evictDiTBeforeDecode = false
+
+    /// The requested runtime-LoRA set — REMEMBERED across DiT evict/reload cycles (LoRA factors
+    /// live on the DiT instance, so `ensureDiT` must re-apply after every reload; without this a
+    /// low-tier request would silently generate BASE after the pre-encode DiT drop).
+    private var activeLoRASpec: [(url: URL, strength: Float)] = []
+
+    @discardableResult
+    func ensureDiT() throws -> DiT {
+        if let d = ditStorage { return d }
+        let span = MLXProfiler.shared.begin("load", "dit-reload")
+        let d = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
+        if !didWarmup { d.warmup(); didWarmup = true }   // kernels are per-process; once is enough
+        if !activeLoRASpec.isEmpty { try LTX2LoRA.apply(activeLoRASpec, to: d) }
+        MLXProfiler.shared.end(span)
+        ditStorage = d
+        return d
+    }
+
+    /// The low-tier sequential-DiT policy: profile-set, `LTX_EVICT_DIT=1/0` overrides.
+    private var sequentialDiT: Bool {
+        let env = ProcessInfo.processInfo.environment["LTX_EVICT_DIT"]
+        return env == "1" || (env != "0" && evictDiTBeforeDecode)
+    }
+
+    /// Drop the DiT on low tiers so a stage that doesn't need it never carries it. Used BOTH
+    /// before the connector loads (encode is the T3b-measured peak: connector int8 quantize
+    /// scratch + a warmed-resident DiT ≈ 26 GB co-resident) AND after the last denoise step
+    /// (decode). `ensureDiT()` reloads in seconds (mmap re-fault; kernels process-cached).
+    private func dropDiTIfSequential() {
+        guard sequentialDiT, !keepStagesResident, ditStorage != nil else { return }
+        ditStorage = nil
+        Memory.clearCache()
+    }
 
     // Evictable stages — held only around the phase that needs them (load → use → evict).
     // Stored loaders (`ltxDir`/`gemmaDir`) let a dropped stage re-load on the next request.
@@ -51,8 +94,10 @@ public final class LTX2Pipeline {
     /// the default.
     public var keepStagesResident = false
 
-    init(dit: DiT, ltxDir: URL, gemmaDir: URL, hasAudio: Bool, hasEncoder: Bool, hasUpsampler: Bool) {
-        self.dit = dit
+    init(dit: DiT, ditPath: URL, ltxDir: URL, gemmaDir: URL, hasAudio: Bool, hasEncoder: Bool, hasUpsampler: Bool) {
+        self.ditStorage = dit
+        self.didWarmup = true      // LTX2Pipeline.load warmed it
+        self.ditPath = ditPath
         self.ltxDir = ltxDir
         self.gemmaDir = gemmaDir
         self.hasAudio = hasAudio
@@ -66,17 +111,24 @@ public final class LTX2Pipeline {
 
     // MARK: - Runtime LoRA (extend, not swap) — public seam for the engine wrapper
 
-    /// Make `loras` the active runtime-LoRA set on the resident DiT (replaces any current set;
-    /// empty array detaches). Hot-swap: no base reload, only the small low-rank factors change.
+    /// Make `loras` the active runtime-LoRA set (replaces any current set; empty array detaches).
+    /// Hot-swap on a resident DiT: no base reload, only the small low-rank factors change. If the
+    /// DiT is currently evicted (low-tier sequencing), the spec is stored and applied on the next
+    /// `ensureDiT()` — no eager reload just to attach factors.
     public func setLoRAs(_ loras: [(url: URL, strength: Float)]) throws {
-        try LTX2LoRA.apply(loras, to: dit)
+        activeLoRASpec = loras
+        if let d = ditStorage { try LTX2LoRA.apply(loras, to: d) }
     }
 
     /// Restore the pristine base (drop all runtime LoRAs).
-    public func clearLoRAs() { LTX2LoRA.detach(dit) }
+    public func clearLoRAs() {
+        activeLoRASpec = []
+        if let d = ditStorage { LTX2LoRA.detach(d) }
+    }
 
-    /// Number of currently-adapted DiT targets (0 = pristine base).
-    public var activeLoRATargets: Int { dit.loraTargetCount }
+    /// Number of currently-adapted DiT targets. 0 = pristine base — INCLUDING after a low-tier
+    /// DiT evict/reload (LoRA factors live on the DiT instance), so the wrapper re-applies on 0.
+    public var activeLoRATargets: Int { ditStorage?.loraTargetCount ?? 0 }
 
     // MARK: - Per-stage residency (load → use → evict)
 
@@ -90,6 +142,13 @@ public final class LTX2Pipeline {
         _ prompt: String, isolation: isolated (any Actor)? = #isolation
     ) async throws -> (video: MLXArray, audio: MLXArray) {
         let prof = MLXProfiler.shared
+        // Low tiers: the encode stage never needs the DiT — drop it (warmed at load) BEFORE Gemma,
+        // not just before the connector: T3c iteration measured encode/gemma at 21.0 GB with the
+        // warmed DiT (11.9) still resident, and the connector's int8 quantize-at-load scratch was
+        // the peak before that (~26 GB co-resident). Fully sequential low-tier stages:
+        // [Gemma] → [connector] → [DiT denoise] → [VAE decode]. Reloads at denoise (mmap re-fault).
+        dropDiTIfSequential()
+
         let gSpan = prof.begin("encode", "gemma", note: "gemma-3-12b 4-bit")
         if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
         let (ids, mask) = gemma!.tokenize(prompt)
@@ -203,7 +262,7 @@ public final class LTX2Pipeline {
                     && fm.fileExists(atPath: ltxDir.appending(path: "vocoder.safetensors").path)
         let hasEncoder = fm.fileExists(atPath: ltxDir.appending(path: "vae_encoder.safetensors").path)
         let hasUpsampler = fm.fileExists(atPath: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors").path)
-        return LTX2Pipeline(dit: dit, ltxDir: ltxDir, gemmaDir: gemmaDir,
+        return LTX2Pipeline(dit: dit, ditPath: ditPath, ltxDir: ltxDir, gemmaDir: gemmaDir,
                             hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler)
     }
 
@@ -258,10 +317,11 @@ public final class LTX2Pipeline {
 
         // 4. Distilled Euler denoise (joint video + audio) — the memory peak (DiT only resident).
         let (vfinal, afinal) = DenoiseLoop.run(
-            dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
+            dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions, label: "")
         eval(vfinal, afinal)
+        dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
@@ -317,12 +377,13 @@ public final class LTX2Pipeline {
         let videoLatent = MLXRandom.normal([1, nv, 128])
         let audioLatent = MLXRandom.normal([1, audioT, 128])
         let (vfinal, afinal) = DenoiseLoop.runConditioned(
-            dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
+            dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT),
             videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
         eval(vfinal, afinal)
+        dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         // 6. Decode
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
@@ -365,7 +426,7 @@ public final class LTX2Pipeline {
         let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
         let a1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, audioT, 128]), sigma: 1.0, shape: [1, audioT, 128], seed: seed.map { $0 &+ 1 })
         let (v1f, a1f) = DenoiseLoop.run(
-            dit: dit, videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
+            dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT), label: "s1-")
@@ -386,11 +447,12 @@ public final class LTX2Pipeline {
         let v2init = LTX2Pipeline.noiseInit(clean: v2tokens, sigma: sigma0, shape: v2tokens.shape, seed: seed.map { $0 &+ 2 })
         let a2init = LTX2Pipeline.noiseInit(clean: a1f, sigma: sigma0, shape: a1f.shape, seed: seed.map { $0 &+ 2 })
         let (v2f, a2f) = DenoiseLoop.run(
-            dit: dit, videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
+            dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT), label: "s2-")
         eval(v2f, a2f)
+        dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()

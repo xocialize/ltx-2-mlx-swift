@@ -29,6 +29,10 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     public var vaeChunkFrames: Int {
         switch self { case .compact24: 4; case .balanced32: 6; default: 8 }
     }
+    /// Low tiers evict the DiT after the last denoise step so the decode stage never carries it
+    /// (T3c — decode-with-DiT-resident was the residual low-tier peak). Costs a DiT reload on the
+    /// next request (mmap re-fault; kernels stay process-cached), accepted on these tiers.
+    public var evictDiTBeforeDecode: Bool { self == .compact24 || self == .balanced32 }
     public var recommendedQuant: Quant {
         switch self { case .compact24, .balanced32: .int4; case .standard64: .int8; case .max128: .bf16 }
     }
@@ -101,17 +105,17 @@ extension LTX2Configuration: FootprintConfigured {
 
     public var peakActivationBytesHint: UInt64? {
         guard let profile else { return nil }   // fall back to the per-quant QuantFootprint
-        // MEASURED 2026-07-01 (T3 autorun, clamp exercised; see LOW-TIER-PLAN T3 RESULTS). These are
-        // the HONEST current numbers — compact24/balanced32 do NOT yet fit their nominal tier
-        // budgets (encode stage is the peak: Gemma+connector co-resident + hoisted fp32 projection
-        // views; standard64's is the decode window's MLX-pool growth). T3b levers (sequential
-        // Gemma→connector, connector int8 quantizedMatmul, scoped cacheLimit during decode) tighten
-        // these toward the 0.7× budgets; re-baseline on each landing.
+        // MEASURED 2026-07-01 after T3b+T3c (sequential encode, connector int8, decode-scoped
+        // cacheLimit, fully-sequential DiT on low tiers) — see LOW-TIER-PLAN FINAL RESULTS. The
+        // hint is peak − the declared per-quant residentBytes, so the engine's charge
+        // (resident + reserve) equals the true measured stage-max peak:
+        //   compact24  peak 15.36 GB (budget 16.8 ✓)   balanced32 peak 16.07 (22.4 ✓)
+        //   standard64 peak 37.51   (44.8 ✓)           max128     peak 92.2  (0.85×128 ✓)
         switch profile {
-        case .compact24:  return 25_000_000_000   // act 23.9 measured (peak 35.9 = encode-bound)
-        case .balanced32: return 25_000_000_000   // act 23.5 measured (encode-bound, same stage)
-        case .standard64: return 41_000_000_000   // act 39.1 measured (decode-window/cache-bound)
-        case .max128:     return 50_000_000_000   // act 47.9 measured (240f i2v bf16, chunked)
+        case .compact24:  return 3_000_000_000    // 15.36 − 13 (int4 resident) + headroom
+        case .balanced32: return 4_000_000_000    // 16.07 − 13 + headroom
+        case .standard64: return 16_000_000_000   // 37.51 − 22 (int8 resident) + headroom
+        case .max128:     return 52_000_000_000   // 92.2 − 40 (bf16 resident) + headroom
         }
     }
 }

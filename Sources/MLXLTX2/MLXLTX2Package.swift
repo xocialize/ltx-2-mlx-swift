@@ -151,7 +151,9 @@ public final class MLXLTX2Package: ModelPackage {
                 throw LoRARegistryError.unknownAdapter(id)
             }
             let strength = t2v.metaData[LoRAMetaKeys.strength]?.asFloat ?? entry.defaultStrength
-            if appliedLoRA?.id != id || appliedLoRA?.strength != strength {
+            // Re-apply when the selection changed OR the DiT was evicted/reloaded since (low-tier
+            // decode evicts the DiT; a reloaded DiT is a pristine base → activeLoRATargets == 0).
+            if appliedLoRA?.id != id || appliedLoRA?.strength != strength || pipeline.activeLoRATargets == 0 {
                 let file = try await cache.ensure(entry)
                 try pipeline.setLoRAs([(file, strength)])
                 appliedLoRA = (id, strength)
@@ -171,6 +173,7 @@ public final class MLXLTX2Package: ModelPackage {
             wd = min(wd, p.maxWidth); h = min(h, p.maxHeight); nf = min(nf, p.maxFrames)
             wd = max(64, (wd / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
             pipeline.vaeChunkFrames = p.vaeChunkFrames
+            pipeline.evictDiTBeforeDecode = p.evictDiTBeforeDecode
         }
         let oneStage = configuration.profile?.oneStage
             ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")

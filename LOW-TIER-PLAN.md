@@ -161,6 +161,26 @@ shows truthful ✅/❌ per tier; registry/manifest re-baselined from the measure
 > ≈ 34 (encode-bound after fixes) ✓ (44.8). If compact24 still misses, the remaining lever is
 > DiT-evict-before-decode on low tiers (reload cost accepted there).
 
+> ## ✅ FINAL RESULTS (2026-07-01) — ALL TIERS PASS
+>
+> T3b (sequential Gemma→connector · connector int8 `quantizedMatmul` · decode-scoped `cacheLimit=0`)
+> + T3c (**fully-sequential DiT on low tiers**: dropped before the encode stage AND before decode,
+> `ensureDiT()` reloads at denoise in ~seconds with kernels process-cached; the active LoRA spec is
+> remembered on the pipeline and re-applied on every DiT reload, so LoRA requests survive the drops).
+> T3c took two attribution iterations: the residual peak moved from decode-with-DiT (wrong guess) →
+> connector-quantize-with-DiT (26 GB) → gemma-with-DiT (21 GB) → gone. Gates green throughout
+> (connector int8: VIDEO 0.999986 / AUDIO 0.999548; text-encode 0.999987 / 0.999543).
+>
+> | tier | T3 baseline | FINAL peak | budget 0.7× | run time | peak stage now |
+> |---|---|---|---|---|---|
+> | compact24 (q4 512×288×121, 1-stage) | 35.9 | **15.36** | 16.8 ✅ | 64.5 s | denoise (15.4) |
+> | balanced32 (q4 576×320×161, 1-stage) | 35.6 | **16.07** | 22.4 ✅ | 114.9 s | denoise |
+> | standard64 (q8 704×512×161, 2-stage) | 60.7 | **37.51** | 44.8 ✅ | 187.6 s | decode window |
+> | max128 (bf16 704×512×240, i2v) | 110.2 | 92.2 | 108.8 (0.85×) ✅ | 463.8 s | decode window |
+>
+> **The 24 GB M5 MacBook Pro target is met**: 121 frames @512×288 int4 peaks at 15.36 GB.
+> Hints re-baselined as peak − declared resident (charge = true peak). Remaining: T4 docs/registry.
+
 ## T4 — Validation + docs
 
 - In-app runs per profile on this box, peaks recorded against budgets (can't shrink RAM, CAN verify
