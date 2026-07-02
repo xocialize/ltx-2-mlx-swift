@@ -247,6 +247,47 @@ func denoiseGate() throws {
     if !pass { exit(1) }
 }
 
+/// IC-LoRA reference-append parity (IC-LORA-PLAN P1): tiny DiT + oracle goldens from
+/// dump_ic_tiny_goldens.py — the oracle's real VideoConditionByReferenceLatent.apply +
+/// denoise_loop vs our ICVideoState.build + DenoiseLoop.runConditioned + slice.
+/// Case a: strength 1.0, downscale 2 (position scaling); case b: strength 0.7, downscale 1
+/// (partial denoise mask → per-token σ at reference tokens).
+func icTinyGate() throws {
+    let tinyW = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_tiny/weights.safetensors"
+    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/ic_tiny"
+    let weights = try MLX.loadArrays(url: URL(fileURLWithPath: tinyW))
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dit = DiT(weights: weights, config: tinyDiTConfig())
+    let sigmas = io["sigmas"]!.asArray(Float.self)
+    var allPass = true
+    for name in ["a", "b"] {
+        let p = io["\(name)_params"]!.asArray(Float.self)   // [downscale, strength, Nv, Nr]
+        let ref = ReferenceConditioning(tokens: io["\(name)_ref_tokens"]!,
+                                        positions: io["\(name)_ref_positions"]!,
+                                        downscaleFactor: p[0], strength: p[1])
+        let state = ICVideoState.build(targetLatent: io["\(name)_video_latent"]!,
+                                       targetPositions: io["\(name)_video_positions"]!,
+                                       references: [ref])
+        let posMax = maxAbs(state.positions, io["\(name)_ext_positions"]!)
+        let (vFull, audio) = try DenoiseLoop.runConditioned(
+            dit: dit, videoLatent0: state.latent, audioLatent0: io["\(name)_audio_latent"]!,
+            sigmas: sigmas,
+            videoText: io["\(name)_video_text"], audioText: io["\(name)_audio_text"],
+            videoPositions: state.positions, audioPositions: io["\(name)_audio_positions"]!,
+            videoCleanLatent: state.clean, videoDenoiseMask: state.denoiseMask)
+        let vSliced = state.slice(vFull)
+        eval(vFull, audio)
+        let fCos = cosine(vFull, io["\(name)_video_final_full"]!)
+        let sCos = cosine(vSliced, io["\(name)_video_final"]!)
+        let aCos = cosine(audio, io["\(name)_audio_final"]!)
+        print(String(format: "[ic-tiny-gate] case %@ (ds=%.0f s=%.1f Nv=%.0f Nr=%.0f): posMaxAbs=%.6f  VIDEO full=%.6f sliced=%.6f  AUDIO=%.6f",
+                     name as NSString, p[0], p[1], p[2], p[3], posMax, fCos, sCos, aCos))
+        allPass = allPass && posMax < 1e-4 && fCos >= 0.999 && sCos >= 0.999 && aCos >= 0.999
+    }
+    print(allPass ? "[ic-tiny-gate] PASS ✅" : "[ic-tiny-gate] FAIL ❌")
+    if !allPass { exit(1) }
+}
+
 /// End-to-end one-stage t2v parity (real weights): noise → denoise → unpatchify → VAE decode.
 func e2eGate() throws {
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
@@ -847,6 +888,8 @@ if args.contains("--connector-gate") {
     try upscaleStepGate()
 } else if args.contains("--denoise-gate") {
     try denoiseGate()
+} else if args.contains("--ic-tiny-gate") {
+    try icTinyGate()
 } else if args.contains("--e2e-gate") {
     try e2eGate()
 } else if args.contains("--vae-chunk-gate") {

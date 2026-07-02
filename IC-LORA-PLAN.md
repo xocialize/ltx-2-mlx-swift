@@ -124,11 +124,17 @@ per-kind code, shared across adapters.
   finite); Cameraman **480/480, PASS** (0.786 / detach 1.0). ⇒ the weight half of IC is fully
   proven; ONLY the injection path remains. **Ingredients:** HF gate (`gated: auto`) not yet
   accepted for `xocialize` — accept on the repo page once, then rerun the recipe.
-- **P1 — injection core (LTX2), Ingredients as the proving adapter:** extend
-  `DenoiseLoop.runConditioned` to appended tokens (concat latent/clean/mask/positions w/ spatial
-  scaling; per-token σ exists; post-loop slice). **Gate:** tiny-scale oracle parity
-  (`--ic-tiny-gate`, goldens from a seeded `ic_lora.py` run) + full-scale 1-step cosine ≥ 0.999
-  (M9 doctrine).
+- **P1 — injection core: ✅ DONE 2026-07-02, PERFECT PARITY.** `Sources/LTX2/ReferenceConditioning.swift`
+  (`ReferenceConditioning` + `ICVideoState.build/slice` — 1:1 port of
+  `VideoConditionByReferenceLatent.apply`); `DenoiseLoop.runConditioned` needed **zero changes**
+  (appended refs are just mask-0 tokens; its initial clean-injection is a no-op at refs since
+  latent==clean there). Golden `parity/dump_ic_tiny_goldens.py` drives the oracle's REAL
+  conditioning objects (tiny seeded DiT, fp32): case a strength 1.0/downscale 2 (position
+  scaling), case b strength 0.7/downscale 1 (partial mask → per-token σ, confirming
+  `_compute_per_token_timesteps` = mask·σ). `RunLTX2 --ic-tiny-gate`: **cosine 1.000000 on both
+  cases, full AND sliced, positions exact, audio untouched.** Also confirms strength<1.0 works
+  WITHOUT attention-mask support (oracle asserts attention_mask is None on this path).
+  Full-scale 1-step check folds into P3's e2e (weights already gated per-LoRA at P0).
 - **P2 — reference ingestion:** 8k+1 frame snap; VAE-encode ref at downscaled res (encoder
   bit-exact); looped-still tiling for sheets. **Gate:** encode-path parity vs `iclora_utils`.
 - **P3 — two-stage IC pipeline + LipDub audio:** stage 1 LoRA+refs half-res → upsample → stage 2
