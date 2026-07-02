@@ -30,6 +30,19 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
 
     /// Effective input kind (absent → `.none`).
     public var inputKind: LoRAInputKind { input ?? .none }
+
+    /// Public memberwise init — consumers with richer registry schemas (ltx-features-swift's
+    /// schema v2) map their entries down to this runtime subset (e.g. to reuse `LoRACache`).
+    public init(id: String, displayName: String, repo: String, weightFile: String,
+                defaultStrength: Float, trigger: String, input: LoRAInputKind? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.repo = repo
+        self.weightFile = weightFile
+        self.defaultStrength = defaultStrength
+        self.trigger = trigger
+        self.input = input
+    }
 }
 
 /// The decoded registry plus id lookup + lazy file resolution.
