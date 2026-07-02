@@ -155,7 +155,9 @@ public final class MLXLTX2Package: ModelPackage {
             // decode evicts the DiT; a reloaded DiT is a pristine base → activeLoRATargets == 0).
             if appliedLoRA?.id != id || appliedLoRA?.strength != strength || pipeline.activeLoRATargets == 0 {
                 let file = try await cache.ensure(entry)
+                let span = MLXProfiler.shared.begin("lora-apply", id, note: file.lastPathComponent)
                 try pipeline.setLoRAs([(file, strength)])
+                MLXProfiler.shared.end(span)
                 appliedLoRA = (id, strength)
             }
         } else if appliedLoRA != nil {

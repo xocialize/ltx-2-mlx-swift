@@ -253,10 +253,14 @@ public final class LTX2Pipeline {
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
         let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
+        MLXProfiler.shared.note(String(format: "DiT.load done (lazy) · phys=%.2f GB", Double(physFootprintBytes()) / 1e9))
         // Pay the one-time Metal kernel-compile cost here (in "Loading"), not on the first denoise
         // step where it idles the GPU and looks like a hang. See DiT.warmup / PROFILING.md.
         let warm = Date(); dit.warmup()
-        MLXProfiler.shared.note(String(format: "DiT kernel warmup: %.1fs", Date().timeIntervalSince(warm)))
+        MLXProfiler.shared.note(String(format: "DiT kernel warmup: %.1fs · phys=%.2f GB · pool=%.2f GB",
+                                       Date().timeIntervalSince(warm),
+                                       Double(physFootprintBytes()) / 1e9,
+                                       Double(Memory.cacheMemory) / 1e9))
         let fm = FileManager.default
         let hasAudio = fm.fileExists(atPath: ltxDir.appending(path: "audio_vae.safetensors").path)
                     && fm.fileExists(atPath: ltxDir.appending(path: "vocoder.safetensors").path)

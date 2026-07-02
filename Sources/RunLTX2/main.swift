@@ -8,7 +8,9 @@
 //   xcrun swift run RunLTX2 --connector-gate \
 //       [goldens.safetensors] [connector.safetensors]
 
+import CoreGraphics
 import Foundation
+import ImageIO
 import MLX
 import MLXRandom
 import LTX2
@@ -503,7 +505,19 @@ func prewarmFiles(_ paths: [URL]) {
     for p in paths {
         guard let fh = try? FileHandle(forReadingFrom: p) else { continue }
         defer { try? fh.close() }
-        while let chunk = try? fh.read(upToCount: 64 << 20), !chunk.isEmpty {}
+        // Each read returns an AUTORELEASED chunk — without a per-iteration pool drain the whole
+        // file accumulates live in phys_footprint (observed: ~60 GB of "freed" chunks still resident
+        // after a 50 GB prewarm, which then drove the GPU into the I5 watchdog on the next eval).
+        var done = false
+        while !done {
+            autoreleasepool {
+                guard let chunk = try? fh.read(upToCount: 64 << 20), !chunk.isEmpty else {
+                    done = true
+                    return
+                }
+                _ = chunk.count
+            }
+        }
     }
 }
 
@@ -556,6 +570,102 @@ func memBenchGate(quant: String) async throws {
     print(String(format: "[mem-bench] DECLARE → residentBytes ≈ %.2f GB (%llu)  peakActivationBytes ≈ %.2f GB (%llu)",
                  gbOf(floor), floor, gbOf(activation), activation))
     print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
+}
+
+// MARK: - i2v spot measure (BRIDGE-LTX-005) — tighten the max128 activation hint
+//
+// max128's `peakActivationBytesHint` is held at the conservative pre-T3b ceiling (52 GB) because
+// the i2v/per-token path was UNMEASURED at the new 481f cap. This gate produces that datum: it
+// drives the WRAPPER (so the profile clamp, the runtime i2v-adapter LoRA (~4.9 GB resident), and
+// the MP4 encode are all inside the sampled window) with a synthetic init frame at the max128
+// envelope, and reports the SPLIT line (floor / peak / activation) the hint is recalibrated from.
+@InferenceActor
+func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
+    let cfg = LTX2Configuration(
+        quant: .bf16,
+        ltxDirectory: URL(fileURLWithPath: "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"),
+        gemmaDirectory: URL(fileURLWithPath: defaultGemma),
+        // The LoRA cache root (`ltx-lora-cache/i2v-adapter.safetensors`, already fetched by the app).
+        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/DEV_ARCHIVE/weights"),
+        profile: .max128)
+    print("[i2v-spot] request \(width)×\(height)×\(frames)f bf16 · profile=max128 · lora=i2v-adapter")
+
+    // Prewarm off the config's own `prewarmPaths` (dirs → their safetensors) + the LoRA file,
+    // mirroring the engine's WeightPrewarmer so the cold load can't trip the Metal watchdog.
+    let p0 = Date()
+    var warm: [URL] = []
+    for p in cfg.prewarmPaths {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: p.path, isDirectory: &isDir), isDir.boolValue {
+            warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(
+                at: p, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension == "safetensors" })
+        } else {
+            warm.append(p)
+        }
+    }
+    warm.append(URL(fileURLWithPath: "/Volumes/DEV_ARCHIVE/weights/ltx-lora-cache/i2v-adapter.safetensors"))
+    prewarmFiles(warm)
+    print(String(format: "[i2v-spot] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
+
+    let sampler = PhysSampler(); sampler.start()
+    let pkg = MLXLTX2Package(configuration: cfg)
+    let t0 = Date()
+    try await pkg.load()
+    print(String(format: "[i2v-spot] load %.1fs  phys-after-load=%.2f GB",
+                 Date().timeIntervalSince(t0), gbOf(physFootprintBytes())))
+    // The load-time DiT kernel warmup runs with an UNCAPPED pool and retains its compile/activation
+    // buffers (~60 GB observed above the 38 GB DiT). Entering the first run that bloated makes the
+    // 4.9 GB LoRA-apply eval fault pages inside a live command buffer → the I5 GPU watchdog. The
+    // app never sees this state (its runs start post-prepare, pool settled) — drop it before run.
+    Memory.clearCache()
+    print(String(format: "[i2v-spot] post-load clearCache → phys=%.2f GB", gbOf(physFootprintBytes())))
+
+    let png = try syntheticInitPNG(width: width, height: height)
+    func request(_ nf: Int) -> T2VRequest {
+        T2VRequest(prompt: "a fox running down a beach at sunset, waves rolling in",
+                   initImage: MLXToolKit.Image(format: .png, data: png),
+                   numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                   metaData: [LoRAMetaKeys.id: .string("i2v-adapter")])
+    }
+
+    // Warmup at 9f: compiles kernels + applies the LoRA + loads the decode/encode stacks —
+    // excluded from the peak so the floor below is the honest steady-state resident set.
+    _ = try await pkg.run(request(9))
+    Memory.clearCache()
+    let floor = physFootprintBytes()
+    print(String(format: "[i2v-spot] resident floor (post-warmup + clearCache): %.2f GB  (DiT + i2v LoRA)", gbOf(floor)))
+
+    sampler.resetMax()
+    let r0 = Date()
+    let resp = try await pkg.run(request(frames)) as! T2VResponse
+    let peak = sampler.maxBytes(); sampler.stop()
+    let activation = peak > floor ? peak - floor : 0
+    let ranFrames = Int(((resp.video.durationSeconds ?? 0) * (resp.video.frameRate ?? 24)).rounded())
+    print(String(format: "[i2v-spot] run %.1fs  ran %df  mp4 %.1f MB",
+                 Date().timeIntervalSince(r0), ranFrames, Double(resp.video.data.count) / 1_000_000))
+    print(String(format: "[i2v-spot] SPLIT floor=%.2f GB  peak=%.2f GB  act=%.2f GB", gbOf(floor), gbOf(peak), gbOf(activation)))
+    print(String(format: "[i2v-spot] SUMMARY floor=%llu peak=%llu activation=%llu", floor, peak, activation))
+}
+
+/// Beach-horizon gradient PNG — synthetic but structured enough for a realistic VAE encode.
+func syntheticInitPNG(width: Int, height: Int) throws -> Data {
+    struct PNGError: Error {}
+    let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+    guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                              bytesPerRow: 0, space: cs,
+                              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw PNGError() }
+    let colors = [CGColor(red: 0.95, green: 0.65, blue: 0.35, alpha: 1),   // sunset sky
+                  CGColor(red: 0.25, green: 0.45, blue: 0.70, alpha: 1),   // sea
+                  CGColor(red: 0.85, green: 0.75, blue: 0.55, alpha: 1)]   // sand
+    let grad = CGGradient(colorsSpace: cs, colors: colors as CFArray, locations: [0, 0.55, 1])!
+    ctx.drawLinearGradient(grad, start: CGPoint(x: 0, y: CGFloat(height)), end: .zero, options: [])
+    guard let img = ctx.makeImage() else { throw PNGError() }
+    let out = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { throw PNGError() }
+    CGImageDestinationAddImage(dest, img, nil)
+    guard CGImageDestinationFinalize(dest) else { throw PNGError() }
+    return out as Data
 }
 
 // MARK: - Encode stress gate — isolate the H.264 encoder stall (contention vs frame-count)
@@ -729,7 +839,13 @@ if args.contains("--connector-gate") {
                                audio: args.contains("--audio"))
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
+} else if args.contains("--i2v-spot") {
+    let ints = positional.compactMap { Int($0) }
+    try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,
+                          height: ints.count > 1 ? ints[1] : 512,
+                          frames: ints.count > 2 ? ints[2] : 481)
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
     print("       RunLTX2 --mem-bench [bf16|int8|int4]   (efficiency-sweep footprint at 704×512×9f)")
+    print("       RunLTX2 --i2v-spot [w] [h] [frames]    (BRIDGE-LTX-005 max128 i2v SPLIT measure, default 704 512 481)")
 }
