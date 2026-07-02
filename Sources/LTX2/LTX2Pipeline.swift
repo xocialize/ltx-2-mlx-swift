@@ -149,14 +149,21 @@ public final class LTX2Pipeline {
         // [Gemma] → [connector] → [DiT denoise] → [VAE decode]. Reloads at denoise (mmap re-fault).
         dropDiTIfSequential()
 
+        // Cancellation checkpoints (MVP-READINESS M2/M3 extension): quit/Cancel during the encode
+        // phase stops at the next sub-stage boundary (load → forward → connector) instead of
+        // riding the whole encode. The Gemma 49-layer forward itself is one fork call (not
+        // checkpointable without a fork API change) — worst case ≈ that forward's few seconds.
+        try Task.checkCancellation()
         let gSpan = prof.begin("encode", "gemma", note: "gemma-3-12b 4-bit")
         if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
+        try Task.checkCancellation()
         let (ids, mask) = gemma!.tokenize(prompt)
         let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         eval(states); eval(mask)   // materialize BEFORE dropping Gemma (lazy graph would pin it)
         prof.end(gSpan)
         if !keepStagesResident { gemma = nil; Memory.clearCache() }
 
+        try Task.checkCancellation()
         let cSpan = prof.begin("encode", "connector")
         if connector == nil {
             connector = try Connector.load(connectorPath: ltxDir.appending(path: "connector.safetensors"))
@@ -252,8 +259,13 @@ public final class LTX2Pipeline {
         }
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
+        // Cold-load cancellation checkpoints (M2/M3 extension): a Cancel/quit during "Loading"
+        // stops before/after the two heavy phases (weight load, kernel warmup) instead of
+        // waiting the whole load out.
+        try Task.checkCancellation()
         let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
         MLXProfiler.shared.note(String(format: "DiT.load done (lazy) · phys=%.2f GB", Double(physFootprintBytes()) / 1e9))
+        try Task.checkCancellation()
         // Pay the one-time Metal kernel-compile cost here (in "Loading"), not on the first denoise
         // step where it idles the GPU and looks like a hang. See DiT.warmup / PROFILING.md.
         let warm = Date(); dit.warmup()
