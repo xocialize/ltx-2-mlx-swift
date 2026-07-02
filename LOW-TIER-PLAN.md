@@ -180,6 +180,13 @@ shows truthful ✅/❌ per tier; registry/manifest re-baselined from the measure
 >
 > **The 24 GB M5 MacBook Pro target is met**: 121 frames @512×288 int4 peaks at 15.36 GB.
 > Hints re-baselined as peak − declared resident (charge = true peak). Remaining: T4 docs/registry.
+>
+> **GUI acceptance (2026-07-01, BRIDGE-LTX-001 closed):** the tier picker landed in LTXVideoTesting
+> and the Xcode agent's independent acceptance reproduced the numbers — compact24 from an oversized
+> request: peak 15.34 GB, output 512×288×121, int4 confirmed clean perceptually; Unconstrained bf16
+> reproduced the full envelope with no clamp. **New datum:** Unconstrained bf16 t2v 704×512×240
+> peaked **57.96 GB** under the T3b levers (the 92.2 row is 240f i2v pre-T3b) — max128's 52 GB act
+> hint is therefore a conservative ceiling; optional future tightening after an i2v re-measure.
 
 ## T4 — Validation + docs
 
