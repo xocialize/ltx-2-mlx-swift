@@ -122,7 +122,7 @@ of charging every tier the 704×512 numbers. Define + MEASURE (app autorun `SPLI
 | 24 GB | int4 | one-stage (no upsampler/stage-2) | ≤ 512×288, short clips |
 | 32 GB | int4/int8 | one-stage | ≤ 576×320 |
 | 64 GB | int8 | two-stage | 704×512 |
-| 128 GB | bf16 | two-stage | up to ~240f (proven) |
+| 128 GB | bf16 | two-stage | up to ~240f (proven) → **raised to 481f (BRIDGE-LTX-005, 2026-07-01):** 704×512×480f bf16 t2v measured **67.61 GB** post-T3b (floor 40.54 + act 27.06; fit ≈ 40.5 GB + 40 MB/frame). `max128.maxFrames` 241→481; activation hint KEPT at 52 GB (pre-T3b 240f-i2v ceiling) until an i2v spot re-measure at the new cap — tighten then. |
 
 - Wire per-profile `residentBytesHint` + `peakActivationBytesHint` on `LTX2Configuration`
   (`FootprintConfigured` — the 1.14 machinery exists for exactly this); the app/tier picker selects the

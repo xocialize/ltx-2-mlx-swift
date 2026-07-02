@@ -15,13 +15,16 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     case balanced32
     /// 64 GB Macs: int8, full two-stage at the standard envelope.
     case standard64
-    /// 96–128 GB Macs: bf16 two-stage, long clips (240f proven at ~92 GB with chunked decode).
+    /// 96–128 GB Macs: bf16 two-stage, long clips. 480f bf16 t2v MEASURED 67.61 GB post-T3b
+    /// (BRIDGE-LTX-005; floor ~40.5 GB + ~40 MB/frame activation), so the envelope admits 481f.
     case max128
 
     public var maxWidth: Int  { switch self { case .compact24: 512; case .balanced32: 576; default: 704 } }
     public var maxHeight: Int { switch self { case .compact24: 288; case .balanced32: 320; default: 512 } }
     public var maxFrames: Int {
-        switch self { case .compact24: 121; case .balanced32: 161; case .standard64: 161; case .max128: 241 }
+        // max128 241→481 (BRIDGE-LTX-005): 704×512×480f bf16 t2v measured 67.61 GB — the old cap
+        // left ~60 GB of a 128 GB budget unused. 481 sits ON a measured point (8n+1 frame grid).
+        switch self { case .compact24: 121; case .balanced32: 161; case .standard64: 161; case .max128: 481 }
     }
     /// One-stage skips the spatial upsampler + full-res stage-2 refine — the low-tier denoise path.
     public var oneStage: Bool { self == .compact24 || self == .balanced32 }
@@ -115,7 +118,11 @@ extension LTX2Configuration: FootprintConfigured {
         case .compact24:  return 3_000_000_000    // 15.36 − 13 (int4 resident) + headroom
         case .balanced32: return 4_000_000_000    // 16.07 − 13 + headroom
         case .standard64: return 16_000_000_000   // 37.51 − 22 (int8 resident) + headroom
-        case .max128:     return 52_000_000_000   // 92.2 − 40 (bf16 resident) + headroom
+        case .max128:     return 52_000_000_000   // KEPT conservative at the pre-T3b 240f-i2v
+        // ceiling (92.2 − 40 bf16 resident) even though post-T3b t2v measures far lower
+        // (480f act 27.06 GB, ~40 MB/frame + ~7.7 GB base — BRIDGE-LTX-005). It must cover the
+        // 481f envelope on the UNMEASURED post-T3b i2v/per-token path too; charge stays
+        // 40 + 52 = 92 GB ≤ 0.85×128. Tighten after an i2v spot re-measure at the new cap.
         }
     }
 }
