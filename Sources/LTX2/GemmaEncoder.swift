@@ -22,12 +22,25 @@ public struct GemmaEncoder {
     /// and swift-huggingface in this import set).
     public let context: ModelContext
 
+    /// Thrown when `gemma3` resolves to something other than `Gemma3TextModel` — in practice this
+    /// means the HOST process linked MLXVLM, whose factory is probed first in mlx-swift-lm's
+    /// process-global registry and shadows the text architecture (BRIDGE-LTX-003). Diagnosable
+    /// error instead of the former `fatalError`.
+    public struct WrongModelTypeError: Error, CustomStringConvertible {
+        public let actual: String
+        public var description: String {
+            "GemmaEncoder: expected Gemma3TextModel, got \(actual). If the host app links MLXVLM "
+            + "(directly or via another model package), mlx-swift-lm's registry resolves 'gemma3' "
+            + "to the multimodal Gemma3 — remove the MLXVLM-linking dependency (see BRIDGE-LTX-003)."
+        }
+    }
+
     /// Load Gemma 3 from a local directory (config.json + quantized safetensors).
     public static func load(directory: URL) async throws -> GemmaEncoder {
         let configuration = ModelConfiguration(directory: directory)
         let ctx = try await #huggingFaceLoadModel(configuration: configuration)
         guard let gemma = ctx.model as? Gemma3TextModel else {
-            fatalError("expected Gemma3TextModel, got \(type(of: ctx.model))")
+            throw WrongModelTypeError(actual: String(describing: type(of: ctx.model)))
         }
         return GemmaEncoder(model: gemma, context: ctx)
     }

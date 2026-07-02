@@ -653,6 +653,27 @@ func vaeChunkGate(fLat: Int, chunk: Int, halo: Int) async throws {
     if !pass { exit(1) }
 }
 
+/// BRIDGE-LTX-004: one-shot (system, user) chat completion on the SAME Gemma-3 the encoder uses —
+/// the seam the app's prompt enhancer consumes via `GemmaTextGenerator`. Live gate (no golden:
+/// generation is sampled); PASS = non-empty completion + clean load→generate→release.
+func gemmaTextGenGate(gemmaDir: String) async throws {
+    print("[gemma-textgen-gate] gemma: \(gemmaDir)")
+    let system = """
+    You are a prompt enhancer for a text-to-video model. Rewrite the user's brief as ONE flowing \
+    present-tense paragraph with explicit camera movement and a description of the audio. Output \
+    ONLY the enhanced prompt.
+    """
+    let user = "a lighthouse keeper climbing the spiral stairs at dusk\n\nTarget duration: ~5 seconds of video."
+    let generator = GemmaTextGenerator(gemmaDirectory: URL(fileURLWithPath: gemmaDir))
+    let t0 = Date()
+    let out = try await generator.generate(system: system, user: user, maxTokens: 320)
+    let dt = Date().timeIntervalSince(t0)
+    print("[gemma-textgen-gate] completion (\(out.count) chars, \(String(format: "%.1f", dt))s):\n\(out)\n")
+    let pass = !out.isEmpty && out != user
+    print(String(format: "[gemma-textgen-gate] cache after clearCache: %.2f GB", Double(Memory.cacheMemory) / 1e9))
+    print(pass ? "[gemma-textgen-gate] PASS ✅" : "[gemma-textgen-gate] FAIL ❌ (empty completion)")
+}
+
 let args = CommandLine.arguments
 let positional = args.dropFirst().filter { !$0.hasPrefix("--") }
 if args.contains("--connector-gate") {
@@ -663,6 +684,8 @@ if args.contains("--connector-gate") {
     let goldens = positional.first ?? defaultGoldens
     let gemmaDir = positional.dropFirst().first ?? defaultGemma
     try await gemmaGate(goldensPath: goldens, gemmaDir: gemmaDir)
+} else if args.contains("--gemma-textgen-gate") {
+    try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
 } else if args.contains("--dit-tiny-gate") {
