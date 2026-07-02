@@ -65,14 +65,15 @@ Four profiles make LTX-2.3 honestly admissible per tier (`LOW-TIER-PLAN.md`): an
 **one/two-stage policy** + **VAE temporal-decode window** + a per-profile activation hint. Low tiers run
 **fully sequential** ([Gemma] → [int8 connector] → [DiT denoise] → [chunked VAE decode], each stage
 alone; the DiT reloads in ~1.5 s from the page cache, LoRAs re-apply automatically across the reloads).
-Measured peaks (requests clamped from an oversized 704×512×240):
+Measured peaks (low tiers: requests clamped from an oversized 704×512×240; max128: measured at
+its full 481f envelope on the heavier i2v path):
 
 | profile | quant | envelope (max) | path | **measured peak** | fits |
 |---|---|---|---|---|---|
 | `compact24` | int4 | 512×288 × 121f | one-stage | **15.4 GB** (64 s) | 24 GB Macs (M5 MBP base) |
 | `balanced32` | int4/int8 | 576×320 × 161f | one-stage | **16.1 GB** (115 s) | 32 GB |
 | `standard64` | int8 | 704×512 × 161f | two-stage | **37.5 GB** (188 s) | 64 GB |
-| `max128` | bf16 | 704×512 × 241f | two-stage | **92.2 GB** (464 s, 240f i2v) | 96–128 GB |
+| `max128` | bf16 | 704×512 × 481f | two-stage | **72.7 GB** (960 s, 481f i2v + adapter LoRA) | 96–128 GB |
 
 16 GB is deliberately unsupported (the int4 DiT alone ≈ a 16 GB governor budget; no smaller LTX-2
 checkpoint exists). `nil` profile = unconstrained legacy behavior.

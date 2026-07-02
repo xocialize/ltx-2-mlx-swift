@@ -187,6 +187,16 @@ shows truthful ✅/❌ per tier; registry/manifest re-baselined from the measure
 > reproduced the full envelope with no clamp. **New datum:** Unconstrained bf16 t2v 704×512×240
 > peaked **57.96 GB** under the T3b levers (the 92.2 row is 240f i2v pre-T3b) — max128's 52 GB act
 > hint is therefore a conservative ceiling; optional future tightening after an i2v re-measure.
+>
+> **max128 recalibration (2026-07-01, BRIDGE-LTX-005 closed):** envelope raised 241→481f off the
+> Xcode agent's 480f t2v datum (67.61 GB), then the missing i2v datum measured package-side with the
+> new `RunLTX2 --i2v-spot` gate (wrapper path: max128 clamp + the 4.9 GB i2v-adapter LoRA + encode):
+> **704×512×481f bf16 i2v = peak 72.73 GB** (floor 43.40 incl. LoRA · act 29.33 · run 960 s, real
+> 481f MP4). i2v is the binding path (t2v 480f = 67.61) → `peakActivationBytesHint(max128)` tightened
+> **52 → 36 GB** (covers 72.73 − 40 declared resident, LoRA rides in the transient); engine charge
+> drops 92 → **76 GB**, returning 16 GB to the governor. Side find while measuring: the CLI prewarm
+> loop needed a per-iteration `autoreleasepool` — without it ~60 GB of autoreleased chunks stayed
+> resident and deterministically tripped the GPU watchdog on the next eval (see integration-lessons).
 
 ## T4 — Validation + docs
 

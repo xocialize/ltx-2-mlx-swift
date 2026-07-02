@@ -17,6 +17,7 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     case standard64
     /// 96–128 GB Macs: bf16 two-stage, long clips. 480f bf16 t2v MEASURED 67.61 GB post-T3b
     /// (BRIDGE-LTX-005; floor ~40.5 GB + ~40 MB/frame activation), so the envelope admits 481f.
+    /// i2v at the cap MEASURED too (--i2v-spot 2026-07-01): 481f + 4.9 GB adapter peaks 72.73 GB.
     case max128
 
     public var maxWidth: Int  { switch self { case .compact24: 512; case .balanced32: 576; default: 704 } }
@@ -118,11 +119,12 @@ extension LTX2Configuration: FootprintConfigured {
         case .compact24:  return 3_000_000_000    // 15.36 − 13 (int4 resident) + headroom
         case .balanced32: return 4_000_000_000    // 16.07 − 13 + headroom
         case .standard64: return 16_000_000_000   // 37.51 − 22 (int8 resident) + headroom
-        case .max128:     return 52_000_000_000   // KEPT conservative at the pre-T3b 240f-i2v
-        // ceiling (92.2 − 40 bf16 resident) even though post-T3b t2v measures far lower
-        // (480f act 27.06 GB, ~40 MB/frame + ~7.7 GB base — BRIDGE-LTX-005). It must cover the
-        // 481f envelope on the UNMEASURED post-T3b i2v/per-token path too; charge stays
-        // 40 + 52 = 92 GB ≤ 0.85×128. Tighten after an i2v spot re-measure at the new cap.
+        case .max128:     return 36_000_000_000   // TIGHTENED off the 481f i2v spot measure
+        // (RunLTX2 --i2v-spot, 2026-07-01): 704×512×481f bf16 i2v + the 4.9 GB i2v-adapter LoRA
+        // peaks 72.73 GB (floor 43.40 incl. LoRA · act 29.33). The hint covers peak − declared
+        // bf16 resident (72.73 − 40 = 32.73, LoRA residency rides in the transient) + headroom.
+        // t2v is lighter (480f peak 67.61 — BRIDGE-LTX-005), so i2v is the binding path.
+        // Charge: 40 + 36 = 76 GB ≤ 0.85×128 (was 92 pre-measure — 16 GB returned to the governor).
         }
     }
 }
