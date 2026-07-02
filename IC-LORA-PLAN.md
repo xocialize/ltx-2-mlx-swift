@@ -85,8 +85,12 @@ Generic beyond LTX (VACE control videos, SCAIL pose refs, Phantom subject sets).
 package accepts the same payloads via package-specific `metaData` (`ltx.conditioning`) so the port
 doesn't block on the engine tag; swap when the contract lands (P5).
 
-**(b) Registry v2 — adapters as data.** `LoRAEntry` grows (supersedes the original
-`ReferenceRequirement` sketch; same idea, role-shaped):
+**(b) Registry v2 — adapters as data.** LIVES IN ITS OWN REPO as of 2026-07-02:
+**`xocialize/ltx-lora-registry`** (private; local `LTX_DEV/ltx-lora-registry/`) — the editing/
+review surface where schema + entries are shaped BEFORE app integration; `MLXLTX2` vendors a copy
+(sync on change; remote-fetch consumption optional later). Schema v2 (see the repo README for the
+full field table) — `LoRAEntry` grows (supersedes the original `ReferenceRequirement` sketch;
+same idea, role-shaped):
 
 ```jsonc
 { "id": "ingredients", "kind": "ic",                 // "plain" (default) | "ic"
@@ -110,9 +114,16 @@ per-kind code, shared across adapters.
 
 ## 4. Phasing (each gated; original P1-first-injection strategy kept)
 
-- **P0 — scoping gates (cheap, first):** download LipDub + Ingredients; key-remap dry-run vs our
-  `dense()` map (+ check for audio-branch keys — joint-AV LoRA); safetensors header-metadata read
-  (`reference_downscale_factor`); 22b shape fit (fails loud at apply).
+- **P0 — scoping gates: ✅ DONE 2026-07-02 (LipDub + Cameraman; Ingredients pending one click).**
+  Weights cached at `/Volumes/DEV_ARCHIVE/models/loras/ltx-ic/`. Header probes: both diffusers-PEFT
+  (`diffusion_model.*`), all 48 blocks, `reference_downscale_factor: 1` in metadata (embedded
+  license text too — LipDub carries the full LTX-2 Community agreement). **LipDub = rank 128,
+  2688 tensors, FULL joint-AV coverage** (video attn1/attn2/ff + audio branch + both cross-modal
+  attentions). **Cameraman = rank 64, 960 tensors, video-only.** Live `--lora-gate` on the real
+  22b distilled DiT: LipDub **1344/1344 applied, PASS** (on 0.809 / off 0.99991 / detach 1.0,
+  finite); Cameraman **480/480, PASS** (0.786 / detach 1.0). ⇒ the weight half of IC is fully
+  proven; ONLY the injection path remains. **Ingredients:** HF gate (`gated: auto`) not yet
+  accepted for `xocialize` — accept on the repo page once, then rerun the recipe.
 - **P1 — injection core (LTX2), Ingredients as the proving adapter:** extend
   `DenoiseLoop.runConditioned` to appended tokens (concat latent/clean/mask/positions w/ spatial
   scaling; per-token σ exists; post-loop slice). **Gate:** tiny-scale oracle parity
