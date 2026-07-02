@@ -106,12 +106,33 @@ func textEncodeGate(goldensPath: String, gemmaDir: String, connectorPath: String
           let expV = goldens["video_embeds"], let expA = goldens["audio_embeds"] else {
         fatalError("goldens missing required arrays")
     }
-    let encoder = try await GemmaEncoder.load(directory: URL(fileURLWithPath: gemmaDir))
-    let states = encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
-    eval(states)
+    // Prewarm BOTH weight sets off the archive volume (the I5 watchdog recipe: Connector.load
+    // int8-quantizes at init, and those evals fault the connector safetensors inside live Metal
+    // command buffers — cold pages off DEV_ARCHIVE exceed the watchdog deterministically; the
+    // standalone --connector-gate only ever passed on page-warm runs). Production is immune via
+    // the engine's WeightPrewarmer; CLI gates must do their own.
+    var warm = ((try? FileManager.default.contentsOfDirectory(
+        at: URL(fileURLWithPath: gemmaDir), includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.pathExtension == "safetensors" }
+    warm.append(URL(fileURLWithPath: connectorPath))
+    prewarmFiles(warm)
+    print("[text-encode-gate] prewarmed \(warm.count) weight files"); fflush(stdout)
+    // SEQUENTIAL like production `encodePrompt` (Gemma releases before the connector loads),
+    // mirroring the real pipeline shape instead of a co-residency that no longer exists anywhere.
+    let states: [MLXArray]
+    do {
+        let encoder = try await GemmaEncoder.load(directory: URL(fileURLWithPath: gemmaDir))
+        print("[text-encode-gate] gemma loaded"); fflush(stdout)
+        states = encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
+        eval(states)
+        print("[text-encode-gate] 49 states done"); fflush(stdout)
+    }   // encoder (model + context) released here
+    Memory.clearCache()
     let connector = try Connector.load(connectorPath: URL(fileURLWithPath: connectorPath))
+    print("[text-encode-gate] connector loaded"); fflush(stdout)
     let (video, audio) = connector(hiddenStates: states, mask: mask)
     eval(video, audio)
+    print("[text-encode-gate] connector forward done"); fflush(stdout)
     let vCos = cosine(video, expV), aCos = cosine(audio, expA)
     print(String(format: "[text-encode-gate] VIDEO cosine=%.6f  AUDIO cosine=%.6f", vCos, aCos))
     let pass = vCos >= 0.999 && aCos >= 0.999
