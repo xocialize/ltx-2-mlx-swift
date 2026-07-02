@@ -80,7 +80,7 @@ public struct VideoVAEDecoder {
     /// The halo absorbs the non-causal receptive field (k=3 convs at 4 temporal scales); its exact
     /// safe minimum is derived empirically against the gate (start ≥1; T0 default 4). Each chunk is
     /// eval'd and the pool cleared, so peak ≈ one chunk's decode.
-    public func decodeChunked(_ latent: MLXArray, chunkFrames: Int, halo: Int) -> MLXArray {
+    public func decodeChunked(_ latent: MLXArray, chunkFrames: Int, halo: Int) throws -> MLXArray {
         let F = latent.dim(2)
         let chunk = max(1, chunkFrames), h = max(1, halo)
         guard F > chunk else { return decode(latent) }
@@ -88,6 +88,7 @@ public struct VideoVAEDecoder {
         var parts: [MLXArray] = []
         var a = 0
         while a < F {
+            try Task.checkCancellation()   // MVP-READINESS M3: per-chunk cancel point
             let b = min(a + chunk, F)
             let ws = max(0, a - h), we = min(F, b + h)
             let hl = a - ws, hr = we - b

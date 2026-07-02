@@ -189,7 +189,7 @@ public final class LTX2Pipeline {
     /// `LTX_VAE_CHUNK` env still overrides for experiments.
     public var vaeChunkFrames = 8
 
-    private func decodePixels(_ spatial: MLXArray) -> MLXArray {
+    private func decodePixels(_ spatial: MLXArray) throws -> MLXArray {
         let env = ProcessInfo.processInfo.environment
         let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? vaeChunkFrames
         let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
@@ -203,7 +203,7 @@ public final class LTX2Pipeline {
         defer { if capGB >= 0 { Memory.cacheLimit = saved } }
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else { return vae!.decode(spatial) }
-        return vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo)
+        return try vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo)
     }
 
     private func dropDecoder() {
@@ -320,7 +320,7 @@ public final class LTX2Pipeline {
         let audioPositions = Positions.audio(tokens: audioT)
 
         // 4. Distilled Euler denoise (joint video + audio) — the memory peak (DiT only resident).
-        let (vfinal, afinal) = DenoiseLoop.run(
+        let (vfinal, afinal) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions, label: "")
@@ -331,7 +331,7 @@ public final class LTX2Pipeline {
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
         let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
-        let pixels = decodePixels(vspatial)
+        let pixels = try decodePixels(vspatial)
         // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
@@ -380,7 +380,7 @@ public final class LTX2Pipeline {
         if let seed { MLXRandom.seed(seed) }
         let videoLatent = MLXRandom.normal([1, nv, 128])
         let audioLatent = MLXRandom.normal([1, audioT, 128])
-        let (vfinal, afinal) = DenoiseLoop.runConditioned(
+        let (vfinal, afinal) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
@@ -392,7 +392,7 @@ public final class LTX2Pipeline {
         // 6. Decode
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let pixels = decodePixels(vspatial)
+        let pixels = try decodePixels(vspatial)
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
         dropDecoder()
@@ -429,7 +429,7 @@ public final class LTX2Pipeline {
         let hLat1 = hHalf / 32, wLat1 = wHalf / 32, nv1 = fLat * hLat1 * wLat1
         let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
         let a1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, audioT, 128]), sigma: 1.0, shape: [1, audioT, 128], seed: seed.map { $0 &+ 1 })
-        let (v1f, a1f) = DenoiseLoop.run(
+        let (v1f, a1f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
@@ -450,7 +450,7 @@ public final class LTX2Pipeline {
         // --- Stage 2: full resolution refine (init = noise·σ₀ + upscaled·(1-σ₀)) ---
         let v2init = LTX2Pipeline.noiseInit(clean: v2tokens, sigma: sigma0, shape: v2tokens.shape, seed: seed.map { $0 &+ 2 })
         let a2init = LTX2Pipeline.noiseInit(clean: a1f, sigma: sigma0, shape: a1f.shape, seed: seed.map { $0 &+ 2 })
-        let (v2f, a2f) = DenoiseLoop.run(
+        let (v2f, a2f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
@@ -461,7 +461,7 @@ public final class LTX2Pipeline {
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
         let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
-        let pixels = decodePixels(vspatial)
+        let pixels = try decodePixels(vspatial)
         eval(pixels)
         MLXProfiler.shared.end(decSpan)
         let audSpan = MLXProfiler.shared.begin("audio-decode", "audioVAE+vocoder")

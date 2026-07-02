@@ -233,7 +233,7 @@ func denoiseGate() throws {
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dit = DiT(weights: weights, config: tinyDiTConfig())
     let sigmas = io["sigmas"]!.asArray(Float.self)
-    let (video, audio) = DenoiseLoop.run(
+    let (video, audio) = try DenoiseLoop.run(
         dit: dit, videoLatent0: io["video_latent"]!, audioLatent0: io["audio_latent"]!, sigmas: sigmas,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -257,7 +257,7 @@ func e2eGate() throws {
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: "\(base)/vae_decoder.safetensors"))
     let sigmas = io["sigmas"]!.asArray(Float.self)
     print("[e2e-gate] denoising \(sigmas.count - 1) steps…")
-    let (vfinal, _) = DenoiseLoop.run(
+    let (vfinal, _) = try DenoiseLoop.run(
         dit: dit, videoLatent0: io["video_latent"]!, audioLatent0: io["audio_latent"]!, sigmas: sigmas,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -753,7 +753,7 @@ func vaeChunkGate(fLat: Int, chunk: Int, halo: Int) async throws {
     Memory.clearCache()
     sampler.resetMax()
     let t1 = Date()
-    let chunked = dec.decodeChunked(latent, chunkFrames: chunk, halo: halo); eval(chunked)
+    let chunked = try dec.decodeChunked(latent, chunkFrames: chunk, halo: halo); eval(chunked)
     let chunkPeak = sampler.maxBytes(); sampler.stop()
     print(String(format: "[vae-chunk-gate] chunked: %.1fs  peakΔ=%.2f GB  out=%@",
                  Date().timeIntervalSince(t1), gbOf(chunkPeak > base ? chunkPeak - base : 0),

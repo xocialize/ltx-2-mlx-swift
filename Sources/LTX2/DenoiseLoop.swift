@@ -46,14 +46,17 @@ public enum DenoiseLoop {
     }
 
     /// Distilled t2v Euler loop. `sigmas` includes the terminal 0.0; pairs are consecutive.
+    /// Throws `CancellationError` between steps (MVP-READINESS M3) — a consumer Cancel stops the
+    /// run at the next step boundary (≤ one step's latency) instead of after the full loop.
     public static func run(
         dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         label: String = ""
-    ) -> (video: MLXArray, audio: MLXArray) {
+    ) throws -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0, ax = audioLatent0
         let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
         for i in 0 ..< (sigmas.count - 1) {
+            try Task.checkCancellation()
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
@@ -79,13 +82,14 @@ public enum DenoiseLoop {
         videoCleanLatent: MLXArray? = nil, videoDenoiseMask: MLXArray? = nil,
         audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,
         label: String = ""
-    ) -> (video: MLXArray, audio: MLXArray) {
+    ) throws -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0.asType(.float32), ax = audioLatent0.asType(.float32)
         // Inject clean conditioned latents into the initial noised state.
         if let clean = videoCleanLatent, let m = videoDenoiseMask { vx = applyDenoiseMask(vx, clean: clean, mask: m) }
         if let clean = audioCleanLatent, let m = audioDenoiseMask { ax = applyDenoiseMask(ax, clean: clean, mask: m) }
         let vN = vx.dim(1), aN = ax.dim(1)
         for i in 0 ..< (sigmas.count - 1) {
+            try Task.checkCancellation()   // MVP-READINESS M3: per-step cancel point
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
