@@ -157,9 +157,17 @@ per-kind code, shared across adapters.
   required ref would be silently wrong).
 - **P5 — engine contract PR:** `ConditioningInput` on `T2VRequest` (minor contract bump); retire
   the metaData interim.
-- **P6 — app (BRIDGE ticket, Xcode agent):** generic attachment-slot UI from registry
-  declarations (picker per declared role/media + strength where declared). Acceptance: Ingredients
-  + LipDub end-to-end from the GUI; Cameraman behind the license gate.
+- **P6 — app/UI: ARCHITECTURE LANDED 2026-07-02 as `xocialize/ltx-features-swift`** (operator
+  decision: features = multi-product SPM "mini apps"; LTX_DEV sibling, private, 8/8 tests).
+  Products: `LTXFeatureCore` (Foundation-only protocol seam `FeatureGenerating`/
+  `AdapterResourceProviding` + `GenerationIntent`/role-tagged attachments + registry-v2 decode +
+  shared `IntentValidation`), `LTXEngineSession` (app-owned-engine conformance; the only
+  MLX-linking product; IC throws `adapterNotYetSupported` until P4 — the seam is shaped),
+  `LTXAdapterPanels` (generic registry-driven floor: every adapter renders with zero code),
+  `LTXIngredients` (first mini app — **P2b SheetComposer DONE**, pixel-verified tests, +
+  dual-part `IngredientsPrompt`). LipDub/CameraTransfer products added as ready. Remaining P6 =
+  BRIDGE-LTX-007 asks: panel chrome + hosting in LTXVideoTesting + visual acceptance (Ingredients
+  + LipDub e2e from the GUI once P3/P4 land; Cameraman behind the license acknowledgment).
 - **P7 — enhancer synergy (optional):** `promptConvention` → PromptEnhanceKit template
   (Ingredients' dual-part format; the UPE extensible-profile pattern fits exactly).
 
