@@ -137,6 +137,16 @@ per-kind code, shared across adapters.
   Full-scale 1-step check folds into P3's e2e (weights already gated per-LoRA at P0).
 - **P2 — reference ingestion:** 8k+1 frame snap; VAE-encode ref at downscaled res (encoder
   bit-exact); looped-still tiling for sheets. **Gate:** encode-path parity vs `iclora_utils`.
+  **P2b — sheet builder (operator input 2026-07-02):** users shouldn't hand-craft Ingredients
+  sheets. Reimplement the INTENT of `gregowahoo/comfyui-ingredients-sheet-builder` (NO formal
+  license — no code lift, same rule as the SCAIL enhancer): up to 6 subject/prop panels at native
+  aspect in a top row + a full-width location band (~40% height, configurable), black gutters
+  (~12px), no text on the final sheet; **compose OVERSIZED (~1456×825) then downscale at ingest**
+  — identity detail survives the reduction. Pure CoreGraphics, no model. Per-panel descriptions
+  feed the dual-part prompt ("Reference sheet: …" — the P7 `promptConvention` hook, which the
+  ComfyUI node's prompt output independently validates). Registry: ingredients gains an
+  ALTERNATIVE input path — `subject_images` (imageSet ≤6) + optional `location_image` → built
+  sheet; a finished `reference_sheet` stays accepted.
 - **P3 — two-stage IC pipeline + LipDub audio:** stage 1 LoRA+refs half-res → upsample → stage 2
   clean; audio-VAE ref + negative-time positions. **Gate:** e2e perceptual live runs (Xcode
   agent): Ingredients consistency-vs-sheet; LipDub lip-sync readable.
