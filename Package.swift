@@ -46,7 +46,7 @@ let package = Package(
         //    + `FootprintConfigured.peakActivationBytesHint`) and `BudgetAware`: the engine reserves
         //    ONE transient activation across residents (serialized inference). Adopted in the manifest
         //    (residentBytes = weight floor, peakActivationBytes = peak − floor) + the per-stage evict.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.9.1"),
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.19.0"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
@@ -78,6 +78,9 @@ let package = Package(
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
                 .product(name: "MLXProfiling", package: "mlx-profiling"),
+                // Auto-materialization (BRIDGE M4): HubClient.downloadSnapshot for first-run
+                // weight downloads into the engine ModelStore layout.
+                .product(name: "HuggingFace", package: "swift-huggingface"),
             ],
             path: "Sources/MLXLTX2",
             resources: [.process("Resources")]  // ltx-lora-registry.json → Bundle.module
@@ -97,6 +100,9 @@ let package = Package(
             dependencies: [
                 "MLXLTX2",
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                // The engine's executable MAT gate (MaterializationConformance) — run from this
+                // package's own conformance suite per the per-package convention.
+                .product(name: "MLXServeConformance", package: "mlx-engine-swift"),
             ],
             path: "Tests/MLXLTX2Tests"
         ),

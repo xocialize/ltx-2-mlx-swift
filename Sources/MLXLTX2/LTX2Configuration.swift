@@ -53,6 +53,11 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// Provenance repo id (the LTX-2.3 MLX collection).
     public var repo: String
     public var revision: String?
+    /// Text-encoder repo (Gemma-3), materialized when `gemmaDirectory` is nil (BRIDGE M4).
+    public var gemmaRepo: String
+    /// Override for the quantized-transformer repo; nil derives `<repo>-q8`/`-q4` from `quant`
+    /// (bf16 rides the components repo — no separate source).
+    public var transformerRepo: String?
     /// Backbone quant of the distilled transformer. `QuantConfigured` surfaces it to the engine's
     /// `MemoryGovernor` so it charges the *registered* variant's `QuantFootprint` (bf16/int8/int4)
     /// instead of the bf16 max (engine ≥0.9.1; closes the q8/q4 over-reservation, LTX ENHANCEMENTS E14).
@@ -77,6 +82,8 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     public init(
         repo: String = "dgrauet/ltx-2.3-mlx",
         revision: String? = nil,
+        gemmaRepo: String = "mlx-community/gemma-3-12b-it-4bit",
+        transformerRepo: String? = nil,
         quant: Quant = .bf16,
         ltxDirectory: URL? = nil,
         transformerPath: URL? = nil,
@@ -86,6 +93,8 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     ) {
         self.repo = repo
         self.revision = revision
+        self.gemmaRepo = gemmaRepo
+        self.transformerRepo = transformerRepo
         self.quant = quant
         self.ltxDirectory = ltxDirectory
         self.transformerPath = transformerPath
@@ -95,7 +104,90 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     }
 
     private enum CodingKeys: String, CodingKey {
-        case repo, revision, quant, profile
+        case repo, revision, gemmaRepo, transformerRepo, quant, profile
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        repo = try c.decode(String.self, forKey: .repo)
+        revision = try c.decodeIfPresent(String.self, forKey: .revision)
+        gemmaRepo = try c.decodeIfPresent(String.self, forKey: .gemmaRepo)
+            ?? "mlx-community/gemma-3-12b-it-4bit"
+        transformerRepo = try c.decodeIfPresent(String.self, forKey: .transformerRepo)
+        quant = try c.decode(Quant.self, forKey: .quant)
+        profile = try c.decodeIfPresent(LTX2Profile.self, forKey: .profile)
+    }
+}
+
+// MARK: - Weight sources (auto-materialization, BRIDGE M4 / engine MAT gate)
+
+extension LTX2Configuration: WeightSourcing {
+    /// The component files LTX-2.3 needs beyond the transformer (optional features included —
+    /// a first run materializes the full experience; the pipeline degrades per missing file
+    /// only for explicit-dir setups).
+    static let componentFiles = [
+        "connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
+        "audio_vae.safetensors", "vocoder.safetensors", "spatial_upscaler_x2_v1_1.safetensors",
+    ]
+
+    /// The repo serving the quantized transformer; bf16 rides the components repo.
+    public var effectiveTransformerRepo: String? {
+        if let transformerRepo { return transformerRepo }
+        switch quant {
+        case .int8: return repo + "-q8"
+        case .int4: return repo + "-q4"
+        default: return nil
+        }
+    }
+
+    public var weightSources: [WeightSource] {
+        var componentGlobs = Self.componentFiles
+        if effectiveTransformerRepo == nil { componentGlobs.append(Self.defaultTransformerFile) }
+        var sources = [
+            WeightSource(role: "components", repo: repo, revision: revision, matching: componentGlobs),
+            WeightSource(role: "text-encoder", repo: gemmaRepo),
+        ]
+        if let tRepo = effectiveTransformerRepo {
+            sources.append(WeightSource(role: "transformer-\(quant.rawValue)", repo: tRepo,
+                                        matching: [Self.defaultTransformerFile]))
+        }
+        return sources
+    }
+
+    public func missingWeightSources(storeRoot: URL?) -> [WeightSource] {
+        let fm = FileManager.default
+        func storeHas(_ repo: String, files: [String]) -> Bool {
+            guard let dir = ModelStore(root: storeRoot).directory(for: repo) else { return false }
+            return files.allSatisfy { fm.fileExists(atPath: dir.appending(path: $0).path) }
+        }
+        return weightSources.filter { source in
+            switch source.role {
+            case "components":
+                if let dir = ltxDirectory,
+                   fm.fileExists(atPath: dir.appending(path: Self.componentFiles[0]).path) { return false }
+                return !storeHas(source.repo, files: source.matching ?? [])
+            case "text-encoder":
+                if let dir = gemmaDirectory,
+                   fm.fileExists(atPath: dir.appending(path: "config.json").path) { return false }
+                return !storeHas(source.repo, files: ["config.json"])
+            default:   // transformer-<quant>
+                if let path = transformerPath, fm.fileExists(atPath: path.path) { return false }
+                return !storeHas(source.repo, files: [Self.defaultTransformerFile])
+            }
+        }
+    }
+
+    /// The configuration with nil directories resolved to the store layout — what `load()` uses
+    /// AFTER materialization. Explicit directories always win.
+    public func resolved(storeRoot: URL?) -> LTX2Configuration {
+        let store = ModelStore(root: storeRoot)
+        var cfg = self
+        if cfg.ltxDirectory == nil { cfg.ltxDirectory = store.directory(for: repo) }
+        if cfg.gemmaDirectory == nil { cfg.gemmaDirectory = store.directory(for: gemmaRepo) }
+        if cfg.transformerPath == nil, let tRepo = effectiveTransformerRepo {
+            cfg.transformerPath = store.directory(for: tRepo)?.appending(path: Self.defaultTransformerFile)
+        }
+        return cfg
     }
 }
 
@@ -145,9 +237,18 @@ extension LTX2Configuration: WeightPrewarming {
     static let defaultTransformerFile = "transformer-distilled.safetensors"
 
     public var prewarmPaths: [URL] {
-        guard let ltxDir = ltxDirectory else {
-            return [gemmaDirectory, transformerPath].compactMap { $0 }
+        // Operate on the store-resolved view so auto-materialize (nil-dir) configs prewarm the
+        // downloaded layout on later cold launches; not-yet-downloaded paths simply don't exist
+        // and the prewarmer skips them (best-effort). Explicit dirs resolve to themselves.
+        let r = resolved(storeRoot: modelsRootDirectory)
+        guard let ltxDir = r.ltxDirectory else {
+            return [r.gemmaDirectory, r.transformerPath].compactMap { $0 }
         }
+        return Self.prewarmPaths(ltxDir: ltxDir, transformerPath: r.transformerPath,
+                                 gemmaDirectory: r.gemmaDirectory)
+    }
+
+    private static func prewarmPaths(ltxDir: URL, transformerPath: URL?, gemmaDirectory: URL?) -> [URL] {
         // bf16 (no override): whole LTX dir + Gemma — the bf16 transformer in ltxDir IS used.
         guard let txPath = transformerPath else {
             return [ltxDir, gemmaDirectory].compactMap { $0 }

@@ -110,13 +110,31 @@ public final class MLXLTX2Package: ModelPackage {
 
     public func load() async throws {
         guard pipeline == nil else { return }
-        guard let ltxDir = configuration.ltxDirectory, let gemmaDir = configuration.gemmaDirectory else {
+        // Auto-materialization (BRIDGE M4): nil directories resolve to the engine ModelStore
+        // layout, downloading missing declared sources first (progress reaches the engine's
+        // PreparationMonitor via WeightDownloadProgress). Explicit directories always win and
+        // never touch the network — the DEV_ARCHIVE flows are unchanged.
+        var cfg = configuration
+        if cfg.ltxDirectory == nil || cfg.gemmaDirectory == nil
+            || (cfg.transformerPath == nil && cfg.effectiveTransformerRepo != nil) {
+            guard let root = cfg.modelsRootDirectory else {
+                throw PackageError.configurationMismatch(
+                    expected: "explicit weight directories OR an engine model store (useModelStore)",
+                    got: "no ltxDirectory/gemmaDirectory and no modelsRootDirectory")
+            }
+            let missing = cfg.missingWeightSources(storeRoot: root)
+            if !missing.isEmpty {
+                try await WeightMaterializer.materialize(missing, into: root)
+            }
+            cfg = cfg.resolved(storeRoot: root)
+        }
+        guard let ltxDir = cfg.ltxDirectory, let gemmaDir = cfg.gemmaDirectory else {
             throw PackageError.configurationMismatch(
-                expected: "LTX2Configuration with ltxDirectory + gemmaDirectory set",
-                got: "missing weight directories")
+                expected: "resolvable weight directories",
+                got: "materialization did not yield ltxDirectory/gemmaDirectory")
         }
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
-                                               transformerPath: configuration.transformerPath)
+                                               transformerPath: cfg.transformerPath)
 
         // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
         // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).
