@@ -5,6 +5,13 @@
 // links nothing beyond this package (no second LLM stack, no build-plugin trust, no app-side
 // prewarm hack), and the load resolves through the SAME text-only path as the encoder — this
 // module never links MLXVLM, so `gemma3` cannot shadow to the multimodal factory (BRIDGE-LTX-003).
+//
+// **DISPOSITION (BRIDGE-LTX-006, 2026-07-02): this is the UNGOVERNED convenience.** Engine-hosted
+// apps should use `mlx-gemma-llm-swift` (`GemmaLLMPackage`, think/PROD, published v0.1.0) instead
+// — the same text-only Gemma behind the full engine lifecycle: admission, footprint charge
+// (measured int4 10 GB + ~1 GB), WeightPrewarming, license gate, evict. This type stays for
+// engine-less consumers and this package's own CLI gate (`RunLTX2 --gemma-textgen-gate`); it does
+// deterministic load→generate→release with a local prewarm, and the engine never knows it ran.
 
 import Foundation
 import MLX
