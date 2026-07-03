@@ -158,7 +158,7 @@ public final class LTX2Pipeline {
         if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
         try Task.checkCancellation()
         let (ids, mask) = gemma!.tokenize(prompt)
-        let states = gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let states = try gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
         eval(states); eval(mask)   // materialize BEFORE dropping Gemma (lazy graph would pin it)
         prof.end(gSpan)
         if !keepStagesResident { gemma = nil; Memory.clearCache() }

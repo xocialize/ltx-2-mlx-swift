@@ -79,7 +79,7 @@ func gemmaGate(goldensPath: String, gemmaDir: String) async throws {
         fatalError("goldens missing token_ids / attention_mask")
     }
     let encoder = try await GemmaEncoder.load(directory: URL(fileURLWithPath: gemmaDir))
-    let states = encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
+    let states = try encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
     eval(states)
     print("[gemma-gate] got \(states.count) states, shape \(states[0].shape)")
 
@@ -123,7 +123,7 @@ func textEncodeGate(goldensPath: String, gemmaDir: String, connectorPath: String
     do {
         let encoder = try await GemmaEncoder.load(directory: URL(fileURLWithPath: gemmaDir))
         print("[text-encode-gate] gemma loaded"); fflush(stdout)
-        states = encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
+        states = try encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
         eval(states)
         print("[text-encode-gate] 49 states done"); fflush(stdout)
     }   // encoder (model + context) released here

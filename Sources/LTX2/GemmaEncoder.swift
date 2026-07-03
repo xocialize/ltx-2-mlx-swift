@@ -55,10 +55,12 @@ public struct GemmaEncoder {
         return causal.reshaped(1, 1, T, T) + pad                                                // (B,1,T,T)
     }
 
-    /// 49 hidden states (embed + 48 layers), each (B, T, 3840).
-    public func allHiddenStates(tokenIds: MLXArray, attentionMask: MLXArray) -> [MLXArray] {
+    /// 49 hidden states (embed + 48 layers), each (B, T, 3840). Throws `CancellationError`
+    /// between layers (fork ≥ 3.31.4+2) — a quit/Cancel during the encode forward now stops
+    /// within ~one layer instead of riding out the whole 12B pass (MVP M2 finding).
+    public func allHiddenStates(tokenIds: MLXArray, attentionMask: MLXArray) throws -> [MLXArray] {
         let mask = GemmaEncoder.combinedMask(attentionMask: attentionMask)
-        return model.allHiddenStates(tokenIds.asType(.int32), mask: .array(mask))
+        return try model.allHiddenStates(tokenIds.asType(.int32), mask: .array(mask))
     }
 
     /// Tokenize + left-pad to `maxLength` (mirrors LTXVGemmaTokenizer, padding_side="left").
