@@ -158,8 +158,14 @@ per-kind code, shared across adapters.
   interim until the P5 contract) — reference built at the CLAMPED geometry / declared downscale;
   IC adapters REJECTED on the plain `loraId` path; `LoRAEntry` gained runtime v2 fields + bundled
   registry synced (schema 2); `LoRACache` honors HF tokens for the gated Lightricks repos.
-  **REMAINING for P3 CLOSE = the live perceptual gate (`LTX_TESTING/IC-P3-FIXTURE.md`)** + the
-  `clean`/`keep` two-stage policies + LipDub audio append (next slice). Original scope note —
+  **P3 CLOSED for `skip` 2026-07-03 — LIVE FIXTURE GATE PASS ✅** (768×448×121 seed 42 bf16: all
+  four reads green — identity transfer STRONG, no layout/text bleed, action+audio synced;
+  non-blocking I6 = quoted-dialogue caption, a base-model quirk; SPLIT floor 40.19 / peak 79.58 /
+  act 39.39 GB one full-res IC stage → **bf16 IC at this geometry is 96 GB+/Unconstrained
+  territory; quant IC tiers unmeasured**). Registry `ingredients` → **verified**. REMAINING (P3b,
+  next slice): `clean`/`keep` two-stage policies, **LipDub audio-reference append**, and
+  **videoClip ingest** (Cameraman's reference is a VIDEO — `referenceStillFrames` only serves
+  stills today, so ingredients is the only runnable IC adapter until P3b). Original scope note —
   stage 1 LoRA+refs → per the registry `stage2` field: **`skip`** (one stage at TARGET res — the community-blessed
   Ingredients config) / `clean` (upsample + refine without LoRA/refs — oracle two-stage default) /
   `keep`. Audio-VAE ref + negative-time positions for LipDub. **Gate:** e2e perceptual live runs
