@@ -182,6 +182,10 @@ public enum ICMetaKeys {
     /// File path of the dub audio (LipDub-class adapters, `audioReference: true`); absent →
     /// the reference video's own audio track.
     public static let dubAudioPath = "ic.dubAudioPath"
+    /// "true"/bool: mux the ACTUAL dub audio into the output MP4 instead of the model's
+    /// regenerated track. The correct LipDub deliverable (I7: distilled audio generation is
+    /// prosodic babble, a model property — the regenerated track is conditioning-grade only).
+    public static let muxDubAudio = "ic.muxDubAudio"
 }
 
 extension MetaValue {

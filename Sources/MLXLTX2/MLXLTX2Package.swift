@@ -214,6 +214,7 @@ public final class MLXLTX2Package: ModelPackage {
         // generation geometry / the adapter's declared downscale; frames snapped 8k+1.
         var references: [ReferenceConditioning] = []
         var audioReferences: [ReferenceConditioning] = []
+        var muxAudioURL: URL?   // ic.muxDubAudio: replace the regenerated track with the dub
         if let icId {
             guard let registry, let entry = registry.entry(id: icId) else {
                 throw LoRARegistryError.unknownAdapter(icId)
@@ -250,6 +251,13 @@ public final class MLXLTX2Package: ModelPackage {
                 let waveform = try await AudioInput.referenceWaveform(
                     url: URL(fileURLWithPath: audioPath), maxSeconds: span)
                 audioReferences.append(try pipeline.encodeAudioReference(waveform: waveform))
+                // Correct-deliverable option (I7): the model's regenerated audio is prosodic
+                // babble by design — opt in to muxing the ACTUAL dub into the output MP4.
+                if case .bool(true) = t2v.metaData[ICMetaKeys.muxDubAudio] ?? .null {
+                    muxAudioURL = URL(fileURLWithPath: audioPath)
+                } else if t2v.metaData[ICMetaKeys.muxDubAudio]?.asString == "true" {
+                    muxAudioURL = URL(fileURLWithPath: audioPath)
+                }
             }
         }
 
@@ -283,7 +291,14 @@ public final class MLXLTX2Package: ModelPackage {
         // NOT by this — freeing the cache alone did not un-stall the hardware media engine.)
         Memory.clearCache()
         let mp4Span = MLXProfiler.shared.begin("encode-mp4", "h264+aac", note: "\(framesCL.dim(1)) frames")
-        let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: out.audio, audioSampleRate: 48000)
+        // ic.muxDubAudio: the deliverable carries the ACTUAL dub (decoded at the codec rate),
+        // not the model's conditioning-grade regenerated track (I7 — model property).
+        var muxAudio = out.audio
+        if let muxAudioURL {
+            muxAudio = try await AudioInput.referenceWaveform(
+                url: muxAudioURL, sampleRate: 48000, maxSeconds: Double(nf) / fps)
+        }
+        let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio, audioSampleRate: 48000)
         MLXProfiler.shared.end(mp4Span)
         return T2VResponse(video: Video(
             format: .mp4, data: mp4,
