@@ -147,9 +147,22 @@ per-kind code, shared across adapters.
   ComfyUI node's prompt output independently validates). Registry: ingredients gains an
   ALTERNATIVE input path — `subject_images` (imageSet ≤6) + optional `location_image` → built
   sheet; a finished `reference_sheet` stays accepted.
-- **P3 — two-stage IC pipeline + LipDub audio:** stage 1 LoRA+refs half-res → upsample → stage 2
-  clean; audio-VAE ref + negative-time positions. **Gate:** e2e perceptual live runs (Xcode
-  agent): Ingredients consistency-vs-sheet; LipDub lip-sync readable.
+- **P3 — IC pipeline (per-adapter stage policy) + LipDub audio:** stage 1 LoRA+refs → per the
+  registry `stage2` field: **`skip`** (one stage at TARGET res — the community-blessed
+  Ingredients config) / `clean` (upsample + refine without LoRA/refs — oracle two-stage default) /
+  `keep`. Audio-VAE ref + negative-time positions for LipDub. **Gate:** e2e perceptual live runs
+  (Xcode agent): Ingredients consistency-vs-sheet; LipDub lip-sync readable.
+  **REFERENCE-USAGE CROSS-CHECK ✅ (2026-07-02, Space `ltx-community/ltx-2.3-ingredients-distilled`):**
+  our call path matches the working community example — LoRA 1.4 fused, sheet as looped-still at
+  generation res × output frame count, `video_conditioning=[(path, 1.0)]` into `ICLoraPipeline`
+  (the exact oracle path P1 was parity-gated against). Three deltas ADOPTED: (1) the Space runs
+  **SKIP_STAGE_2** (one stage at target res; it passes 2× dims so oracle stage-1 lands on target) —
+  maps 1:1 onto our existing `oneStage` lever; registry ingredients → `stage2: "skip"`. (2) exact
+  prompt format `"Reference sheet: {elements}\n\nGenerated video: {action}"` — free-form
+  semicolon-joined, NO panel labels (IngredientsPrompt fixed, exact-match test). (3) grid sheet
+  composer (√n cols, contain-fit, single-image passthrough) added as `composeGrid` alongside the
+  band layout. Bonus validation: the Space's separate "prompt-crafter" VLM Space (auto-describe
+  sheet + suggest action) = independent confirmation of our P7/UPE2 enhancer design.
 - **P4 — MLXLTX2 wrapper + registry v2 + tiers:** conditioning intake (metaData interim), role
   routing, per-entry license gate, footprint re-measure. Ref tokens ≈ target tokens at downscale 1
   ⇒ stage-1 seq ~2× (attention FLOPs ~4× in stage 1) — measure, then likely **standard64+ only**
