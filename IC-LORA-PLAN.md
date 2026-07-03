@@ -157,6 +157,13 @@ per-kind code, shared across adapters.
   one-stage / 121f / seed 42 + base A/B) + four perceptual reads (identity transfer, no text
   bleed, action+audio, no layout bleed) + plan-B (crop to turnaround row → composer clean-panels
   preflight follow-up). Sheet image pending operator save to `LTX_TESTING/fixtures/`.
+  **BASE A/B LEG BANKED (2026-07-03, operator GUI run, pre-P3 — fixture §BASE A/B LEG):**
+  base T2V + assembled dual-part prompt only (sheet image unconsumed) → remarkably strong
+  prompt-only adherence (outfit/palette/setting/action); what it did NOT capture = octagonal
+  harness plate, thigh holster, THE specific face → the IC leg's read sharpens to cross-seed
+  identity LOCK + under-specified gear fidelity. Also live-proved the panels→assembledPrompt→
+  T2VRequest chain end-to-end. Param gotchas recorded: 121 frames exactly (120 snaps to 113),
+  Unconstrained for 768 width.
   **REFERENCE-USAGE CROSS-CHECK ✅ (2026-07-02, Space `ltx-community/ltx-2.3-ingredients-distilled`):**
   our call path matches the working community example — LoRA 1.4 fused, sheet as looped-still at
   generation res × output frame count, `video_conditioning=[(path, 1.0)]` into `ICLoraPipeline`
