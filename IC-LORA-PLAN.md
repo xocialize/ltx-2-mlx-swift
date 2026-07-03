@@ -135,8 +135,12 @@ per-kind code, shared across adapters.
   cases, full AND sliced, positions exact, audio untouched.** Also confirms strength<1.0 works
   WITHOUT attention-mask support (oracle asserts attention_mask is None on this path).
   Full-scale 1-step check folds into P3's e2e (weights already gated per-LoRA at P0).
-- **P2 — reference ingestion:** 8k+1 frame snap; VAE-encode ref at downscaled res (encoder
-  bit-exact); looped-still tiling for sheets. **Gate:** encode-path parity vs `iclora_utils`.
+- **P2 — reference ingestion: ✅ DONE 2026-07-03, BIT-EXACT** (`833f5a0`).
+  `ReferenceConditioning.snapFrames` (oracle 8k+1, floor 9) + `LTX2Pipeline.encodeReference`
+  (encode→patchify→positions, encoder drops before denoise) + `ImageInput.referenceStillFrames`
+  (STRETCH resize per the community reference + looped-still tiling). **`--ic-ingest-gate`:
+  tokens cosine 1.000000 / maxAbs 0, positions exact, snapFrames 6/6** (golden =
+  `parity/dump_ic_ingest_goldens.py`, real vae_encoder weights, mirrors `iclora_utils` glue).
   **P2b — sheet builder (operator input 2026-07-02):** users shouldn't hand-craft Ingredients
   sheets. Reimplement the INTENT of `gregowahoo/comfyui-ingredients-sheet-builder` (NO formal
   license — no code lift, same rule as the SCAIL enhancer): up to 6 subject/prop panels at native
@@ -147,8 +151,16 @@ per-kind code, shared across adapters.
   ComfyUI node's prompt output independently validates). Registry: ingredients gains an
   ALTERNATIVE input path — `subject_images` (imageSet ≤6) + optional `location_image` → built
   sheet; a finished `reference_sheet` stays accepted.
-- **P3 — IC pipeline (per-adapter stage policy) + LipDub audio:** stage 1 LoRA+refs → per the
-  registry `stage2` field: **`skip`** (one stage at TARGET res — the community-blessed
+- **P3 — IC pipeline: ✅ CODE-COMPLETE for `skip` 2026-07-03** (`833f5a0`): `LTX2Pipeline.icT2V`
+  (one stage at TARGET res, LoRA fused throughout, ICVideoState append → per-token-σ denoise →
+  slice → decode) + `MLXLTX2Package.run` intake via **`ICMetaKeys`**
+  (`ic.adapterId`/`ic.adapterStrength`/`ic.referencePath` [file path]/`ic.referenceStrength` —
+  interim until the P5 contract) — reference built at the CLAMPED geometry / declared downscale;
+  IC adapters REJECTED on the plain `loraId` path; `LoRAEntry` gained runtime v2 fields + bundled
+  registry synced (schema 2); `LoRACache` honors HF tokens for the gated Lightricks repos.
+  **REMAINING for P3 CLOSE = the live perceptual gate (`LTX_TESTING/IC-P3-FIXTURE.md`)** + the
+  `clean`/`keep` two-stage policies + LipDub audio append (next slice). Original scope note —
+  stage 1 LoRA+refs → per the registry `stage2` field: **`skip`** (one stage at TARGET res — the community-blessed
   Ingredients config) / `clean` (upsample + refine without LoRA/refs — oracle two-stage default) /
   `keep`. Audio-VAE ref + negative-time positions for LipDub. **Gate:** e2e perceptual live runs
   (Xcode agent): Ingredients consistency-vs-sheet; LipDub lip-sync readable.
