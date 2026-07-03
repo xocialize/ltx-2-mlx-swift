@@ -222,11 +222,20 @@ public final class MLXLTX2Package: ModelPackage {
                     expected: "ic.referencePath (file path of the reference image) for '\(icId)'",
                     got: "no reference")
             }
-            let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
             let ds = max(1, entry.referenceDownscale ?? 1)
             let refFrames = ReferenceConditioning.snapFrames(nf)
-            let pixels = try ImageInput.referenceStillFrames(
-                Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
+            // Route by media: a video clip samples frames by time (Cameraman-class refs);
+            // anything else decodes as a still and tiles (Ingredients sheets).
+            let pixels: MLXArray
+            if VideoInput.looksLikeVideo(refPath) {
+                pixels = try await VideoInput.referenceClipFrames(
+                    url: URL(fileURLWithPath: refPath),
+                    width: wd / ds, height: h / ds, frames: refFrames, fps: fps)
+            } else {
+                let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
+                pixels = try ImageInput.referenceStillFrames(
+                    Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
+            }
             let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
             references.append(try pipeline.encodeReference(
                 pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
