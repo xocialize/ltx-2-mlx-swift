@@ -432,17 +432,35 @@ public final class LTX2Pipeline {
                                      downscaleFactor: downscaleFactor, strength: strength)
     }
 
+    /// VAE-encode a reference AUDIO waveform (1, 2, T) 16 kHz stereo in [-1,1] →
+    /// `ReferenceConditioning` with NEGATIVE-time positions (the LipDub convention: the ref
+    /// audio sits before the target span). Encoder loads around the call, drops immediately.
+    public func encodeAudioReference(waveform: MLXArray, strength: Float = 1.0) throws -> ReferenceConditioning {
+        let enc = try AudioVAEEncoder.load(path: ltxDir.appending(path: "audio_vae.safetensors"))
+        let span = MLXProfiler.shared.begin("ic-ingest", "audio-vae-encode-ref",
+            note: "\(waveform.dim(2)) samples")
+        let latent = enc.encode(waveform: waveform)                          // (1,8,T,16)
+        let (tokens, positions) = Positions.patchifyLipdubAudioReference(latent)
+        eval(tokens); eval(positions)
+        MLXProfiler.shared.end(span)
+        Memory.clearCache()                                                   // encoder is transient
+        return ReferenceConditioning(tokens: tokens, positions: positions,
+                                     downscaleFactor: 1, strength: strength)
+    }
+
     /// IC-LoRA conditioned t2v — ONE stage at TARGET resolution (the `stage2: skip` policy the
     /// community reference usage blesses for Ingredients; the adapter's LoRA stays applied for
-    /// the whole generation). References are appended per the parity-gated P1 path
-    /// (`ICVideoState`): clean (1−strength)-masked tokens + scaled positions, per-token σ in the
-    /// denoise, sliced off before decode. Empty `references` falls through to plain `t2v`.
+    /// the whole generation). Video references append per the parity-gated P1 path
+    /// (`ICVideoState`); `audioReferences` (LipDub) append to the AUDIO stream the same way
+    /// (negative-time positions, clean mask-0 context, sliced after denoise). Both empty falls
+    /// through to plain `t2v`.
     public func icT2V(
         prompt: String, references: [ReferenceConditioning],
+        audioReferences: [ReferenceConditioning] = [],
         height: Int = 448, width: Int = 704, numFrames: Int = 121,
         fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
-        guard !references.isEmpty else {
+        guard !references.isEmpty || !audioReferences.isEmpty else {
             return try await t2v(prompt: prompt, height: height, width: width,
                                  numFrames: numFrames, fps: fps, seed: seed)
         }
@@ -450,9 +468,10 @@ public final class LTX2Pipeline {
         let nv = fLat * hLat * wLat
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
         let nr = references.reduce(0) { $0 + $1.tokens.dim(1) }
+        let nra = audioReferences.reduce(0) { $0 + $1.tokens.dim(1) }
         MLXProfiler.shared.beginRun(String(format:
-            "t2v(ic one-stage) %dx%d %df fps=%.0f | nv=%d +ref=%d audioT=%d | steps=%d",
-            width, height, numFrames, fps, nv, nr, audioT, Positions.distilledSigmas.count - 1))
+            "t2v(ic one-stage) %dx%d %df fps=%.0f | nv=%d +ref=%d audioT=%d +aref=%d | steps=%d",
+            width, height, numFrames, fps, nv, nr, audioT, nra, Positions.distilledSigmas.count - 1))
 
         let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
 
@@ -463,14 +482,25 @@ public final class LTX2Pipeline {
             targetLatent: videoLatent,
             targetPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
             references: references)
+        // Audio-side append: ICVideoState's concat semantics are modality-agnostic (the oracle's
+        // AudioConditionByReferenceLatent mirrors the video class 1:1).
+        let audioState = ICVideoState.build(
+            targetLatent: audioLatent,
+            targetPositions: Positions.audio(tokens: audioT),
+            references: audioReferences)
 
-        let (vfull, afinal) = try DenoiseLoop.runConditioned(
-            dit: try ensureDiT(), videoLatent0: state.latent, audioLatent0: audioLatent,
+        let (vfull, afull) = try DenoiseLoop.runConditioned(
+            dit: try ensureDiT(), videoLatent0: state.latent, audioLatent0: audioState.latent,
             sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: state.positions, audioPositions: Positions.audio(tokens: audioT),
-            videoCleanLatent: state.clean, videoDenoiseMask: state.denoiseMask, label: "ic-")
+            videoPositions: state.positions, audioPositions: audioState.positions,
+            videoCleanLatent: references.isEmpty ? nil : state.clean,
+            videoDenoiseMask: references.isEmpty ? nil : state.denoiseMask,
+            audioCleanLatent: audioReferences.isEmpty ? nil : audioState.clean,
+            audioDenoiseMask: audioReferences.isEmpty ? nil : audioState.denoiseMask,
+            label: "ic-")
         let vfinal = state.slice(vfull)
+        let afinal = audioState.slice(afull)
         eval(vfinal, afinal)
         dropDiTIfSequential()
 

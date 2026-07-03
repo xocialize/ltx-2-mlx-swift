@@ -213,6 +213,7 @@ public final class MLXLTX2Package: ModelPackage {
         // path (interim until the ConditioningInput contract lands, P5). Built at the CLAMPED
         // generation geometry / the adapter's declared downscale; frames snapped 8k+1.
         var references: [ReferenceConditioning] = []
+        var audioReferences: [ReferenceConditioning] = []
         if let icId {
             guard let registry, let entry = registry.entry(id: icId) else {
                 throw LoRARegistryError.unknownAdapter(icId)
@@ -239,13 +240,25 @@ public final class MLXLTX2Package: ModelPackage {
             let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
             references.append(try pipeline.encodeReference(
                 pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
+
+            // LipDub-class adapters (`audioReference: true`): the dub audio appends to the AUDIO
+            // stream with negative-time positions. Source = ic.dubAudioPath (a wav/audio file),
+            // falling back to the reference video's own track (the oracle's default).
+            if entry.audioReference == true {
+                let audioPath = t2v.metaData[ICMetaKeys.dubAudioPath]?.asString ?? refPath
+                let span = Double(nf) / fps
+                let waveform = try await AudioInput.referenceWaveform(
+                    url: URL(fileURLWithPath: audioPath), maxSeconds: span)
+                audioReferences.append(try pipeline.encodeAudioReference(waveform: waveform))
+            }
         }
 
         let out: LTX2Pipeline.Output
-        if !references.isEmpty {
+        if !references.isEmpty || !audioReferences.isEmpty {
             // IC path: ONE stage at target resolution (`stage2: skip` — the community-blessed
             // Ingredients config; `clean`/`keep` two-stage policies are a follow-up slice).
             out = try await pipeline.icT2V(prompt: t2v.prompt, references: references,
+                                           audioReferences: audioReferences,
                                            height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
         } else if let initImage = t2v.initImage {
             // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),

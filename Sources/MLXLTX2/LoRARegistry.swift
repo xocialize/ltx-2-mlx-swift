@@ -39,6 +39,9 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     public let stage2: String?
     /// Non-permissive license — hosts must gate behind an explicit acknowledgment.
     public let licenseGated: Bool?
+    /// IC adapter also appends a reference-AUDIO stream (LipDub): the wrapper builds it from
+    /// `ic.dubAudioPath` (falling back to the reference video's own track).
+    public let audioReference: Bool?
 
     /// Effective input kind (absent → `.none`).
     public var inputKind: LoRAInputKind { input ?? .none }
@@ -49,7 +52,7 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     public init(id: String, displayName: String, repo: String, weightFile: String,
                 defaultStrength: Float, trigger: String, input: LoRAInputKind? = nil,
                 kind: String? = nil, referenceDownscale: Int? = nil, stage2: String? = nil,
-                licenseGated: Bool? = nil) {
+                licenseGated: Bool? = nil, audioReference: Bool? = nil) {
         self.id = id
         self.displayName = displayName
         self.repo = repo
@@ -61,6 +64,7 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
         self.referenceDownscale = referenceDownscale
         self.stage2 = stage2
         self.licenseGated = licenseGated
+        self.audioReference = audioReference
     }
 }
 
@@ -175,6 +179,9 @@ public enum ICMetaKeys {
     public static let referencePath = "ic.referencePath"
     /// Conditioning strength for the reference tokens (default 1.0 = fully preserved).
     public static let referenceStrength = "ic.referenceStrength"
+    /// File path of the dub audio (LipDub-class adapters, `audioReference: true`); absent →
+    /// the reference video's own audio track.
+    public static let dubAudioPath = "ic.dubAudioPath"
 }
 
 extension MetaValue {

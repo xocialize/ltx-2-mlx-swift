@@ -27,6 +27,7 @@ from pathlib import Path
 import mlx.core as mx
 
 from ltx_core_mlx.conditioning.types.latent_cond import LatentState
+from ltx_core_mlx.conditioning.types.reference_audio_cond import AudioConditionByReferenceLatent
 from ltx_core_mlx.conditioning.types.reference_video_cond import VideoConditionByReferenceLatent
 from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig, X0Model
 from ltx_core_mlx.utils.positions import compute_video_positions
@@ -119,6 +120,49 @@ def main() -> None:
         print(f"case {name}: Nv={Nv} Nr={Nr} downscale={case['downscale']} strength={case['strength']}",
               "video_final mean=%.5f std=%.5f" % (float(io[f'{name}_video_final'].mean()),
                                                   float(io[f'{name}_video_final'].std())))
+
+    # Case c — AUDIO reference appended (LipDub semantics: negative-time positions, video
+    # unconditioned). Mirrors AudioConditionByReferenceLatent.apply + denoise_loop.
+    F, H, W = TGT
+    Nv = F * H * W
+    Nr_a = 4
+    mx.random.seed(5)
+    video_latent = mx.random.normal((B, Nv, CFG.video_patch_channels)).astype(mx.float32)
+    audio_latent = mx.random.normal((B, Na, CFG.audio_patch_channels)).astype(mx.float32)
+    video_text = mx.random.normal((B, Nt, CFG.video_dim)).astype(mx.float32)
+    audio_text = mx.random.normal((B, Nt, CFG.audio_dim)).astype(mx.float32)
+    ref_tokens = mx.random.normal((B, Nr_a, CFG.audio_patch_channels)).astype(mx.float32)
+    # Negative-time ref positions (patchify_lipdub semantics: shifted before the target span).
+    tgt_pos = mx.arange(Na).astype(mx.float32)[None, :, None] / 25.0
+    ref_pos = (mx.arange(Nr_a).astype(mx.float32)[None, :, None] / 25.0) - (float(tgt_pos.max()) + 0.04)
+
+    audio_state = LatentState(
+        latent=audio_latent, clean_latent=mx.zeros_like(audio_latent),
+        denoise_mask=mx.ones((B, Na, 1)), positions=tgt_pos)
+    cond = AudioConditionByReferenceLatent(patchified=ref_tokens, positions=ref_pos, strength=1.0)
+    audio_state = cond.apply(audio_state, num_noisy_tokens=Na)
+    assert audio_state.attention_mask is None
+
+    video_state = LatentState(
+        latent=video_latent, clean_latent=mx.zeros_like(video_latent),
+        denoise_mask=mx.ones((B, Nv, 1)), positions=compute_video_positions(F, H, W))
+    out = denoise_loop(x0m, video_state, audio_state, video_text, audio_text,
+                       sigmas=SIGMAS, show_progress=False)
+    mx.eval(out.video_latent, out.audio_latent)
+    io["c_video_latent"] = video_latent
+    io["c_audio_latent"] = audio_latent
+    io["c_video_text"] = video_text
+    io["c_audio_text"] = audio_text
+    io["c_ref_tokens"] = ref_tokens
+    io["c_tgt_audio_positions"] = tgt_pos
+    io["c_ref_audio_positions"] = ref_pos
+    io["c_video_positions"] = compute_video_positions(F, H, W).astype(mx.float32)
+    io["c_video_final"] = out.video_latent.astype(mx.float32)
+    io["c_audio_final_full"] = out.audio_latent.astype(mx.float32)   # (B, Na+Nr_a, C)
+    io["c_audio_final"] = out.audio_latent[:, :Na, :].astype(mx.float32)
+    print(f"case c: Na={Na} Nr_a={Nr_a} (audio ref, negative-time)",
+          "audio_final mean=%.5f std=%.5f" % (float(io['c_audio_final'].mean()),
+                                              float(io['c_audio_final'].std())))
 
     io["sigmas"] = mx.array(SIGMAS).astype(mx.float32)
     mx.save_safetensors(str(OUT / "io.safetensors"), io)

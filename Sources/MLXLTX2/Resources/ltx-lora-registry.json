@@ -95,7 +95,8 @@
         "targetsApplied": "1344/1344",
         "audioBranch": true,
         "loraGate": "PASS (on 0.809/off 0.99991/detach 1.0, finite)"
-      }
+      },
+      "audioReference": true
     },
     {
       "id": "ingredients",
@@ -141,7 +142,9 @@
           "note": "optional full-width location band (~40% height) in the built sheet"
         }
       ],
-      "conditioningGroups": { "sheet": "oneOf: reference_sheet | (subject_images [+ location_image])" },
+      "conditioningGroups": {
+        "sheet": "oneOf: reference_sheet | (subject_images [+ location_image])"
+      },
       "verification": {
         "date": "2026-07-02",
         "headerDialect": "diffusers-PEFT (diffusion_model.*)",
@@ -152,7 +155,8 @@
         "loraGate": "PASS (on 0.833/off 0.99991/detach 1.0, finite)",
         "note": "card says dev-base-trained — perceptual verify on distilled at P3",
         "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit",
-        "liveGate": "IC-P3-FIXTURE PASS 2026-07-03 (768x448x121 seed42 bf16, Unconstrained): identity transfer STRONG (hair/suit/stripe/harness match the sheet, frame-consistent), no layout bleed, action+audio synced, no sheet-text bleed. Blemish (non-blocking, base-model quirk): quoted dialogue burned in as a small caption. SPLIT: floor 40.19 / peak 79.58 / act 39.39 GB, run 434s (IC seq = target+ref tokens, one full-res stage). Artifacts: LTX_TESTING/fixtures/ic-p3-result-bf16-768x448-121f.mp4"
+        "liveGate": "IC-P3-FIXTURE PASS 2026-07-03 (768x448x121 seed42 bf16, Unconstrained): identity transfer STRONG (hair/suit/stripe/harness match the sheet, frame-consistent), no layout bleed, action+audio synced, no sheet-text bleed. Blemish (non-blocking, base-model quirk): quoted dialogue burned in as a small caption. SPLIT: floor 40.19 / peak 79.58 / act 39.39 GB, run 434s (IC seq = target+ref tokens, one full-res stage). Artifacts: LTX_TESTING/fixtures/ic-p3-result-bf16-768x448-121f.mp4",
+        "int4Datum": "2026-07-03 same geometry: floor 13.52 / act 38.65 / peak 52.17 GB — IC ACTIVATION IS QUANT-INDEPENDENT (~39 GB bf16 AND int4; it is reference-token activation, not weights). Quant lowers the floor, never the activation ceiling."
       }
     },
     {
@@ -193,7 +197,8 @@
         "tensors": 960,
         "targetsApplied": "480/480",
         "audioBranch": false,
-        "loraGate": "PASS (on 0.786/off 0.99991/detach 1.0, finite)"
+        "loraGate": "PASS (on 0.786/off 0.99991/detach 1.0, finite)",
+        "functionalEval": "PASS 2026-07-03 (int4 768x448x121, video-clip reference via LTX_IC_TEST): camera tracking arc TRANSFERRED to a different prompt scene, coherent + prompt-adherent. SPLIT floor 12.23 / act 26.36 / peak 38.59 GB, run 72s warm. NOT card-faithful (ref below the >=960x512 rec; skip one-stage eval config vs declared clean) — quality pass pending a compliant reference. Status stays eval-only (license)."
       }
     }
   ]

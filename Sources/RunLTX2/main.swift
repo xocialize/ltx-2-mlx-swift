@@ -284,6 +284,30 @@ func icTinyGate() throws {
                      name as NSString, p[0], p[1], p[2], p[3], posMax, fCos, sCos, aCos))
         allPass = allPass && posMax < 1e-4 && fCos >= 0.999 && sCos >= 0.999 && aCos >= 0.999
     }
+    // Case c — AUDIO reference appended (LipDub semantics: negative-time positions, video
+    // unconditioned). Same append machinery on the audio state.
+    do {
+        let ref = ReferenceConditioning(tokens: io["c_ref_tokens"]!,
+                                        positions: io["c_ref_audio_positions"]!,
+                                        downscaleFactor: 1, strength: 1.0)
+        let audioState = ICVideoState.build(targetLatent: io["c_audio_latent"]!,
+                                            targetPositions: io["c_tgt_audio_positions"]!,
+                                            references: [ref])
+        let (video, afull) = try DenoiseLoop.runConditioned(
+            dit: dit, videoLatent0: io["c_video_latent"]!, audioLatent0: audioState.latent,
+            sigmas: sigmas,
+            videoText: io["c_video_text"], audioText: io["c_audio_text"],
+            videoPositions: io["c_video_positions"]!, audioPositions: audioState.positions,
+            audioCleanLatent: audioState.clean, audioDenoiseMask: audioState.denoiseMask)
+        let aSliced = audioState.slice(afull)
+        eval(video, afull)
+        let aFullCos = cosine(afull, io["c_audio_final_full"]!)
+        let aCos = cosine(aSliced, io["c_audio_final"]!)
+        let vCos = cosine(video, io["c_video_final"]!)
+        print(String(format: "[ic-tiny-gate] case c (audio ref, neg-time): AUDIO full=%.6f sliced=%.6f  VIDEO=%.6f",
+                     aFullCos, aCos, vCos))
+        allPass = allPass && aFullCos >= 0.999 && aCos >= 0.999 && vCos >= 0.999
+    }
     print(allPass ? "[ic-tiny-gate] PASS ✅" : "[ic-tiny-gate] FAIL ❌")
     if !allPass { exit(1) }
 }
