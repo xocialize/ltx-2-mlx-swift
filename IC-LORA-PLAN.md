@@ -152,6 +152,11 @@ per-kind code, shared across adapters.
   Ingredients config) / `clean` (upsample + refine without LoRA/refs — oracle two-stage default) /
   `keep`. Audio-VAE ref + negative-time positions for LipDub. **Gate:** e2e perceptual live runs
   (Xcode agent): Ingredients consistency-vs-sheet; LipDub lip-sync readable.
+  **CANONICAL Ingredients acceptance case (operator, 2026-07-03): `LTX_TESTING/IC-P3-FIXTURE.md`**
+  — tactical-suit character sheet + exact dual-part prompt + proven parameters (1.4 / 1.0 /
+  one-stage / 121f / seed 42 + base A/B) + four perceptual reads (identity transfer, no text
+  bleed, action+audio, no layout bleed) + plan-B (crop to turnaround row → composer clean-panels
+  preflight follow-up). Sheet image pending operator save to `LTX_TESTING/fixtures/`.
   **REFERENCE-USAGE CROSS-CHECK ✅ (2026-07-02, Space `ltx-community/ltx-2.3-ingredients-distilled`):**
   our call path matches the working community example — LoRA 1.4 fused, sheet as looped-still at
   generation res × output frame count, `video_conditioning=[(path, 1.0)]` into `ICLoraPipeline`
