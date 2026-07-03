@@ -45,7 +45,16 @@
       "weightFile": "LTX-2-Image2Vid-Adapter.safetensors",
       "defaultStrength": 1.0,
       "trigger": "",
-      "input": "image"
+      "input": "image",
+      "conditioning": [
+        {
+          "role": "init_image",
+          "media": "image",
+          "required": false,
+          "ingest": "initImage",
+          "note": "first-frame anchor — rides the base model's i2v path (not IC reference tokens)"
+        }
+      ]
     },
     {
       "id": "lipdub",
