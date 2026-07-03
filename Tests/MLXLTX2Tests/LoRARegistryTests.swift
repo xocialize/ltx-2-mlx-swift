@@ -7,7 +7,7 @@ import Testing
 struct LoRARegistryTests {
     @Test func bundledManifestDecodes() throws {
         let reg = try LoRARegistry.bundled()
-        #expect(reg.schemaVersion == 1)
+        #expect(reg.schemaVersion == 2)
         #expect(reg.base.contains("LTX-2.3"))
         #expect(!reg.adapters.isEmpty)
     }

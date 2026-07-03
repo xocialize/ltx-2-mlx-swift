@@ -163,12 +163,23 @@ public final class MLXLTX2Package: ModelPackage {
         //   metaData["loraId"]       registry id of the effect (absent/empty → pristine base)
         //   metaData["loraStrength"] optional strength override (else the entry default)
         // Hot-swapped on the resident DiT (no reload); unchanged selection across calls is a no-op.
-        let selectedId = t2v.metaData[LoRAMetaKeys.id]?.asString.flatMap { $0.isEmpty ? nil : $0 }
+        // IC adapters (kind == "ic") must ride the IC intake below — as a plain LoRA they'd apply
+        // WITHOUT their reference conditioning and silently generate garbage-adjacent output.
+        let icId = t2v.metaData[ICMetaKeys.adapterId]?.asString.flatMap { $0.isEmpty ? nil : $0 }
+        let selectedId = icId
+            ?? t2v.metaData[LoRAMetaKeys.id]?.asString.flatMap { $0.isEmpty ? nil : $0 }
         if let id = selectedId {
             guard let registry, let cache, let entry = registry.entry(id: id) else {
                 throw LoRARegistryError.unknownAdapter(id)
             }
-            let strength = t2v.metaData[LoRAMetaKeys.strength]?.asFloat ?? entry.defaultStrength
+            if entry.isIC && icId == nil {
+                throw PackageError.configurationMismatch(
+                    expected: "IC adapter '\(id)' via the ic.* metaData intake (needs a reference)",
+                    got: "plain loraId selection")
+            }
+            let strength = t2v.metaData[LoRAMetaKeys.strength]?.asFloat
+                ?? t2v.metaData[ICMetaKeys.adapterStrength]?.asFloat
+                ?? entry.defaultStrength
             // Re-apply when the selection changed OR the DiT was evicted/reloaded since (low-tier
             // decode evicts the DiT; a reloaded DiT is a pristine base → activeLoRATargets == 0).
             if appliedLoRA?.id != id || appliedLoRA?.strength != strength || pipeline.activeLoRATargets == 0 {
@@ -197,8 +208,37 @@ public final class MLXLTX2Package: ModelPackage {
         }
         let oneStage = configuration.profile?.oneStage
             ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")
+
+        // IC reference ingest (IC-LORA-PLAN P2/P3): the reference image rides metaData as a file
+        // path (interim until the ConditioningInput contract lands, P5). Built at the CLAMPED
+        // generation geometry / the adapter's declared downscale; frames snapped 8k+1.
+        var references: [ReferenceConditioning] = []
+        if let icId {
+            guard let registry, let entry = registry.entry(id: icId) else {
+                throw LoRARegistryError.unknownAdapter(icId)
+            }
+            guard let refPath = t2v.metaData[ICMetaKeys.referencePath]?.asString, !refPath.isEmpty else {
+                throw PackageError.configurationMismatch(
+                    expected: "ic.referencePath (file path of the reference image) for '\(icId)'",
+                    got: "no reference")
+            }
+            let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
+            let ds = max(1, entry.referenceDownscale ?? 1)
+            let refFrames = ReferenceConditioning.snapFrames(nf)
+            let pixels = try ImageInput.referenceStillFrames(
+                Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
+            let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
+            references.append(try pipeline.encodeReference(
+                pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
+        }
+
         let out: LTX2Pipeline.Output
-        if let initImage = t2v.initImage {
+        if !references.isEmpty {
+            // IC path: ONE stage at target resolution (`stage2: skip` — the community-blessed
+            // Ingredients config; `clean`/`keep` two-stage policies are a follow-up slice).
+            out = try await pipeline.icT2V(prompt: t2v.prompt, references: references,
+                                           height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+        } else if let initImage = t2v.initImage {
             // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
             // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
             let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)

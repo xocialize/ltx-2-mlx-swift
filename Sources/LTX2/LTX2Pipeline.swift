@@ -291,7 +291,7 @@ public final class LTX2Pipeline {
     }
 
     /// Re-patchify a (1,128,F,H,W) latent → tokens (1, F·H·W, 128).
-    static func patchify(_ latent: MLXArray) -> MLXArray {
+    public static func patchify(_ latent: MLXArray) -> MLXArray {
         let B = latent.dim(0), C = latent.dim(1), F = latent.dim(2), H = latent.dim(3), W = latent.dim(4)
         return latent.transposed(0, 2, 3, 4, 1).reshaped(B, F * H * W, C)
     }
@@ -408,6 +408,81 @@ public final class LTX2Pipeline {
         let waveform = decodeAudio(afinal)
         eval(pixels); if let waveform { eval(waveform) }
         dropDecoder()
+        return Output(video: pixels, audio: waveform)
+    }
+
+    /// VAE-encode a reference video (1,3,F,H,W) in [-1,1], F = 8k+1, at the reference's OWN
+    /// resolution → `ReferenceConditioning` (tokens + positions at the ref grid). The IC-LoRA
+    /// ingest path (IC-LORA-PLAN P2): the encoder loads around this call and drops immediately —
+    /// never co-resident with Gemma or the DiT.
+    public func encodeReference(
+        pixels: MLXArray, fps: Double, downscaleFactor: Float = 1, strength: Float = 1.0
+    ) throws -> ReferenceConditioning {
+        try ensureVAEEncoder()
+        let span = MLXProfiler.shared.begin("ic-ingest", "vae-encode-ref",
+            note: "\(pixels.dim(2))f \(pixels.dim(4))x\(pixels.dim(3))")
+        let latent = vaeEncoder!.encode(pixels)          // (1,128,fLat,hLat,wLat), normalized
+        let tokens = LTX2Pipeline.patchify(latent)       // (1, Nr, 128)
+        eval(tokens)
+        MLXProfiler.shared.end(span)
+        let positions = Positions.video(F: latent.dim(2), H: latent.dim(3), W: latent.dim(4),
+                                        fps: Float(fps))
+        dropUpscaler()                                   // drop the encoder before denoise
+        return ReferenceConditioning(tokens: tokens, positions: positions,
+                                     downscaleFactor: downscaleFactor, strength: strength)
+    }
+
+    /// IC-LoRA conditioned t2v — ONE stage at TARGET resolution (the `stage2: skip` policy the
+    /// community reference usage blesses for Ingredients; the adapter's LoRA stays applied for
+    /// the whole generation). References are appended per the parity-gated P1 path
+    /// (`ICVideoState`): clean (1−strength)-masked tokens + scaled positions, per-token σ in the
+    /// denoise, sliced off before decode. Empty `references` falls through to plain `t2v`.
+    public func icT2V(
+        prompt: String, references: [ReferenceConditioning],
+        height: Int = 448, width: Int = 704, numFrames: Int = 121,
+        fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Output {
+        guard !references.isEmpty else {
+            return try await t2v(prompt: prompt, height: height, width: width,
+                                 numFrames: numFrames, fps: fps, seed: seed)
+        }
+        let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
+        let nv = fLat * hLat * wLat
+        let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
+        let nr = references.reduce(0) { $0 + $1.tokens.dim(1) }
+        MLXProfiler.shared.beginRun(String(format:
+            "t2v(ic one-stage) %dx%d %df fps=%.0f | nv=%d +ref=%d audioT=%d | steps=%d",
+            width, height, numFrames, fps, nv, nr, audioT, Positions.distilledSigmas.count - 1))
+
+        let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
+
+        if let seed { MLXRandom.seed(seed) }
+        let videoLatent = MLXRandom.normal([1, nv, 128])
+        let audioLatent = MLXRandom.normal([1, audioT, 128])
+        let state = ICVideoState.build(
+            targetLatent: videoLatent,
+            targetPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
+            references: references)
+
+        let (vfull, afinal) = try DenoiseLoop.runConditioned(
+            dit: try ensureDiT(), videoLatent0: state.latent, audioLatent0: audioLatent,
+            sigmas: Positions.distilledSigmas,
+            videoText: videoEmbeds, audioText: audioEmbeds,
+            videoPositions: state.positions, audioPositions: Positions.audio(tokens: audioT),
+            videoCleanLatent: state.clean, videoDenoiseMask: state.denoiseMask, label: "ic-")
+        let vfinal = state.slice(vfull)
+        eval(vfinal, afinal)
+        dropDiTIfSequential()
+
+        let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
+        try ensureDecoder()
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
+        let pixels = try decodePixels(vspatial)
+        let waveform = decodeAudio(afinal)
+        eval(pixels); if let waveform { eval(waveform) }
+        MLXProfiler.shared.end(decSpan)
+        dropDecoder()
+        MLXProfiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
     }
 

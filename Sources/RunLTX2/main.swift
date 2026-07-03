@@ -288,6 +288,37 @@ func icTinyGate() throws {
     if !allPass { exit(1) }
 }
 
+/// IC reference-ingest parity (IC-LORA-PLAN P2): a seeded still tiled 8k+1 → real VAE encoder →
+/// tokens + positions, vs the oracle's iclora_utils encode glue. Also asserts the frame snap.
+func icIngestGate() throws {
+    // snapFrames unit checks (oracle: k = max(1,(f-1)//8) → 1+8k).
+    let snaps = [(120, 113), (121, 121), (9, 9), (1, 9), (49, 49), (50, 49)]
+    for (input, want) in snaps {
+        let got = ReferenceConditioning.snapFrames(input)
+        guard got == want else {
+            print("[ic-ingest-gate] snapFrames(\(input)) = \(got), want \(want) FAIL ❌"); exit(1)
+        }
+    }
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
+    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/ic_ingest"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dims = io["dims"]!.asArray(Float.self)
+    let (F, H, W) = (Int(dims[0]), Int(dims[1]), Int(dims[2]))
+    let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: "\(base)/vae_encoder.safetensors"))
+    let video = MLX.broadcast(io["still"]!, to: [1, 3, F, H, W])   // same looped-still tiling
+    let latent = enc.encode(video)
+    let tokens = LTX2Pipeline.patchify(latent)
+    let positions = Positions.video(F: latent.dim(2), H: latent.dim(3), W: latent.dim(4), fps: 24)
+    eval(tokens, positions)
+    let tCos = cosine(tokens, io["ref_tokens"]!), tMax = maxAbs(tokens, io["ref_tokens"]!)
+    let pMax = maxAbs(positions, io["ref_positions"]!)
+    print(String(format: "[ic-ingest-gate] tokens %@ cosine=%.6f maxAbs=%.5f  posMaxAbs=%.6f",
+                 "\(tokens.shape)" as NSString, tCos, tMax, pMax))
+    let pass = tCos >= 0.999 && pMax < 1e-4
+    print(pass ? "[ic-ingest-gate] PASS ✅ (snapFrames 6/6)" : "[ic-ingest-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 /// End-to-end one-stage t2v parity (real weights): noise → denoise → unpatchify → VAE decode.
 func e2eGate() throws {
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
@@ -890,6 +921,8 @@ if args.contains("--connector-gate") {
     try denoiseGate()
 } else if args.contains("--ic-tiny-gate") {
     try icTinyGate()
+} else if args.contains("--ic-ingest-gate") {
+    try icIngestGate()
 } else if args.contains("--e2e-gate") {
     try e2eGate()
 } else if args.contains("--vae-chunk-gate") {

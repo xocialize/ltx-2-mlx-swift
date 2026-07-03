@@ -17,6 +17,14 @@ import MLX
 /// One reference conditioning item: pre-encoded latent tokens + their (unscaled) positions,
 /// computed at the reference's OWN latent grid via `Positions.computeVideoPositions`.
 public struct ReferenceConditioning {
+
+    /// The video VAE's 8k+1 frame requirement, snapped the way the oracle snaps reference media
+    /// (`iclora_utils`: `k = max(1, (frames-1)//8)` → `1+8k`) — clamps DOWN, never up, with a
+    /// floor of 9 pixel frames.
+    public static func snapFrames(_ frames: Int) -> Int {
+        let k = max(1, (frames - 1) / 8)
+        return 1 + 8 * k
+    }
     /// Reference latent tokens (B, Nr, C) — VAE-encoded + patchified, normalized like any latent.
     public let tokens: MLXArray
     /// Positions (B, Nr, 3) [time, height, width] at the reference's own grid.

@@ -57,4 +57,42 @@ enum ImageInput {
         // (H,W,3) → (3,H,W) → (1,3,1,H,W)
         return hwc.transposed(2, 0, 1).expandedDimensions(axis: 0).expandedDimensions(axis: 2).asType(.bfloat16)
     }
+
+    /// Reference-still ingest (IC-LORA-PLAN P2): decode `image`, **STRETCH**-resize to
+    /// (width×height) — the community reference usage's plain `resize`, deliberately NOT the
+    /// i2v aspect-fill — and tile to `frames` identical frames: (1, 3, F, H, W) bf16 in [-1,1].
+    /// `frames` must already be 8k+1 (`ReferenceConditioning.snapFrames`).
+    static func referenceStillFrames(_ image: Image, width: Int, height: Int, frames: Int) throws -> MLXArray {
+        guard let src = CGImageSourceCreateWithData(image.data as CFData, nil),
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)
+        else {
+            throw PackageError.configurationMismatch(
+                expected: "a decodable reference image (PNG/JPEG/…)", got: "undecodable image data")
+        }
+        let bytesPerRow = width * 4
+        var buf = [UInt8](repeating: 0, count: height * bytesPerRow)
+        guard let ctx = CGContext(
+            data: &buf, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else {
+            throw PackageError.configurationMismatch(
+                expected: "an RGB bitmap context for the reference image", got: "context allocation failed")
+        }
+        ctx.interpolationQuality = .high
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: width, height: height))   // stretch, no crop
+
+        var floats = [Float](repeating: 0, count: height * width * 3)
+        var o = 0
+        for p in stride(from: 0, to: buf.count, by: 4) {
+            floats[o] = Float(buf[p]) / 255.0 * 2.0 - 1.0
+            floats[o + 1] = Float(buf[p + 1]) / 255.0 * 2.0 - 1.0
+            floats[o + 2] = Float(buf[p + 2]) / 255.0 * 2.0 - 1.0
+            o += 3
+        }
+        let hwc = MLXArray(floats, [height, width, 3])
+        let one = hwc.transposed(2, 0, 1)                       // (3,H,W)
+            .expandedDimensions(axis: 0).expandedDimensions(axis: 2)   // (1,3,1,H,W)
+        return MLX.broadcast(one, to: [1, 3, frames, height, width]).asType(.bfloat16)
+    }
 }

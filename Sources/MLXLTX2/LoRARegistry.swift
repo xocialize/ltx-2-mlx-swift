@@ -27,14 +27,29 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     public let trigger: String
     /// Conditioning input this effect needs (optional in JSON; absent → `.none`).
     public let input: LoRAInputKind?
+    // Schema-v2 fields the WRAPPER needs at run time (the full v2 schema lives in
+    // ltx-features-swift; unknown JSON keys decode-ignore in both directions):
+    /// "plain" (weight delta, the default) | "ic" (needs reference conditioning — must ride the
+    /// IC metaData intake, never the plain `loraId` path).
+    public let kind: String?
+    /// Spatial position scale for reference tokens (safetensors-header
+    /// `reference_downscale_factor`; absent → 1).
+    public let referenceDownscale: Int?
+    /// IC stage policy: "skip" (one stage at target res) | "clean" | "keep".
+    public let stage2: String?
+    /// Non-permissive license — hosts must gate behind an explicit acknowledgment.
+    public let licenseGated: Bool?
 
     /// Effective input kind (absent → `.none`).
     public var inputKind: LoRAInputKind { input ?? .none }
+    public var isIC: Bool { kind == "ic" }
 
     /// Public memberwise init — consumers with richer registry schemas (ltx-features-swift's
     /// schema v2) map their entries down to this runtime subset (e.g. to reuse `LoRACache`).
     public init(id: String, displayName: String, repo: String, weightFile: String,
-                defaultStrength: Float, trigger: String, input: LoRAInputKind? = nil) {
+                defaultStrength: Float, trigger: String, input: LoRAInputKind? = nil,
+                kind: String? = nil, referenceDownscale: Int? = nil, stage2: String? = nil,
+                licenseGated: Bool? = nil) {
         self.id = id
         self.displayName = displayName
         self.repo = repo
@@ -42,6 +57,10 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
         self.defaultStrength = defaultStrength
         self.trigger = trigger
         self.input = input
+        self.kind = kind
+        self.referenceDownscale = referenceDownscale
+        self.stage2 = stage2
+        self.licenseGated = licenseGated
     }
 }
 
@@ -104,7 +123,13 @@ public struct LoRACache: Sendable {
             throw LoRARegistryError.download(entry.id, underlying: "bad URL for \(entry.weightFile)")
         }
         do {
-            let (tmp, response) = try await URLSession.shared.download(from: url)
+            // Gated HF repos (e.g. the Lightricks IC-LoRAs) need an authenticated request from an
+            // account that accepted the terms: honor HF_TOKEN env, else the HF CLI token file.
+            var request = URLRequest(url: url)
+            if let token = Self.hfToken() {
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            }
+            let (tmp, response) = try await URLSession.shared.download(for: request)
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw LoRARegistryError.download(entry.id, underlying: "HTTP \(http.statusCode)")
             }
@@ -117,6 +142,16 @@ public struct LoRACache: Sendable {
             throw LoRARegistryError.download(entry.id, underlying: error.localizedDescription)
         }
     }
+
+    /// HF auth token for gated repos: `HF_TOKEN` env, else the HF CLI token file.
+    static func hfToken() -> String? {
+        if let env = ProcessInfo.processInfo.environment["HF_TOKEN"], !env.isEmpty { return env }
+        let file = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".cache/huggingface/token")
+        guard let raw = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return token.isEmpty ? nil : token
+    }
 }
 
 /// `metaData` keys the package reads for per-request effect selection.
@@ -125,6 +160,21 @@ public enum LoRAMetaKeys {
     public static let id = "loraId"
     /// Optional strength override; defaults to the entry's `defaultStrength`.
     public static let strength = "loraStrength"
+}
+
+/// IC-adapter request keys (IC-LORA-PLAN P3/P4 — interim metaData transport until the engine's
+/// `ConditioningInput` contract lands, P5). The reference image rides as a FILE PATH: the host
+/// writes the picked/composed sheet to a temp file and passes it here.
+public enum ICMetaKeys {
+    /// Registry id of the IC adapter (kind == "ic"). Selecting an IC adapter via plain `loraId`
+    /// is rejected — it would apply the weights WITHOUT their reference conditioning.
+    public static let adapterId = "ic.adapterId"
+    /// Optional LoRA strength override; defaults to the entry's `defaultStrength` (Ingredients: 1.4).
+    public static let adapterStrength = "ic.adapterStrength"
+    /// File path of the reference image (looped-still ingest; sheet for Ingredients).
+    public static let referencePath = "ic.referencePath"
+    /// Conditioning strength for the reference tokens (default 1.0 = fully preserved).
+    public static let referenceStrength = "ic.referenceStrength"
 }
 
 extension MetaValue {

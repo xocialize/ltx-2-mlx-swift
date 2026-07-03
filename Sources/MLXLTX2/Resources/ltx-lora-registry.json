@@ -1,10 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "base": "LTX-2.3-22b-distilled",
   "adapters": [
     {
       "id": "transition",
       "displayName": "Scene Transition (joyfox)",
+      "kind": "plain",
+      "status": "verified",
+      "license": "unspecified-community",
       "repo": "joyfox/LTX-2.3-Transition-LORA",
       "weightFile": "ltx2.3-transition.safetensors",
       "defaultStrength": 1.0,
@@ -13,6 +16,9 @@
     {
       "id": "omnicine",
       "displayName": "OmniCine — dynamic cinematic motion (Singularity)",
+      "kind": "plain",
+      "status": "verified",
+      "license": "apache-2.0",
       "repo": "WarmBloodAban/Singularity-LTX-2.3_OmniCine_V1",
       "weightFile": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
       "defaultStrength": 1.0,
@@ -21,6 +27,9 @@
     {
       "id": "fantasy-anime",
       "displayName": "Fantasy Anime style (vrgamedevgirl)",
+      "kind": "plain",
+      "status": "verified",
+      "license": "unspecified-community",
       "repo": "vrgamedevgirl84/LTX_2.3_Fantasy_Anime_Style_LoRa",
       "weightFile": "Fantasy_Anime.safetensors",
       "defaultStrength": 1.0,
@@ -29,11 +38,153 @@
     {
       "id": "i2v-adapter",
       "displayName": "Image→Video adapter (MachineDelusions)",
+      "kind": "plain",
+      "status": "verified",
+      "license": "unspecified-community",
       "repo": "MachineDelusions/LTX-2_Image2Video_Adapter_LoRa",
       "weightFile": "LTX-2-Image2Vid-Adapter.safetensors",
       "defaultStrength": 1.0,
       "trigger": "",
       "input": "image"
+    },
+    {
+      "id": "lipdub",
+      "displayName": "LipDub — audio-driven lip re-animation (Lightricks)",
+      "kind": "ic",
+      "status": "verified-weights",
+      "license": "LTX-2-community",
+      "gatedDownload": true,
+      "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-LipDub",
+      "weightFile": "ltx-2.3-22b-ic-lora-lipdub-0.9.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": "",
+      "referenceDownscale": 1,
+      "stage2": "clean",
+      "surface": "textToVideo",
+      "conditioning": [
+        {
+          "role": "reference_video",
+          "media": "video",
+          "required": true,
+          "ingest": "videoClip",
+          "defaultStrength": 1.0,
+          "note": "source performance video; provides visual structure via IC reference tokens"
+        },
+        {
+          "role": "dub_audio",
+          "media": "audio",
+          "required": false,
+          "ingest": "audioTrack",
+          "note": "the new audio to lip-sync; defaults to the reference video's own audio track"
+        }
+      ],
+      "verification": {
+        "date": "2026-07-02",
+        "headerDialect": "diffusers-PEFT (diffusion_model.*)",
+        "rank": 128,
+        "tensors": 2688,
+        "targetsApplied": "1344/1344",
+        "audioBranch": true,
+        "loraGate": "PASS (on 0.809/off 0.99991/detach 1.0, finite)"
+      }
+    },
+    {
+      "id": "ingredients",
+      "displayName": "Ingredients — reference-sheet consistency (Lightricks)",
+      "kind": "ic",
+      "status": "verified-weights",
+      "license": "LTX-2-community",
+      "gatedDownload": true,
+      "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
+      "weightFile": "ltx-2.3-22b-ic-lora-ingredients-0.9.safetensors",
+      "defaultStrength": 1.4,
+      "trigger": "",
+      "referenceDownscale": 1,
+      "stage2": "skip",
+      "surface": "textToVideo",
+      "promptConvention": "ingredients-dual-part",
+      "conditioning": [
+        {
+          "role": "reference_sheet",
+          "media": "image",
+          "required": false,
+          "group": "sheet",
+          "ingest": "loopedStillVideo",
+          "describable": true,
+          "describeNote": "describe the sheet's elements (characters, props, location) — feeds the 'Reference sheet:' half of the prompt",
+          "note": "ONE finished composite sheet (clean panels, black bg, no text); tiled to >=121 frames matching output length. Alternative: provide subject_images and the app builds the sheet."
+        },
+        {
+          "role": "subject_images",
+          "media": "imageSet",
+          "maxCount": 6,
+          "required": false,
+          "group": "sheet",
+          "ingest": "sheetBuilder",
+          "note": "up to 6 character/prop images — composed into a sheet (native-aspect top-row panels, black gutters, built oversized ~1456x825 then downscaled); per-image descriptions feed the dual-part prompt"
+        },
+        {
+          "role": "location_image",
+          "media": "image",
+          "required": false,
+          "group": "sheet",
+          "ingest": "sheetBuilder",
+          "note": "optional full-width location band (~40% height) in the built sheet"
+        }
+      ],
+      "conditioningGroups": { "sheet": "oneOf: reference_sheet | (subject_images [+ location_image])" },
+      "verification": {
+        "date": "2026-07-02",
+        "headerDialect": "diffusers-PEFT (diffusion_model.*)",
+        "rank": 128,
+        "tensors": 960,
+        "targetsApplied": "480/480",
+        "audioBranch": false,
+        "loraGate": "PASS (on 0.833/off 0.99991/detach 1.0, finite)",
+        "note": "card says dev-base-trained — perceptual verify on distilled at P3",
+        "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit"
+      }
+    },
+    {
+      "id": "cameraman-v2",
+      "displayName": "Cameraman v2 — camera-motion transfer (Cseti)",
+      "kind": "ic",
+      "status": "eval-only",
+      "license": "research-only-noncommercial",
+      "licenseGated": true,
+      "repo": "Cseti/LTX2.3-22B_IC-LoRA-Cameraman_v2",
+      "weightFile": "LTX2.3-22B_IC-LoRA-Cameraman_v2_14000.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": "",
+      "referenceDownscale": 1,
+      "stage2": "clean",
+      "surface": "textToVideo",
+      "conditioning": [
+        {
+          "role": "reference_video",
+          "media": "video",
+          "required": true,
+          "ingest": "videoClip",
+          "defaultStrength": 1.0,
+          "note": "raw video carrying the desired camera motion — NO extractor; >=960x512 recommended for reliable transfer"
+        },
+        {
+          "role": "init_image",
+          "media": "image",
+          "required": false,
+          "ingest": "initImage",
+          "note": "optional first-frame anchor (rides the base model's i2v path, not IC tokens)"
+        }
+      ],
+      "verification": {
+        "date": "2026-07-02",
+        "headerDialect": "diffusers-PEFT (diffusion_model.*)",
+        "rank": 64,
+        "tensors": 960,
+        "targetsApplied": "480/480",
+        "audioBranch": false,
+        "loraGate": "PASS (on 0.786/off 0.99991/detach 1.0, finite)"
+      }
     }
   ]
 }
