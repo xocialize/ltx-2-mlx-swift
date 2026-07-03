@@ -92,7 +92,7 @@
       "id": "ingredients",
       "displayName": "Ingredients — reference-sheet consistency (Lightricks)",
       "kind": "ic",
-      "status": "verified-weights",
+      "status": "verified",
       "license": "LTX-2-community",
       "gatedDownload": true,
       "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Ingredients",
@@ -142,7 +142,8 @@
         "audioBranch": false,
         "loraGate": "PASS (on 0.833/off 0.99991/detach 1.0, finite)",
         "note": "card says dev-base-trained — perceptual verify on distilled at P3",
-        "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit"
+        "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit",
+        "liveGate": "IC-P3-FIXTURE PASS 2026-07-03 (768x448x121 seed42 bf16, Unconstrained): identity transfer STRONG (hair/suit/stripe/harness match the sheet, frame-consistent), no layout bleed, action+audio synced, no sheet-text bleed. Blemish (non-blocking, base-model quirk): quoted dialogue burned in as a small caption. SPLIT: floor 40.19 / peak 79.58 / act 39.39 GB, run 434s (IC seq = target+ref tokens, one full-res stage). Artifacts: LTX_TESTING/fixtures/ic-p3-result-bf16-768x448-121f.mp4"
       }
     },
     {
