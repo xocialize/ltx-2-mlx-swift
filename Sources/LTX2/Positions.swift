@@ -50,4 +50,24 @@ public enum Positions {
         let mids = (starts + ends) / 2.0
         return mids.reshaped(1, T, 1).asType(.float32)
     }
+
+    /// LipDub reference-audio append (IC-LORA-PLAN P3b): patchify an audio VAE latent
+    /// (B, 8, T, 16) → tokens (B, T, 128) + RoPE positions (1, T, 1), shifted into
+    /// NEGATIVE time ([-aud_dur - 0.04, -0.04]) so the appended reference reads as
+    /// off-screen context rather than overlapping the target audio tokens.
+    ///
+    /// 1:1 port of ltx_pipelines_mlx/lipdub.py `patchify_lipdub_audio_reference_latent`
+    /// (AudioPatchifier.patchify + compute_audio_positions + negative shift).
+    public static func patchifyLipdubAudioReference(
+        _ latent: MLXArray, negativePositions: Bool = true
+    ) -> (tokens: MLXArray, positions: MLXArray) {
+        let B = latent.dim(0), C1 = latent.dim(1), T = latent.dim(2), C2 = latent.dim(3)
+        let tokens = latent.transposed(0, 2, 1, 3).reshaped(B, T, C1 * C2)  // (B, T, 128)
+        var positions = audio(tokens: T)
+        if negativePositions {
+            let audDur = positions.max().item(Float.self)
+            positions = positions - (audDur + 0.04)
+        }
+        return (tokens, positions.asType(.float32))
+    }
 }

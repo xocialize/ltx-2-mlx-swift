@@ -13,10 +13,10 @@ in the parent [`../CLAUDE.md`](../CLAUDE.md)** (auto-loads) — don't duplicate 
 | `DiT.swift` | joint-AV Diffusion Transformer (48 blocks, AdaLN ×4 kinds, self/text-cross/AV-cross attn) — **bf16**. Quant-aware `dense()` (q8/q4, bits auto). Optional **per-token timesteps** (i2v). | `--dit-tiny`, `--dit-full`, `--dit-q8`, `--dit-q4`, `--dit-pertoken` |
 | `DenoiseLoop.swift` | distilled Euler (X0Model + euler_step). `run` = uniform-mask t2v; **`runConditioned`** = i2v (per-token σ + clean-latent re-blend) | `--denoise-gate` (+ i2v via `--dit-pertoken`) |
 | `VideoVAE.swift` | 128-ch video VAE decoder + encoder (pixel-shuffle, PixelNorm, causal/non-causal) + `denormalizeLatent`/`normalizeLatent` — **fp32** | `--vae-decode`, `--vae-encode` |
-| `AudioVAE.swift` | audio VAE decoder (Conv2d, causal-height, latent→mel) — **fp32** | `--audio-vae-decode-gate` |
+| `AudioVAE.swift` | audio VAE decoder (Conv2d, causal-height, latent→mel) + encoder (waveform→Slaney-mel→latent, LipDub reference audio) — **fp32** | `--audio-vae-decode-gate`, `--audio-vae-encode-gate` |
 | `Vocoder.swift` | BigVGAN v2 + Hann-sinc resampler + MelSTFT + BWE (mel→48kHz) — **fp32** | `--vocoder-gate` |
 | `Upsampler.swift` | spatial-x2 latent upsampler (Conv3d, GroupNorm, PixelShuffle2D) — **fp32** | `--upsampler`, `--upscale-step` |
-| `Positions.swift` | pixel-space video/audio positions + `distilledSigmas`/`stage2Sigmas` | — |
+| `Positions.swift` | pixel-space video/audio positions + `distilledSigmas`/`stage2Sigmas` + LipDub audio-ref patchify/negative-time positions | (via `--audio-vae-encode-gate`) |
 | `LTX2Pipeline.swift` | assembles all of the above → `t2v` (one-stage) / `t2vTwoStage` / **`i2v`** (first-frame conditioning); loads + decodes audio | `--e2e-gate`, `--audio-decode` |
 
 `Sources/MLXLTX2/` — the engine wrapper: `MLXLTX2Package` (ModelPackage, `.textToVideo` incl. i2v

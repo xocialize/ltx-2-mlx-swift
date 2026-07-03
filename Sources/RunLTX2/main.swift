@@ -367,6 +367,43 @@ func audioVaeDecodeGate() throws {
     if !pass { exit(1) }
 }
 
+/// Audio VAE encode parity (IC-LORA-PLAN P3b, LipDub): waveform → mel → latent vs oracle
+/// golden (fp32), + the LipDub patchify/negative-positions helper on the golden latent.
+func audioVaeEncodeGate() throws {
+    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/audio_vae_encode"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let enc = try AudioVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
+    let processor = AudioMelProcessor()
+
+    // Diagnostics: Swift-computed Slaney filterbank + Hann window vs the oracle's.
+    let basisMax = maxAbs(processor.melBasis, io["mel_basis"]!)
+    let windowMax = maxAbs(processor.window, io["window"]!)
+
+    let mel = processor.waveformToMel(io["waveform"]!)
+    let latent = enc.encode(mel)
+    eval(mel, latent)
+    let mCos = cosine(mel, io["mel"]!), mMax = maxAbs(mel, io["mel"]!)
+    let lCos = cosine(latent, io["latent"]!), lMax = maxAbs(latent, io["latent"]!)
+    print(String(format: "[audio-vae-encode-gate] basisMaxAbs=%.2e windowMaxAbs=%.2e", basisMax, windowMax))
+    print(String(format: "[audio-vae-encode-gate] MEL    cosine=%.6f maxAbs=%.5f  shape %@ vs %@",
+                 mCos, mMax, "\(mel.shape)" as NSString, "\(io["mel"]!.shape)" as NSString))
+    print(String(format: "[audio-vae-encode-gate] LATENT cosine=%.6f maxAbs=%.5f  shape %@ vs %@",
+                 lCos, lMax, "\(latent.shape)" as NSString, "\(io["latent"]!.shape)" as NSString))
+
+    // LipDub helper on the GOLDEN latent (isolates the patchify/positions math).
+    let (tokens, positions) = Positions.patchifyLipdubAudioReference(io["latent"]!)
+    eval(tokens, positions)
+    let tCos = cosine(tokens, io["ref_tokens"]!), tMax = maxAbs(tokens, io["ref_tokens"]!)
+    let pMax = maxAbs(positions, io["ref_positions"]!)
+    print(String(format: "[audio-vae-encode-gate] LIPDUB tokens cosine=%.6f maxAbs=%.5f  posMaxAbs=%.6f",
+                 tCos, tMax, pMax))
+
+    let pass = mCos >= 0.999 && lCos >= 0.999 && tCos >= 0.999 && tMax < 1e-5 && pMax < 1e-4
+    print(pass ? "[audio-vae-encode-gate] PASS ✅" : "[audio-vae-encode-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 /// Vocoder+BWE parity: mel → 48kHz waveform vs oracle golden (fp32).
 func vocoderGate() throws {
     let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vocoder"
@@ -909,6 +946,8 @@ if args.contains("--connector-gate") {
     try vaeEncodeGate()
 } else if args.contains("--audio-vae-decode-gate") {
     try audioVaeDecodeGate()
+} else if args.contains("--audio-vae-encode-gate") {
+    try audioVaeEncodeGate()
 } else if args.contains("--vocoder-gate") {
     try vocoderGate()
 } else if args.contains("--audio-decode-gate") {
