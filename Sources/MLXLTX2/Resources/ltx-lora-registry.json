@@ -60,7 +60,7 @@
       "id": "lipdub",
       "displayName": "LipDub — audio-driven lip re-animation (Lightricks)",
       "kind": "ic",
-      "status": "verified-weights",
+      "status": "verified",
       "license": "LTX-2-community",
       "gatedDownload": true,
       "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-LipDub",
@@ -94,7 +94,8 @@
         "tensors": 2688,
         "targetsApplied": "1344/1344",
         "audioBranch": true,
-        "loraGate": "PASS (on 0.809/off 0.99991/detach 1.0, finite)"
+        "loraGate": "PASS (on 0.809/off 0.99991/detach 1.0, finite)",
+        "liveGate": "LIPDUB VERIFIED 2026-07-03 (768x448x121 seed42 bf16): lip-sync in tune (operator), reference identity/scene preserved, no face artifacts; audio via ic.muxDubAudio (I7: regenerated track is model-property babble; deliverable = the actual dub). OBJECTIVE mux verification: stt_verify WER 0.08 PASS (mux ON, dub survives resample/trim/AAC verbatim) vs WER 1.00 mux-off (tracked I7 baseline). SPLIT muxON: floor 41.35 / act 39.35 / peak 80.70, run 286s."
       },
       "audioReference": true
     },
