@@ -104,7 +104,12 @@ says "Loading", not frozen) → first generation.
 or fails legibly; total time-to-first-video recorded (this number IS the consumer first
 impression — put it in the M1 table).
 
-## M5 — Weights-distribution license posture  ▶ user (business/counsel)
+## M5 — Weights-distribution license posture  ✅ CLOSED (operator go, 2026-07-05)
+
+**Operator decision (2026-07-05): reviewed and found acceptable for our business needs — written
+go.** The checklist below is retained as the record of what the review covered; if the product's
+positioning, revenue posture, or weights host changes, M5 REOPENS (§2 revenue gate and §A.20
+non-compete bind on an ongoing basis, not once).
 
 **Gap:** the engineering license posture (inference code Apache, weights LTX-2 Community,
 engine-allowlisted) was settled for EVALUATION. Consumer shipping is a different act: end users
@@ -128,8 +133,8 @@ products) bind the shipper on an ongoing basis.
 
 ## Exit
 
-- [ ] M1 ✅ (numbers in the table, verdict "ship" or "open SPEED-PLAN S1 first")
-- [ ] M2 ✅  · [ ] M3 ✅  · [ ] M4 ✅  · [ ] M5 ✅
+- [x] M1 ✅ (2026-07-05: verdict SHIP, 16.1 s/os — table above; i2v+adapter exception → BRIDGE-LTX-012)
+- [ ] M2 ✅  · [ ] M3 ✅  · [ ] M4 ✅  · [x] M5 ✅ (2026-07-05 operator go)
 
 When all five are checked: **declare MVP**, tag the repos, and move speed work to
 [SPEED-PLAN.md](SPEED-PLAN.md) as the Release-2 theme.
