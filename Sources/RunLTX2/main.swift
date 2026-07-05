@@ -727,6 +727,49 @@ func memBenchGate(quant: String) async throws {
     print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
 }
 
+// MARK: - Gap-queue P2 — LoRA fetch gate (no GPU, real network)
+//
+// Proves the first-use adapter download is never silent: fetches a registry adapter into a FRESH
+// directory with a bound WeightDownloadProgress sink and prints every report. PASS = the file
+// lands with plausible size AND at least one progress report fired. Cleans up after itself when
+// it created the temp dir.
+func loraFetchGate(id: String, directory: String?) async throws {
+    let registry = try LoRARegistry.bundled()
+    guard let entry = registry.entry(id: id) else {
+        print("[lora-fetch-gate] FAIL ❌ unknown adapter '\(id)'")
+        return
+    }
+    let ownsDir = directory == nil
+    let dir = directory.map { URL(fileURLWithPath: $0) }
+        ?? FileManager.default.temporaryDirectory.appendingPathComponent("lora-fetch-gate-\(UUID().uuidString)")
+    defer { if ownsDir { try? FileManager.default.removeItem(at: dir) } }
+    let cache = LoRACache(directory: dir)
+    print("[lora-fetch-gate] \(id) → \(dir.path)  cached=\(cache.isCached(entry))")
+
+    final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var n = 0
+        func bump() -> Int { lock.lock(); defer { lock.unlock() }; n += 1; return n }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return n }
+    }
+    let reports = Counter()
+    let t0 = Date()
+    let file = try await WeightDownloadProgress.$sink.withValue({ fraction, rate in
+        _ = reports.bump()
+        let mbps = rate.map { String(format: "  %.1f MB/s", $0 / 1e6) } ?? ""
+        print(String(format: "[lora-fetch-gate] %3.0f%%%@", fraction * 100, mbps))
+    }) {
+        try await cache.ensure(entry)
+    }
+    let bytes = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? UInt64) ?? 0
+    let pass = bytes > 50_000_000 && reports.count >= 1
+    print(String(format: "[lora-fetch-gate] %.2f GB in %.0fs · %d progress report(s) · isCached now %@",
+                 Double(bytes) / 1e9, Date().timeIntervalSince(t0),
+                 reports.count, "\(cache.isCached(entry))" as NSString))
+    print(pass ? "[lora-fetch-gate] PASS ✅ — download visible end-to-end"
+               : "[lora-fetch-gate] FAIL ❌ (bytes=\(bytes), reports=\(reports.count))")
+}
+
 // MARK: - SPEED-PLAN S4 — SDPA fused-path probe
 //
 // The DiT has a single SDPA call site (`MLXFast.scaledDotProductAttention`, mask .none), but MLX
@@ -1094,6 +1137,9 @@ if args.contains("--connector-gate") {
                                audio: args.contains("--audio"))
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
+} else if args.contains("--lora-fetch-gate") {
+    try await loraFetchGate(id: positional.first ?? "fantasy-anime",
+                            directory: positional.dropFirst().first)
 } else if args.contains("--sdpa-probe") {
     sdpaProbeGate()
 } else if args.contains("--speed-bench") {
@@ -1113,5 +1159,6 @@ if args.contains("--connector-gate") {
     print("       RunLTX2 --mem-bench [bf16|int8|int4]   (efficiency-sweep footprint at 704×512×9f)")
     print("       RunLTX2 --speed-bench [bf16|int8|int4] [w] [h] [frames]   (SPEED-PLAN S6 quant ladder, default 704 512 121)")
     print("       RunLTX2 --sdpa-probe                   (SPEED-PLAN S4: fused-SDPA vs manual compose at production shapes)")
+    print("       RunLTX2 --lora-fetch-gate [id] [dir]   (P2: adapter download with visible progress; default fantasy-anime, temp dir)")
     print("       RunLTX2 --i2v-spot [w] [h] [frames]    (BRIDGE-LTX-005 max128 i2v SPLIT measure, default 704 512 481)")
 }

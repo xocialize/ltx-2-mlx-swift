@@ -10,6 +10,7 @@
 // here — see LORA-PLAN.md L4.
 
 import Foundation
+import MLXProfiling
 import MLXToolKit
 
 /// The conditioning input an effect expects — drives which input picker the UI reveals.
@@ -111,8 +112,20 @@ public struct LoRACache: Sendable {
         directory.appendingPathComponent("\(entry.id).safetensors")
     }
 
+    /// True when the entry's weights are already materialized locally (ensure() needs no network).
+    /// Hosts use this to route a first-use fetch through an explicit download phase (gap-queue P2)
+    /// instead of paying it silently inside a timed generation.
+    public func isCached(_ entry: LoRAEntry) -> Bool {
+        FileManager.default.fileExists(atPath: localURL(for: entry).path)
+    }
+
     /// Return the cached file, downloading it on first use. Atomic (download to a temp file,
     /// then move) so a partial download never poisons the cache.
+    ///
+    /// A first-use fetch is never silent (gap-queue P2): the kickoff logs the resolved URL, byte
+    /// progress reaches whatever `WeightDownloadProgress` sink the CALLER bound (captured at
+    /// start — the TaskLocal does not flow onto URLSession's delegate queue), and completion
+    /// logs size + elapsed.
     public func ensure(_ entry: LoRAEntry) async throws -> URL {
         let dest = localURL(for: entry)
         if FileManager.default.fileExists(atPath: dest.path) { return dest }
@@ -133,17 +146,137 @@ public struct LoRACache: Sendable {
             if let token = Self.hfToken() {
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             }
-            let (tmp, response) = try await URLSession.shared.download(for: request)
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                throw LoRARegistryError.download(entry.id, underlying: "HTTP \(http.statusCode)")
-            }
+            MLXProfiler.shared.note("LoRA '\(entry.id)': fetching \(url.absoluteString)")
+            let t0 = Date()
+            // Classic session-level delegate + explicit downloadTask: the async
+            // `download(for:delegate:)` convenience does NOT deliver didWriteData progress to a
+            // task-level delegate (verified via --lora-fetch-gate), so the fetch would be silent.
+            let delegate = DownloadProgressDelegate(label: "LoRA '\(entry.id)'",
+                                                    sink: WeightDownloadProgress.sink,
+                                                    holdDirectory: directory)
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+            let tmp = try await delegate.download(request, using: session)
+            WeightDownloadProgress.report(fraction: 1.0)
+            let bytes = ((try? FileManager.default.attributesOfItem(atPath: tmp.path))?[.size] as? UInt64) ?? 0
+            MLXProfiler.shared.note(String(format: "LoRA '%@': downloaded %.2f GB in %.0fs",
+                                           entry.id as NSString, Double(bytes) / 1e9,
+                                           Date().timeIntervalSince(t0)))
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: tmp, to: dest)
             return dest
         } catch let e as LoRARegistryError {
             throw e
+        } catch is CancellationError {
+            throw CancellationError()   // keep cancellation typed — hosts report "cancelled", not "failed"
+        } catch let u as URLError where u.code == .cancelled {
+            throw CancellationError()   // URLSession surfaces task cancellation as URLError(.cancelled)
         } catch {
             throw LoRARegistryError.download(entry.id, underlying: error.localizedDescription)
+        }
+    }
+
+    /// Session-level URLSession delegate: forwards byte progress to a CAPTURED sink (the
+    /// `WeightDownloadProgress` TaskLocal does not flow onto URLSession's delegate queue) and
+    /// bridges the classic downloadTask callbacks to async/await. Progress is throttled to
+    /// ≥1% / ≥2 s steps so a multi-GB fetch produces ~100 updates, not thousands. Mutable state
+    /// is confined to the session's serial delegate queue + an NSLock for the one-shot
+    /// continuation (@unchecked Sendable).
+    private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let sink: WeightDownloadProgress.Sink?
+        private let label: String
+        private let holdDirectory: URL
+        private let started = Date()
+        private var lastFraction = 0.0
+        private var lastAt = Date.distantPast
+        private var announced = false
+
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<URL, Error>?
+        private var task: URLSessionDownloadTask?
+
+        init(label: String, sink: WeightDownloadProgress.Sink?, holdDirectory: URL) {
+            self.label = label
+            self.sink = sink
+            self.holdDirectory = holdDirectory
+        }
+
+        /// Run the download; returns the relocated temp file (inside `holdDirectory`, so the
+        /// caller's atomic move stays on one volume). Cancelling the surrounding Swift Task
+        /// cancels the URLSession task (→ URLError.cancelled → typed CancellationError upstream).
+        func download(_ request: URLRequest, using session: URLSession) async throws -> URL {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { cont in
+                    lock.lock()
+                    continuation = cont
+                    let t = session.downloadTask(with: request)
+                    task = t
+                    lock.unlock()
+                    t.resume()
+                }
+            } onCancel: {
+                lock.lock()
+                let t = task
+                lock.unlock()
+                t?.cancel()
+            }
+        }
+
+        private func finish(_ result: Result<URL, Error>) {
+            lock.lock()
+            let cont = continuation
+            continuation = nil
+            lock.unlock()
+            switch result {
+            case .success(let url): cont?.resume(returning: url)
+            case .failure(let error): cont?.resume(throwing: error)
+            }
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                        totalBytesExpectedToWrite: Int64) {
+            if !announced {
+                announced = true
+                let size = totalBytesExpectedToWrite > 0
+                    ? String(format: "%.2f GB", Double(totalBytesExpectedToWrite) / 1e9)
+                    : "unknown size"
+                MLXProfiler.shared.note("\(label): downloading (\(size))")
+            }
+            guard totalBytesExpectedToWrite > 0 else { return }
+            let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+            let now = Date()
+            guard fraction - lastFraction >= 0.01 || now.timeIntervalSince(lastAt) >= 2 else { return }
+            lastFraction = fraction
+            lastAt = now
+            sink?(fraction, Double(totalBytesWritten) / max(now.timeIntervalSince(started), 0.001))
+        }
+
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didFinishDownloadingTo location: URL) {
+            // `location` dies when this callback returns — relocate synchronously, into the
+            // cache directory so the caller's final move never crosses volumes.
+            if let http = downloadTask.response as? HTTPURLResponse,
+               !(200..<300).contains(http.statusCode) {
+                try? FileManager.default.removeItem(at: location)
+                finish(.failure(NSError(domain: "LoRACache", code: http.statusCode,
+                                        userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"])))
+                return
+            }
+            do {
+                try FileManager.default.createDirectory(at: holdDirectory, withIntermediateDirectories: true)
+                let hold = holdDirectory.appendingPathComponent(".partial-\(UUID().uuidString)")
+                try FileManager.default.moveItem(at: location, to: hold)
+                finish(.success(hold))
+            } catch {
+                finish(.failure(error))
+            }
+        }
+
+        func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+            // Success already resumed in didFinishDownloadingTo; this catches transport errors
+            // (including cancellation → URLError.cancelled).
+            if let error { finish(.failure(error)) }
         }
     }
 
