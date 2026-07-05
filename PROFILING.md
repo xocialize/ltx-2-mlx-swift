@@ -57,9 +57,10 @@ kernels in the "Loading" phase. Measured 24f: s1-step0 **162 s → 4.1 s**, gene
 (On a cold machine the warmup itself takes the full compile time — but it lands where slowness is
 expected. Disable with `LTX_NO_WARMUP=1`.)
 
-Further lever (not applied — needs parity re-validation): replace the manual
-`rms0`/`layerNormAffineFree`/`pixelNorm` (mean/rsqrt chains → hundreds of kernels across 48 layers)
-with fused `MLXFast.rmsNorm`/`layerNorm` — fewer kernels → faster compile *and* faster steps.
+Further lever (APPLIED since — the fused-norms sweep): the manual `rms0`/`layerNormAffineFree`/
+`pixelNorm` chains are now fused `MLXFast.rmsNorm`/`layerNorm` (see `DiT.swift`) — fewer kernels →
+faster compile *and* faster steps. Remaining unfused elementwise chains (AdaLN modulate,
+gate-mul-add) are a SPEED-PLAN S4 item.
 
 ### 2. MP4-encode stall (post-generation — the ">1000s, looks like a loop")
 

@@ -29,7 +29,9 @@ Pro differs in GPU-core count, laptop thermals, and true memory pressure (the OS
 live inside that 24 GB too). Peak memory will hold — the envelope math guarantees it — but
 wall-clock and sustained-load behavior are UNKNOWN on the machine the compact24 tier exists for.
 
-**Do:** on a base 24 GB M5 MBP (and ideally one 32 GB machine):
+**Do:** follow **[LTX_TESTING/M1-TARGET-HARDWARE-PLAN.md](../LTX_TESTING/M1-TARGET-HARDWARE-PLAN.md)**
+(the runnable session plan — weights copy, run matrix R0–R6, the S1 profiled run, results tables).
+Summary, on a base 24 GB M5 MBP (and ideally one 32 GB machine):
 1. Cold start → tier auto-defaults to compact24 → t2v 704×512×240 request (proves clamp) →
    record load s / run s / peak GB / output correctness (512×288×121).
 2. Repeat 3× back-to-back for thermal drift (run-time creep = throttling signal).
@@ -43,7 +45,22 @@ wall-clock and sustained-load behavior are UNKNOWN on the machine the compact24 
 
 | machine | tier | request | load s | run s | peak GB | 3×-drift | verdict |
 |---|---|---|---|---|---|---|---|
-| _(pending)_ | | | | | | | |
+| MBP M5 Pro 24 GB (Mac17,9, macOS 27.0, weights on TB5 ext.) | compact24/int4 | R1 t2v 704×512×240 → clamped 512×288×121 ✅ | 10.0 | 110.2 (first-run shape compile) | 14.87 | — | ✅ |
+| 〃 | 〃 | R2–R4 same, back-to-back | 7.5–7.9 | 86.1 / 85.5 / 81.4 | 14.89–14.91 | **negative** (got faster; no throttle at this envelope) | ✅ |
+| 〃 | 〃 | R5 i2v + adapter LoRA | 8.2 | ≈525 true (JSON 3628.7 contaminated by a 52-min silent adapter download — see notes) | **18.86** | — | ⚠️ exceeds 16.8 watch line; 0.25 GB under Metal workingSet 19.1; NO paging/watchdog |
+| 〃 | 〃 | R6 governed Enhance → generate | 15.8 | 280.9 (incl. enhance 51.2 + gaps) | 15.07 | — | ✅ no memory stacking; governor confirmed |
+
+**M1 VERDICT (2026-07-05): ✅ SHIP for the core t2v path** — peak 14.9 ≪ 16.8, no
+watchdog/OOM/paging, 121f ≈ 85 s warm (≪ the 3-min speed trigger), clamp + tier-default +
+governed-Enhance all confirmed on target. S1 closed alongside: **16.1 s per output-second** (≤ 20
+⇒ ship as-is; full baseline in SPEED-PLAN §S1). **One flagged exception:** the i2v+adapter path
+peaks 18.86 GB — works, but with ~0.25 GB Metal-ceiling headroom on a 24 GB machine; needs an
+i2v-specific clamp or memory pass before THAT path is consumer-shippable (BRIDGE-LTX-012).
+Session artifacts + operator notes: `/Volumes/Satechi/Testing/ltx-portable/results-MacBook-Pro-20260705-133428/`
+(app bugs found there — silent adapter download shown as "Generating", adapter auto-select at
+launch, backbone quant-follow miss — are app-side follow-ups in the bridge mailbox). Output
+quality: MP4s verified 512×288×5.04 s; operator notes flag no int4 artifacts (explicit visual
+sign-off still worth a minute when convenient).
 
 ## M2 — Quit-during-generation crash  ▶ app (+ pkg if a cancel seam is missing)
 
