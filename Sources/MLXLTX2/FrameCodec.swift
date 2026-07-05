@@ -53,17 +53,17 @@ private func pixelBuffer(rgb: [UInt8], width: Int, height: Int, pool: CVPixelBuf
 /// optionally muxing a stereo audio track [1, 2, T_audio] in [-1, 1] at `audioSampleRate`.
 /// Encode frames [1,T,H,W,3] in [-1,1] → MP4 Data.
 ///
-/// **Defaults to a SOFTWARE-only H.264 encoder.** The hardware VideoToolbox media engine STALLS when
-/// it contends with MLX's active post-generation GPU context: measured cold, the AVAssetWriter input
-/// stops draining (`isReadyForMoreMediaData` stuck) and hangs at frame 32/41 for a 48-frame clip,
-/// while the software encoder does the same 41 frames in ~3.7 s. Isolated with `RunLTX2
-/// --encode-stress`: hardware is fine for the same frames with idle memory OR a 38 GB idle
-/// allocation — it only stalls *after real MLX compute*, which is always the case for LTX output.
-/// `software: false` or `LTX_ENCODE=hardware` opts back into the faster (~1.2 s) hardware path for
-/// callers that don't encode right after heavy Metal work.
+/// **Defaults to the HARDWARE VideoToolbox H.264 encoder** (SPEED-PLAN S2 step 1). The former
+/// software default was a misdiagnosis artifact: the post-generation "encoder stall" was never the
+/// media engine — it was the AVAssetWriter two-track INTERLEAVE deadlock (the video input parks
+/// waiting for the still-empty audio track), fixed by appending + finishing the audio track BEFORE
+/// the video frame loop (see PROFILING.md). Both encoders are validated at 113 frames + audio via
+/// `RunLTX2 --encode-stress N --audio [--software]`; hardware is faster (~1.2 s vs ~3 s) and draws
+/// far less CPU power during the encode tail on laptops. `software: true` or `LTX_ENCODE=software`
+/// opts back into the software-only encoder.
 @InferenceActor
 public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampleRate: Double = 48000,
-                      software: Bool = true) async throws -> Data {
+                      software: Bool = false) async throws -> Data {
     guard frames.ndim == 5, frames.dim(1) > 0 else {
         throw FrameCodecError.badFrames("expected [1,T,H,W,3], got \(frames.shape)")
     }
@@ -84,9 +84,9 @@ public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, aud
             "EnableHardwareAcceleratedVideoEncoder": false,
             "RequireSoftwareOnlyVideoEncoder": true,
         ] as [String: Any]
-        MLXProfiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (hardware VideoToolbox bypassed)")
+        MLXProfiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (LTX_ENCODE=software or caller opt-out)")
     } else {
-        MLXProfiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (LTX_ENCODE=hardware) — may stall after heavy MLX compute")
+        MLXProfiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (default; audio-first interleave fix in place)")
     }
     let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
     let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)

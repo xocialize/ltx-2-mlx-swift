@@ -14,6 +14,19 @@ import MLXProfiling
 
 public enum DenoiseLoop {
 
+    /// SPEED-PLAN S3 ceiling probe (`LTX_STEP_DELTA=1`): logs the step-to-step cosine of the DiT
+    /// input latent and of the x0 predictions. TeaCache-style step caching is only worth building
+    /// if consecutive steps are highly redundant — the plan's kill rule: video cosine already
+    /// < ~0.95 across the 8 distilled steps ⇒ do not build S3.
+    static let logStepDeltas = ProcessInfo.processInfo.environment["LTX_STEP_DELTA"] == "1"
+
+    static func cosine(_ a: MLXArray, _ b: MLXArray) -> Float {
+        let af = a.asType(.float32).flattened(), bf = b.asType(.float32).flattened()
+        let n = (af * bf).sum()
+        let d = MLX.sqrt((af * af).sum()) * MLX.sqrt((bf * bf).sum())
+        return (n / d).item(Float.self)
+    }
+
     /// X0Model: predict clean x0 from the DiT velocity. x0 = x_t − σ·v (fp32). When per-token
     /// `videoTimesteps`/`audioTimesteps` (B,N) are given, σ is per-token (B,N,1) and they also
     /// drive the DiT's per-token AdaLN path.
@@ -55,14 +68,23 @@ public enum DenoiseLoop {
     ) throws -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0, ax = audioLatent0
         let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
+        var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
         for i in 0 ..< (sigmas.count - 1) {
             try Task.checkCancellation()
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
+            let vxIn = vx
             let (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
                                 videoText: videoText, audioText: audioText,
                                 videoPositions: videoPositions, audioPositions: audioPositions)
+            if logStepDeltas {
+                if let pIn = prevIn, let pV = prevVX0, let pA = prevAX0 {
+                    print(String(format: "[STEP-DELTA] %@step%d σ=%.3f  video in-cos=%.4f x0-cos=%.4f  audio x0-cos=%.4f",
+                                 label, i, sigma, cosine(pIn, vxIn), cosine(pV, vx0), cosine(pA, ax0)))
+                }
+                prevIn = vxIn; prevVX0 = vx0; prevAX0 = ax0
+            }
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
             ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
             eval(vx, ax)
@@ -88,17 +110,26 @@ public enum DenoiseLoop {
         if let clean = videoCleanLatent, let m = videoDenoiseMask { vx = applyDenoiseMask(vx, clean: clean, mask: m) }
         if let clean = audioCleanLatent, let m = audioDenoiseMask { ax = applyDenoiseMask(ax, clean: clean, mask: m) }
         let vN = vx.dim(1), aN = ax.dim(1)
+        var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
         for i in 0 ..< (sigmas.count - 1) {
             try Task.checkCancellation()   // MVP-READINESS M3: per-step cancel point
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
+            let vxIn = vx
             let vts = videoDenoiseMask.map { ($0 * sigma).squeezed(axis: -1) }   // (B,N) per-token σ
             let ats = audioDenoiseMask.map { ($0 * sigma).squeezed(axis: -1) }
             var (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
                                 videoText: videoText, audioText: audioText,
                                 videoPositions: videoPositions, audioPositions: audioPositions,
                                 videoTimesteps: vts, audioTimesteps: ats)
+            if logStepDeltas {
+                if let pIn = prevIn, let pV = prevVX0, let pA = prevAX0 {
+                    print(String(format: "[STEP-DELTA] %@step%d σ=%.3f  video in-cos=%.4f x0-cos=%.4f  audio x0-cos=%.4f",
+                                 label, i, sigma, cosine(pIn, vxIn), cosine(pV, vx0), cosine(pA, ax0)))
+                }
+                prevIn = vxIn; prevVX0 = vx0; prevAX0 = ax0
+            }
             if let clean = videoCleanLatent, let m = videoDenoiseMask { vx0 = applyDenoiseMask(vx0, clean: clean, mask: m) }
             if let clean = audioCleanLatent, let m = audioDenoiseMask { ax0 = applyDenoiseMask(ax0, clean: clean, mask: m) }
             vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)

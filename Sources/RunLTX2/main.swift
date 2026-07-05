@@ -12,6 +12,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import MLX
+import MLXFast
 import MLXRandom
 import LTX2
 import MLXLTX2
@@ -726,6 +727,100 @@ func memBenchGate(quant: String) async throws {
     print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
 }
 
+// MARK: - SPEED-PLAN S4 — SDPA fused-path probe
+//
+// The DiT has a single SDPA call site (`MLXFast.scaledDotProductAttention`, mask .none), but MLX
+// dispatches INTERNALLY (fused Metal kernel vs composed matmul+softmax) by shape/dtype — a silent
+// fallback at long seqLen is exactly the wall the Wan profiling program found. This probe times
+// the fast entry point against a manual compose at the production video self-attn geometry
+// (B=1 H=32 D=128 bf16). Read: ratio ≈ 1× ⇒ the entry point is falling back internally and the
+// S4 SDPA lever is LIVE; ratio ≫ 1× ⇒ the fused path is hit at that shape, look elsewhere.
+func sdpaProbeGate() {
+    let H = 32, D = 128
+    let scale = 1.0 / Float(D).squareRoot()
+    print("[sdpa-probe] B=1 H=\(H) D=\(D) bf16 mask=.none — MLXFast entry vs manual compose")
+    // nv=2112 (512×288×121 compact envelope) · 5632 (704×512×121) · 21120 (704×512×481 max128)
+    for n in [2112, 5632, 21120] {
+        let q = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        let k = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        let v = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        eval(q, k, v)
+        // warmup both paths (kernel compile is not the datum)
+        eval(MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none))
+        eval(softmax(q.matmul(k.transposed(0, 1, 3, 2)) * scale, axis: -1).matmul(v))
+        let reps = n > 10000 ? 3 : 10
+        var tF = 0.0, tM = 0.0
+        for _ in 0 ..< reps {
+            let t0 = Date()
+            eval(MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none))
+            tF += Date().timeIntervalSince(t0)
+        }
+        for _ in 0 ..< reps {
+            let t0 = Date()
+            eval(softmax(q.matmul(k.transposed(0, 1, 3, 2)) * scale, axis: -1).matmul(v))
+            tM += Date().timeIntervalSince(t0)
+        }
+        Memory.clearCache()
+        print(String(format: "[sdpa-probe] N=%6d  fused %8.1f ms  manual %8.1f ms  ratio %.2f×",
+                     n, tF / Double(reps) * 1000, tM / Double(reps) * 1000, tM / tF))
+    }
+    print("[sdpa-probe] ratio ≈ 1× ⇒ silent fallback (S4 SDPA lever live); ratio ≫ 1× ⇒ fused path hit")
+}
+
+// MARK: - SPEED-PLAN S6 — quant speed ladder at a fixed production shape
+//
+// int4 exists for MEMORY; on M-series, int8/int4 quantizedMatmul can also be FASTER than bf16 at
+// these (bandwidth-bound) matrix shapes. This gate produces the datum: same one-stage t2v run
+// twice per quant (run 1 compiles the size-specific kernels, run 2 is the measured leg) at one
+// fixed shape. Compare `run2` across --speed-bench bf16 | int8 | int4. Per-step detail: add
+// MLX_PROFILE=1. Per-step latent redundancy (S3 ceiling): add LTX_STEP_DELTA=1.
+func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async throws {
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet"
+    let ltxDir = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx")
+    let gemmaDir = URL(fileURLWithPath: defaultGemma)
+    let transformerPath: URL?
+    switch quant {
+    case "int8", "q8": transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q8/transformer-distilled.safetensors")
+    case "int4", "q4": transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q4/transformer-distilled.safetensors")
+    default: transformerPath = nil  // bf16
+    }
+    print("[speed-bench] quant=\(quant)  shape=\(width)×\(height)×\(frames)f  path=one-stage")
+
+    let p0 = Date()
+    var warm = [transformerPath ?? ltxDir.appendingPathComponent("transformer-distilled.safetensors")]
+    for f in ["connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
+              "audio_vae.safetensors", "vocoder.safetensors"] {
+        warm.append(ltxDir.appendingPathComponent(f))
+    }
+    warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(at: gemmaDir, includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.pathExtension == "safetensors" })
+    prewarmFiles(warm)
+    print(String(format: "[speed-bench] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
+
+    let sampler = PhysSampler(); sampler.start()
+    let t0 = Date()
+    let pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir, transformerPath: transformerPath)
+    print(String(format: "[speed-bench] load %.1fs", Date().timeIntervalSince(t0)))
+
+    let r1 = Date()
+    _ = try await pipeline.t2v(prompt: "a cat playing piano", height: height, width: width, numFrames: frames, fps: 24, seed: 42)
+    print(String(format: "[speed-bench] run1 (kernel compile + generate) %.1fs", Date().timeIntervalSince(r1)))
+    Memory.clearCache()
+
+    sampler.resetMax()
+    let r2 = Date()
+    let out = try await pipeline.t2v(prompt: "a cat playing piano", height: height, width: width, numFrames: frames, fps: 24, seed: 42)
+    eval(out.video); if let a = out.audio { eval(a) }
+    let run2 = Date().timeIntervalSince(r2)
+    sampler.stop()
+    let outputSeconds = Double(frames) / 24.0
+    print(String(format: "[speed-bench] run2 (measured) %.1fs → %.1f s per output-second (%.2fs clip)",
+                 run2, run2 / outputSeconds, outputSeconds))
+    print(String(format: "[speed-bench] peak phys_footprint %.2f GB", gbOf(sampler.maxBytes())))
+    print(String(format: "[speed-bench] SUMMARY quant=%@ shape=%dx%dx%d run2_s=%.1f spos=%.2f",
+                 quant as NSString, width, height, frames, run2, run2 / outputSeconds))
+}
+
 // MARK: - i2v spot measure (BRIDGE-LTX-005) — tighten the max128 activation hint
 //
 // max128's `peakActivationBytesHint` is held at the conservative pre-T3b ceiling (52 GB) because
@@ -999,6 +1094,15 @@ if args.contains("--connector-gate") {
                                audio: args.contains("--audio"))
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
+} else if args.contains("--sdpa-probe") {
+    sdpaProbeGate()
+} else if args.contains("--speed-bench") {
+    let quant = positional.first(where: { Int($0) == nil }) ?? "bf16"
+    let ints = positional.compactMap { Int($0) }
+    try await speedBenchGate(quant: quant,
+                             width: ints.count > 0 ? ints[0] : 704,
+                             height: ints.count > 1 ? ints[1] : 512,
+                             frames: ints.count > 2 ? ints[2] : 121)
 } else if args.contains("--i2v-spot") {
     let ints = positional.compactMap { Int($0) }
     try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,
@@ -1007,5 +1111,7 @@ if args.contains("--connector-gate") {
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
     print("       RunLTX2 --mem-bench [bf16|int8|int4]   (efficiency-sweep footprint at 704×512×9f)")
+    print("       RunLTX2 --speed-bench [bf16|int8|int4] [w] [h] [frames]   (SPEED-PLAN S6 quant ladder, default 704 512 121)")
+    print("       RunLTX2 --sdpa-probe                   (SPEED-PLAN S4: fused-SDPA vs manual compose at production shapes)")
     print("       RunLTX2 --i2v-spot [w] [h] [frames]    (BRIDGE-LTX-005 max128 i2v SPLIT measure, default 704 512 481)")
 }

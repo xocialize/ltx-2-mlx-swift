@@ -287,8 +287,8 @@ public final class MLXLTX2Package: ModelPackage {
         let framesCL = out.video.transposed(0, 2, 3, 4, 1)
         eval(framesCL)                 // materialize pixels before we free the compute cache
         // Memory hygiene: free the MLX buffer pool (grows to ~20 GB during decode) before returning.
-        // (The H.264 post-generation stall is fixed by defaulting `encodeMP4` to the SOFTWARE encoder,
-        // NOT by this — freeing the cache alone did not un-stall the hardware media engine.)
+        // (The historical H.264 "post-generation stall" was the AVAssetWriter two-track interleave
+        // deadlock, fixed audio-first inside encodeMP4 — hardware encode is the default since S2.)
         Memory.clearCache()
         let mp4Span = MLXProfiler.shared.begin("encode-mp4", "h264+aac", note: "\(framesCL.dim(1)) frames")
         // ic.muxDubAudio: the deliverable carries the ACTUAL dub (decoded at the codec rate),
