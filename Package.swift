@@ -49,7 +49,10 @@ let package = Package(
         //  • 0.25.0 (contract 1.18.0) added the run-phase progress plane (`RunPhase`/`RunProgress`,
         //    ENGINE-NEEDS V2); the wrapper forwards the core's `LTX2Progress` events into it, so
         //    this package now REQUIRES ≥0.25.0.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.25.0"),
+        //  • 0.27.0 added the CAN gate (`CancellationConformance`, CAN-1..3): entry checkpoint
+        //    first act of run(), no laundering, cadence declared in Tests/CancellationTests.swift
+        //    (the LTX-proven per-step/per-chunk placements, RunProgress-evidenced).
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.27.0"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not

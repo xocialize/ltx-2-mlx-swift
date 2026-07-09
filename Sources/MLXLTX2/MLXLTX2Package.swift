@@ -25,8 +25,9 @@ import MLXToolKit
 ///
 /// Engine-owned lifecycle (C13): construct from `LTX2Configuration`, page in with `load()`,
 /// drive `run(_:)`, reclaim with `unload()`. Lifecycle isolated to `InferenceActor`; the
-/// non-`Sendable` pipeline never crosses the boundary. Cancellation honored before/after
-/// the (heavy) generation.
+/// non-`Sendable` pipeline never crosses the boundary. Cancellation honored cooperatively
+/// (CAN gate, engine 0.27.0): entry checkpoint first act of `run()`, per denoise step, per
+/// VAE-decode chunk, and at the encoder/cold-load seams (see `CancellationTests` CAN-3).
 @InferenceActor
 public final class MLXLTX2Package: ModelPackage {
     public typealias Configuration = LTX2Configuration
@@ -153,11 +154,14 @@ public final class MLXLTX2Package: ModelPackage {
     }
 
     public func run(_ request: any CapabilityRequest) async throws -> any CapabilityResponse {
+        // Entry checkpoint (CAN-1, engine 0.27.0): the FIRST act of run() — before the notLoaded
+        // guard or capability validation — so a pre-cancelled run refuses to proceed and surfaces
+        // CancellationError (never PackageError) to the engine's cancelled-vs-failed lanes.
+        try Task.checkCancellation()
         guard let pipeline else { throw PackageError.notLoaded }
         guard request.capability == .textToVideo, let t2v = request as? T2VRequest else {
             throw PackageError.unsupportedCapability(request.capability)
         }
-        try Task.checkCancellation()
 
         // Per-request runtime LoRA (the "extend" capability), carried opaquely in metaData:
         //   metaData["loraId"]       registry id of the effect (absent/empty → pristine base)
