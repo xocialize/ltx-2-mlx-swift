@@ -61,7 +61,7 @@
       "displayName": "Product Ad style (SOLRICKS)",
       "kind": "plain",
       "status": "verified",
-      "license": "unspecified-community",
+      "license": "LTX-2-community",
       "repo": "SOLRICKS/ltx-2.3-product-ad-style",
       "weightFile": "LTX23_Product_Commercial_LoRA.safetensors",
       "defaultStrength": 0.85,
@@ -74,7 +74,7 @@
         "targetsApplied": "1632/1632",
         "audioBranch": true,
         "loraGate": "PASS (on 0.783/off 0.99991/detach 1.0, finite, vmax 5.07)",
-        "note": "Card base_model tag says Lightricks/LTX-Video but header ss_base_model_version=ltx2 (ai-toolkit, 1000 steps/19 epochs) — real joint-AV LTX-2 arch; first PLAIN adapter with a full audio branch. Repo LICENSE file is EMPTY (card: license 'other') — clarification requested from author 2026-07-08; treated as unspecified-community meanwhile. Card recommends i2v (initImage) to preserve product logos/text; t2v usable.",
+        "note": "Card base_model tag says Lightricks/LTX-Video but header ss_base_model_version=ltx2 (ai-toolkit, 1000 steps/19 epochs) — real joint-AV LTX-2 arch; first PLAIN adapter with a full audio branch. License RESOLVED 2026-07-09 (repo discussion #2): author confirmed the LoRA is a derivative of LTX-2.3 under the LTX-2 Community License; full agreement text added upstream as LICENSE.txt (card frontmatter still says 'other'). Public repo, no gatedDownload. Card recommends i2v (initImage) to preserve product logos/text; t2v usable.",
         "perceptualPass": "PASS 2026-07-08 (Xcode agent) — i2v @0.85, bf16 704x512x121 seed 42, run 153.6s peak 65.3GB. ALT. Executive No.26 bottle: chrome cap, ALT. wordmark, EXECUTIVE NO.26 / EXTRAIT DE PARFUM label text and TikTok badge preserved and legible across all 121 frames; plain white bg transformed to dark studio product-hero look with reflective surface + warm key light; coherent camera/botanical motion, no product warping; AAC audio track generated (audio branch). Status flipped pending-gate-acceptance -> verified."
       }
     },
@@ -83,7 +83,7 @@
       "displayName": "Sci-Fi Cinema style (SOLRICKS)",
       "kind": "plain",
       "status": "verified",
-      "license": "unspecified-community",
+      "license": "LTX-2-community",
       "repo": "SOLRICKS/ltx-2.3-sci-fi-cinema",
       "weightFile": "ltx23_srx_scififilm_lora.safetensors",
       "defaultStrength": 0.85,
@@ -96,7 +96,7 @@
         "targetsApplied": "1632/1632",
         "audioBranch": true,
         "loraGate": "PASS (on 0.709/off 0.99991/detach 1.0, finite, vmax 4.45)",
-        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' — metadata wins. Repo has NO LICENSE file (card: license 'other') — same clarification request posture as product-ad (2026-07-08), treated as unspecified-community. Card strength range 0.6-1.1 → default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass.",
+        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' — metadata wins. License RESOLVED 2026-07-09: LTX-2 Community per the author's product-ad discussion #2 statement ('same stance applies to my other LTX-2.3 based LoRA/checkpoint work'); LICENSE.txt (full agreement text) added upstream. Public repo, no gatedDownload. Card strength range 0.6-1.1 → default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass.",
         "perceptualPass": "PASS 2026-07-08 (Xcode agent) — t2v @0.85, bf16 704x512x121 seed 42, run 90.1s peak 65.6GB, NEON TOKYO 2077 cityscape prompt. Strong cyberpunk/neon sci-fi grading, futuristic megacity with holographic signage + wet reflective streets, coherent aerial motion no warping; in-scene text partial ('2077' billboard legible, word-signs stylized as typical for diffusion); AAC audio generated (audio branch). Status flipped pending-gate-acceptance -> verified."
       }
     },
