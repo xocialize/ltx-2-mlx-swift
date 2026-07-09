@@ -161,16 +161,77 @@ int4→int8→bf16 with 5-min cooldowns). Verdict: int8 is ~1.3× faster than in
 
 ---
 
+## S7 — Alternative community checkpoints (Sulphur-class)  (effort S to evaluate · expected: unknown, measure · **DEFERRED until MVP is finalized**)
+
+**INVESTIGATIVE — opened 2026-07-05, deliberately parked as post-MVP follow-up (operator decision).**
+
+Background: a previous review adapted **Sulphur 2** (SulphurAI's fine-tune of LTX 2.3) and found
+it essentially swappable with the official weights — same architecture, same config, only the
+weights differ, so the existing MLX conversion path applied unchanged. Sulphur is reportedly
+faster at generation; we held off, but it establishes the class: architecture-identical
+full-checkpoint fine-tunes/merges of LTX 2.3 that drop into our pipeline. Known candidates as of
+2026-07 (best ongoing index: [awesome-ltx2](https://github.com/wildminder/awesome-ltx2)):
+
+| candidate | what it is | speed relevance | caveats |
+|---|---|---|---|
+| [Sulphur 2](https://civitai.com/models/2601098/sulphur-2-base) (SulphurAI) | LTX 2.3 fine-tune; dev + distill LoRA/fused | the speed story is `sulphur_distil` on the dev base, NOT the dev weights alone — if the earlier review only ran dev, the distill combo is the un-run benchmark | uncensored-community provenance; content-posture diligence |
+| [DaSiWa-LTX2.3](https://huggingface.co/darksidewalker/DaSiWa-LTX2.3) (darksidewalker) | LoRA-fused checkpoint family, **4-step distilled** + 20–30-step standard variants | most directly speed-oriented (official distill is 8-step) | custom license terms beyond base LTX — attribution, branding, and "Generation-as-a-Service" restrictions; READ before production |
+| [LTX2.3-10Eros](https://huggingface.co/TenStrip/LTX2.3-10Eros) (TenStrip) | I2V-optimized layer-scaled merge (Sulphur as merge base) | quality/adherence, not speed | same NSFW provenance as Sulphur |
+| [Singularity OmniCine](https://civitai.com/models/2610733/singularity-ltx-23omnicinev1) | ~100k-step I2V / FLF / ref-to-video optimization | quality, not throughput | evaluate only if I2V quality becomes the lever |
+| linoyts fused-union-control | distilled + Canny/Depth/Pose fused | n/a | only if control signals reach the roadmap |
+
+Evaluation notes when this opens:
+- "Faster" in this class means **fewer steps via distillation**, not faster per-step math — the
+  honest matrix is official-distilled (8-step) vs Sulphur-distill vs DaSiWa 4-step at matched
+  visual quality on target hardware, using the S6 `--speed-bench` harness + existing parity gates.
+- GGUF/NVFP4 packagings floating around Civitai are CUDA-ecosystem artifacts — irrelevant here;
+  we convert from the safetensors checkpoints exactly as we did for Sulphur.
+- Fine-tunes shift the output distribution even on benign prompts — a content-posture pass is an
+  evaluation item in its own right for the Sulphur-lineage models (ties into the M5 license work).
+- **Possible product follow-on:** if keeping MLX conversions compliant stays as simple as the
+  Sulphur experience suggests (same architecture ⇒ same conversion recipe ⇒ same QuantFootprint
+  process), a **weight-selection** capability (user picks official vs alternative checkpoint per
+  the existing tier/quant picker pattern) is on the table — scope only after the evaluation says
+  a candidate is worth carrying.
+
+## S8 — VAE decode pass  (effort M · expected: up to ~⅓ of remaining budget · promoted from S1's finding)
+
+S1 re-ranked the lanes: at the compact24 envelope on target hardware, **decode is 32% of the run**
+(25.7 s of 81.1 — read the `vae-decode/video` parent span, not the double-counting group sum),
+second only to denoise. Not in the original S2–S6 ranking; formalized here. Candidates, profile
+order (`MLX_PROFILE_DEEP=vae`):
+- **Chunk sizing on target:** compact24 uses chunk 4 (a MEMORY choice); with 15 GB peak vs 16.8
+  budget there is headroom to try chunk 6/8 — fewer halo recomputes = fewer decoded-twice frames.
+  Free experiment via `LTX_VAE_CHUNK`; keep the seam gate green (`--vae-chunk-gate`).
+- **Decode-scoped cacheLimit interplay:** the decode runs under `cacheLimit=0` (T3b lever) which
+  forces buffer reuse at some allocation cost — measure a small nonzero cap on target now that the
+  envelope has headroom.
+- **Decoder kernel stragglers:** hand-rolled conv/norm chains in the up-blocks (the fused-norms
+  sweep covered pixelNorm; a deep profile will show what else repeats 45×).
+Quality gates: `--vae-decode-gate` + `--vae-chunk-gate` byte-level seam checks.
+
+## S9 — i2v wall-clock on target  (effort S to re-measure, then rides S4 · **data gap**)
+
+The M1 session's i2v+adapter run (R5) recorded **≈525 s true** for a ~5 s clip at the compact24
+clamp — ~6× the t2v path and far over the 20 s/os line — but the figure is CONTAMINATED (a 52-min
+silent adapter download overlapped; "true" is an estimate) and entangled with the LTX-012 memory
+exception. First step is a clean re-measure (adapter pre-cached, profiled) to split
+per-token-timestep cost from LoRA/apply/download noise. If the per-token path is confirmed as the
+multiplier, S4's "scalar fast-path when all generated tokens share sigma" is the fix and doubles
+as the LTX-012 activation lever. Until measured, treat "i2v is ~6× slower" as UNVERIFIED.
+
 ## Out of scope (Release 3+ / product lane)
 
 - On-device LoRA training, tiering UX beyond the picker, product shell — the Phosphene-blueprint
   lane, not a speed item.
 - A smaller/distilled-further checkpoint (would re-open the 16 GB tier) — upstream-dependent;
-  watch Lightricks releases.
+  watch Lightricks releases (community-checkpoint candidates are tracked separately in S7).
 - Multi-clip batching/queueing — product feature with speed *implications*, scope when asked for.
 
 ## Exit
 
-Release 2 closes when: S1 baseline recorded → the chosen subset of S2–S6 lands with parity gates
-green → the MVP-READINESS M1 table is re-measured on the same hardware showing the improvement,
-and the README tier table gains a wall-clock column.
+Release 2 closes when: ~~S1 baseline recorded~~ ✅ (16.1 s/os, 2026-07-05) → the chosen subset of
+the open lanes (S2 step 2, S4 elementwise/i2v, S5, S8, S9; S3 killed, S6 answered, S7 parked)
+lands with parity gates green → the MVP-READINESS M1 table is re-measured on the same hardware
+showing the improvement, and the README tier table gains a wall-clock column (**owed now that S1
+data exists** — an at-leisure doc task, don't wait for the speed work).
