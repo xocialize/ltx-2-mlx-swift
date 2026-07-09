@@ -57,6 +57,27 @@
       ]
     },
     {
+      "id": "product-ad",
+      "displayName": "Product Ad style (SOLRICKS)",
+      "kind": "plain",
+      "status": "pending-gate-acceptance",
+      "license": "unspecified-community",
+      "repo": "SOLRICKS/ltx-2.3-product-ad-style",
+      "weightFile": "LTX23_Product_Commercial_LoRA.safetensors",
+      "defaultStrength": 0.85,
+      "trigger": "srx_commercial",
+      "verification": {
+        "date": "2026-07-08",
+        "headerDialect": "diffusers-PEFT (diffusion_model.*)",
+        "rank": 16,
+        "tensors": 3264,
+        "targetsApplied": "1632/1632",
+        "audioBranch": true,
+        "loraGate": "PASS (on 0.783/off 0.99991/detach 1.0, finite, vmax 5.07)",
+        "note": "Card base_model tag says Lightricks/LTX-Video but header ss_base_model_version=ltx2 (ai-toolkit, 1000 steps/19 epochs) — real joint-AV LTX-2 arch; first PLAIN adapter with a full audio branch. Repo LICENSE file is EMPTY (card: license 'other') — clarification requested from author 2026-07-08; treated as unspecified-community meanwhile. Card recommends i2v (initImage) to preserve product logos/text; t2v usable. Flip to verified after live perceptual pass in the test app."
+      }
+    },
+    {
       "id": "lipdub",
       "displayName": "LipDub — audio-driven lip re-animation (Lightricks)",
       "kind": "ic",
