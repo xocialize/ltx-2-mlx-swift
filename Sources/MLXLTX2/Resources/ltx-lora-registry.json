@@ -82,7 +82,7 @@
       "id": "sci-fi-cinema",
       "displayName": "Sci-Fi Cinema style (SOLRICKS)",
       "kind": "plain",
-      "status": "pending-gate-acceptance",
+      "status": "verified",
       "license": "unspecified-community",
       "repo": "SOLRICKS/ltx-2.3-sci-fi-cinema",
       "weightFile": "ltx23_srx_scififilm_lora.safetensors",
@@ -96,7 +96,8 @@
         "targetsApplied": "1632/1632",
         "audioBranch": true,
         "loraGate": "PASS (on 0.709/off 0.99991/detach 1.0, finite, vmax 4.45)",
-        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' — metadata wins. Repo has NO LICENSE file (card: license 'other') — same clarification request posture as product-ad (2026-07-08), treated as unspecified-community. Card strength range 0.6-1.1 → default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass."
+        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' — metadata wins. Repo has NO LICENSE file (card: license 'other') — same clarification request posture as product-ad (2026-07-08), treated as unspecified-community. Card strength range 0.6-1.1 → default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass.",
+        "perceptualPass": "PASS 2026-07-08 (Xcode agent) — t2v @0.85, bf16 704x512x121 seed 42, run 90.1s peak 65.6GB, NEON TOKYO 2077 cityscape prompt. Strong cyberpunk/neon sci-fi grading, futuristic megacity with holographic signage + wet reflective streets, coherent aerial motion no warping; in-scene text partial ('2077' billboard legible, word-signs stylized as typical for diffusion); AAC audio generated (audio branch). Status flipped pending-gate-acceptance -> verified."
       }
     },
     {
