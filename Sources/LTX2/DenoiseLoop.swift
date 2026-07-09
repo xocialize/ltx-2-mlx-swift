@@ -61,16 +61,20 @@ public enum DenoiseLoop {
     /// Distilled t2v Euler loop. `sigmas` includes the terminal 0.0; pairs are consecutive.
     /// Throws `CancellationError` between steps (MVP-READINESS M3) — a consumer Cancel stops the
     /// run at the next step boundary (≤ one step's latency) instead of after the full loop.
+    /// Reports each step to `LTX2Progress` (V2 run-phase plane); `stage`/`totalStages` tag the
+    /// two-stage passes (s1 = 1/2, s2 = 2/2) so a consumer can render "pass 2/2 · step 3/8".
     public static func run(
         dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
-        label: String = ""
+        label: String = "", stage: Int? = nil, totalStages: Int? = nil
     ) throws -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0, ax = audioLatent0
         let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
         var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
         for i in 0 ..< (sigmas.count - 1) {
             try Task.checkCancellation()
+            LTX2Progress.report(.denoise, step: i + 1, totalSteps: sigmas.count - 1,
+                                stage: stage, totalStages: totalStages)
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]
@@ -103,7 +107,7 @@ public enum DenoiseLoop {
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         videoCleanLatent: MLXArray? = nil, videoDenoiseMask: MLXArray? = nil,
         audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,
-        label: String = ""
+        label: String = "", stage: Int? = nil, totalStages: Int? = nil
     ) throws -> (video: MLXArray, audio: MLXArray) {
         var vx = videoLatent0.asType(.float32), ax = audioLatent0.asType(.float32)
         // Inject clean conditioned latents into the initial noised state.
@@ -113,6 +117,8 @@ public enum DenoiseLoop {
         var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
         for i in 0 ..< (sigmas.count - 1) {
             try Task.checkCancellation()   // MVP-READINESS M3: per-step cancel point
+            LTX2Progress.report(.denoise, step: i + 1, totalSteps: sigmas.count - 1,
+                                stage: stage, totalStages: totalStages)
             let span = MLXProfiler.shared.begin("denoise", "\(label)step\(i)",
                 note: String(format: "vN=%d aN=%d σ=%.3f", vN, aN, sigmas[i]))
             let sigma = sigmas[i], sigmaNext = sigmas[i + 1]

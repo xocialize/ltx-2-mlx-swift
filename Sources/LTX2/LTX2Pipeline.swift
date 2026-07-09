@@ -166,6 +166,7 @@ public final class LTX2Pipeline {
         // riding the whole encode. The Gemma 49-layer forward itself is one fork call (not
         // checkpointable without a fork API change) — worst case ≈ that forward's few seconds.
         try Task.checkCancellation()
+        LTX2Progress.report(.encode)
         let gSpan = prof.begin("encode", "gemma", note: "gemma-3-12b 4-bit")
         if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
         try Task.checkCancellation()
@@ -209,6 +210,9 @@ public final class LTX2Pipeline {
     public var vaeChunkFrames = 8
 
     private func decodePixels(_ spatial: MLXArray) throws -> MLXArray {
+        // Whole-clip decode reports once here; the chunked path refines with per-chunk
+        // step/totalSteps from inside `decodeChunked`.
+        LTX2Progress.report(.decode)
         let env = ProcessInfo.processInfo.environment
         let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? vaeChunkFrames
         let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
@@ -430,6 +434,7 @@ public final class LTX2Pipeline {
     public func encodeReference(
         pixels: MLXArray, fps: Double, downscaleFactor: Float = 1, strength: Float = 1.0
     ) throws -> ReferenceConditioning {
+        LTX2Progress.report(.encode)
         try ensureVAEEncoder()
         let span = MLXProfiler.shared.begin("ic-ingest", "vae-encode-ref",
             note: "\(pixels.dim(2))f \(pixels.dim(4))x\(pixels.dim(3))")
@@ -448,6 +453,7 @@ public final class LTX2Pipeline {
     /// `ReferenceConditioning` with NEGATIVE-time positions (the LipDub convention: the ref
     /// audio sits before the target span). Encoder loads around the call, drops immediately.
     public func encodeAudioReference(waveform: MLXArray, strength: Float = 1.0) throws -> ReferenceConditioning {
+        LTX2Progress.report(.encode)
         let enc = try AudioVAEEncoder.load(path: ltxDir.appending(path: "audio_vae.safetensors"))
         let span = MLXProfiler.shared.begin("ic-ingest", "audio-vae-encode-ref",
             note: "\(waveform.dim(2)) samples")
@@ -562,10 +568,11 @@ public final class LTX2Pipeline {
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT), label: "s1-")
+            audioPositions: Positions.audio(tokens: audioT), label: "s1-", stage: 1, totalStages: 2)
         eval(v1f, a1f)
 
         // --- Upscale 2× in un-normalized latent space (encoder+upsampler loaded only here) ---
+        LTX2Progress.report(.upsample)
         let upSpan = MLXProfiler.shared.begin("upscale", "vae-enc+upsampler", note: "half→full latent")
         try ensureVAEEncoder(); try ensureUpsampler()
         let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
@@ -583,7 +590,7 @@ public final class LTX2Pipeline {
             dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT), label: "s2-")
+            audioPositions: Positions.audio(tokens: audioT), label: "s2-", stage: 2, totalStages: 2)
         eval(v2f, a2f)
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 

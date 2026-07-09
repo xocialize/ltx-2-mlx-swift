@@ -210,79 +210,96 @@ public final class MLXLTX2Package: ModelPackage {
         let oneStage = configuration.profile?.oneStage
             ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")
 
-        // IC reference ingest (IC-LORA-PLAN P2/P3): the reference image rides metaData as a file
-        // path (interim until the ConditioningInput contract lands, P5). Built at the CLAMPED
-        // generation geometry / the adapter's declared downscale; frames snapped 8k+1.
-        var references: [ReferenceConditioning] = []
-        var audioReferences: [ReferenceConditioning] = []
-        var muxAudioURL: URL?   // ic.muxDubAudio: replace the regenerated track with the dub
-        if let icId {
-            guard let registry, let entry = registry.entry(id: icId) else {
-                throw LoRARegistryError.unknownAdapter(icId)
-            }
-            guard let refPath = t2v.metaData[ICMetaKeys.referencePath]?.asString, !refPath.isEmpty else {
-                throw PackageError.configurationMismatch(
-                    expected: "ic.referencePath (file path of the reference image) for '\(icId)'",
-                    got: "no reference")
-            }
-            let ds = max(1, entry.referenceDownscale ?? 1)
-            let refFrames = ReferenceConditioning.snapFrames(nf)
-            // Route by media: a video clip samples frames by time (Cameraman-class refs);
-            // anything else decodes as a still and tiles (Ingredients sheets).
-            let pixels: MLXArray
-            if VideoInput.looksLikeVideo(refPath) {
-                pixels = try await VideoInput.referenceClipFrames(
-                    url: URL(fileURLWithPath: refPath),
-                    width: wd / ds, height: h / ds, frames: refFrames, fps: fps)
-            } else {
-                let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
-                pixels = try ImageInput.referenceStillFrames(
-                    Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
-            }
-            let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
-            references.append(try pipeline.encodeReference(
-                pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
+        // Run-phase progress (contract 1.18.0, ENGINE-NEEDS V2): forward the core's ambient
+        // phase events into the engine's RunProgress plane. The engine bound RunProgress.sink
+        // (task-local) around this run(); the core's phase names match the canonical RunPhase
+        // constants verbatim, so raw values forward with no mapping. Scoped around reference
+        // ingest + generation — everything that used to read as one opaque "Generating…".
+        let forward: LTX2Progress.Sink = { e in
+            RunProgress.report(RunPhase(rawValue: e.phase.rawValue),
+                               step: e.step, totalSteps: e.totalSteps,
+                               stage: e.stage, totalStages: e.totalStages)
+        }
+        let (out, muxAudioURL) = try await LTX2Progress.$sink.withValue(forward) {
+            () async throws -> (LTX2Pipeline.Output, URL?) in
 
-            // LipDub-class adapters (`audioReference: true`): the dub audio appends to the AUDIO
-            // stream with negative-time positions. Source = ic.dubAudioPath (a wav/audio file),
-            // falling back to the reference video's own track (the oracle's default).
-            if entry.audioReference == true {
-                let audioPath = t2v.metaData[ICMetaKeys.dubAudioPath]?.asString ?? refPath
-                let span = Double(nf) / fps
-                let waveform = try await AudioInput.referenceWaveform(
-                    url: URL(fileURLWithPath: audioPath), maxSeconds: span)
-                audioReferences.append(try pipeline.encodeAudioReference(waveform: waveform))
-                // Correct-deliverable option (I7): the model's regenerated audio is prosodic
-                // babble by design — opt in to muxing the ACTUAL dub into the output MP4.
-                if case .bool(true) = t2v.metaData[ICMetaKeys.muxDubAudio] ?? .null {
-                    muxAudioURL = URL(fileURLWithPath: audioPath)
-                } else if t2v.metaData[ICMetaKeys.muxDubAudio]?.asString == "true" {
-                    muxAudioURL = URL(fileURLWithPath: audioPath)
+            // IC reference ingest (IC-LORA-PLAN P2/P3): the reference image rides metaData as a
+            // file path (interim until the ConditioningInput contract lands, P5). Built at the
+            // CLAMPED generation geometry / the adapter's declared downscale; frames snapped 8k+1.
+            var references: [ReferenceConditioning] = []
+            var audioReferences: [ReferenceConditioning] = []
+            var muxAudioURL: URL?   // ic.muxDubAudio: replace the regenerated track with the dub
+            if let icId {
+                guard let registry, let entry = registry.entry(id: icId) else {
+                    throw LoRARegistryError.unknownAdapter(icId)
+                }
+                guard let refPath = t2v.metaData[ICMetaKeys.referencePath]?.asString, !refPath.isEmpty else {
+                    throw PackageError.configurationMismatch(
+                        expected: "ic.referencePath (file path of the reference image) for '\(icId)'",
+                        got: "no reference")
+                }
+                let ds = max(1, entry.referenceDownscale ?? 1)
+                let refFrames = ReferenceConditioning.snapFrames(nf)
+                // Route by media: a video clip samples frames by time (Cameraman-class refs);
+                // anything else decodes as a still and tiles (Ingredients sheets).
+                let pixels: MLXArray
+                if VideoInput.looksLikeVideo(refPath) {
+                    pixels = try await VideoInput.referenceClipFrames(
+                        url: URL(fileURLWithPath: refPath),
+                        width: wd / ds, height: h / ds, frames: refFrames, fps: fps)
+                } else {
+                    let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
+                    pixels = try ImageInput.referenceStillFrames(
+                        Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
+                }
+                let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
+                references.append(try pipeline.encodeReference(
+                    pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
+
+                // LipDub-class adapters (`audioReference: true`): the dub audio appends to the AUDIO
+                // stream with negative-time positions. Source = ic.dubAudioPath (a wav/audio file),
+                // falling back to the reference video's own track (the oracle's default).
+                if entry.audioReference == true {
+                    let audioPath = t2v.metaData[ICMetaKeys.dubAudioPath]?.asString ?? refPath
+                    let span = Double(nf) / fps
+                    let waveform = try await AudioInput.referenceWaveform(
+                        url: URL(fileURLWithPath: audioPath), maxSeconds: span)
+                    audioReferences.append(try pipeline.encodeAudioReference(waveform: waveform))
+                    // Correct-deliverable option (I7): the model's regenerated audio is prosodic
+                    // babble by design — opt in to muxing the ACTUAL dub into the output MP4.
+                    if case .bool(true) = t2v.metaData[ICMetaKeys.muxDubAudio] ?? .null {
+                        muxAudioURL = URL(fileURLWithPath: audioPath)
+                    } else if t2v.metaData[ICMetaKeys.muxDubAudio]?.asString == "true" {
+                        muxAudioURL = URL(fileURLWithPath: audioPath)
+                    }
                 }
             }
-        }
 
-        let out: LTX2Pipeline.Output
-        if !references.isEmpty || !audioReferences.isEmpty {
-            // IC path: ONE stage at target resolution (`stage2: skip` — the community-blessed
-            // Ingredients config; `clean`/`keep` two-stage policies are a follow-up slice).
-            out = try await pipeline.icT2V(prompt: t2v.prompt, references: references,
-                                           audioReferences: audioReferences,
-                                           height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-        } else if let initImage = t2v.initImage {
-            // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
-            // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
-            let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)
-            out = try await pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
-                                         height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-        } else {
-            // t2v: two-stage (half-res → upsample → refine) when available AND the tier allows it;
-            // one-stage at target resolution otherwise (the low-tier denoise path).
-            out = (pipeline.supportsTwoStage && !oneStage)
-                ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-                : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            let out: LTX2Pipeline.Output
+            if !references.isEmpty || !audioReferences.isEmpty {
+                // IC path: ONE stage at target resolution (`stage2: skip` — the community-blessed
+                // Ingredients config; `clean`/`keep` two-stage policies are a follow-up slice).
+                out = try await pipeline.icT2V(prompt: t2v.prompt, references: references,
+                                               audioReferences: audioReferences,
+                                               height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            } else if let initImage = t2v.initImage {
+                // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
+                // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
+                let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)
+                out = try await pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
+                                             height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            } else {
+                // t2v: two-stage (half-res → upsample → refine) when available AND the tier allows
+                // it; one-stage at target resolution otherwise (the low-tier denoise path).
+                out = (pipeline.supportsTwoStage && !oneStage)
+                    ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                    : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+            }
+            return (out, muxAudioURL)
         }
         try Task.checkCancellation()
+        // Everything from here (pixel materialize → H.264/AAC mux) is output assembly.
+        RunProgress.report(.postprocess)
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).
         // out.audio is 48kHz stereo (1,2,T) when the audio components are present → muxed.
         let framesCL = out.video.transposed(0, 2, 3, 4, 1)

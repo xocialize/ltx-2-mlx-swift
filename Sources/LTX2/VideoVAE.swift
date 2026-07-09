@@ -85,10 +85,14 @@ public struct VideoVAEDecoder {
         let chunk = max(1, chunkFrames), h = max(1, halo)
         guard F > chunk else { return decode(latent) }
         let prof = MLXProfiler.shared
+        let totalChunks = (F + chunk - 1) / chunk
+        var chunkIndex = 0
         var parts: [MLXArray] = []
         var a = 0
         while a < F {
             try Task.checkCancellation()   // MVP-READINESS M3: per-chunk cancel point
+            chunkIndex += 1
+            LTX2Progress.report(.decode, step: chunkIndex, totalSteps: totalChunks)
             let b = min(a + chunk, F)
             let ws = max(0, a - h), we = min(F, b + h)
             let hl = a - ws, hr = we - b

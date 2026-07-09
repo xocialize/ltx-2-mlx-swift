@@ -46,7 +46,10 @@ let package = Package(
         //    + `FootprintConfigured.peakActivationBytesHint`) and `BudgetAware`: the engine reserves
         //    ONE transient activation across residents (serialized inference). Adopted in the manifest
         //    (residentBytes = weight floor, peakActivationBytes = peak − floor) + the per-stage evict.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.19.0"),
+        //  • 0.25.0 (contract 1.18.0) added the run-phase progress plane (`RunPhase`/`RunProgress`,
+        //    ENGINE-NEEDS V2); the wrapper forwards the core's `LTX2Progress` events into it, so
+        //    this package now REQUIRES ≥0.25.0.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.25.0"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
