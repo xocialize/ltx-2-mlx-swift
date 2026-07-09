@@ -167,8 +167,12 @@ products) bind the shipper on an ongoing basis.
 
 **Also blocking a full-surface MVP claim (tracked outside the M-boxes):**
 - [ ] **BRIDGE-LTX-012** — i2v+adapter at compact24 peaks 18.86 GB (0.25 GB under the Metal
-      ceiling on 24 GB). Until the envelope decision lands, MVP's ship claim covers the **t2v
-      path only**; i2v is not consumer-safe on 24 GB.
+      ceiling on 24 GB). **Lever LANDED (`c0f072e`): int8 group-64 adapter-factor packing on the
+      low tiers** (the 4.93 GB rank-256 adapter — not frames — is the measured wall; int8 fidelity
+      gated at worst cos 0.999949, int4 rejected at 0.9934). Expected ≈16.4 GB target, under
+      budget. **Verification owed post-reboot** (degraded-watchdog box): desktop i2v-spot
+      compact24@121f with int8 active, then the target-laptop R5 re-run. Carve-out stays until
+      the numbers land.
 - [ ] **Cold-load watchdog recurrence** (mailbox 2026-07-09): back-to-back heavy COLD runs crash
       in the Gemma load eval (`kIOGPUCommandBufferCallbackErrorTimeout`, uncatchable, three
       reboots needed that session). Intersects M4 directly — a consumer's first run must not be
