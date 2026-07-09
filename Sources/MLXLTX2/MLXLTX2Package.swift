@@ -205,6 +205,7 @@ public final class MLXLTX2Package: ModelPackage {
             wd = max(64, (wd / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
             pipeline.vaeChunkFrames = p.vaeChunkFrames
             pipeline.evictDiTBeforeDecode = p.evictDiTBeforeDecode
+            pipeline.loraFactorQuantBits = p.loraFactorQuantBits
         }
         let oneStage = configuration.profile?.oneStage
             ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")

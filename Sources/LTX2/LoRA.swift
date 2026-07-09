@@ -13,12 +13,25 @@
 
 import Foundation
 import MLX
+import MLXRandom
+
+/// One target's runtime factors — full-precision, or int8/int4-packed (BRIDGE-LTX-012: the
+/// rank-256 i2v adapter is 4.93 GB bf16, the single biggest term in the low-tier i2v peak;
+/// group-64 packing halves/quarters its residency, dispatched via `quantizedMatmul` in `dense`).
+public enum LoRAFactors {
+    /// `a` = [in, rank]; `b` = [rank, out] with the adapter's scale already baked in.
+    case plain(a: MLXArray, b: MLXArray)
+    /// Packed transposed factors for `quantizedMatmul(transpose: true)`:
+    /// `aw` packs Aᵀ = [rank, in]; `bw` packs Bᵀ = [out, rank]. Group size 64.
+    case quantized(aw: MLXArray, aScales: MLXArray, aBiases: MLXArray?,
+                   bw: MLXArray, bScales: MLXArray, bBiases: MLXArray?, bits: Int)
+}
 
 /// Sidecar LoRA factors for a resident `DiT`, keyed on the `dense()` prefix
-/// (e.g. `transformer_blocks.0.attn1.to_q`). `a` = [in, rank]; `b` = [rank, out] with the adapter's
-/// scale already baked in. Reference type so apply/detach mutate it without mutating the `DiT` struct.
+/// (e.g. `transformer_blocks.0.attn1.to_q`). Reference type so apply/detach mutate it without
+/// mutating the `DiT` struct.
 public final class LoRAStore {
-    public var adapters: [String: (a: MLXArray, b: MLXArray)] = [:]
+    public var adapters: [String: LoRAFactors] = [:]
     public init() {}
     /// Restore the pristine base (drop all adapters).
     public func clear() { adapters.removeAll() }
@@ -117,24 +130,72 @@ public enum LTX2LoRA {
     /// Make `loras` the active adapter set on `dit` (replaces any current set). Empty → detach.
     /// Only targets whose `dense()` weight actually exists are kept (keys-present; a remap that
     /// doesn't resolve to a real Linear is skipped rather than silently wrong).
-    public static func apply(_ loras: [(url: URL, strength: Float)], to dit: DiT) throws {
+    /// Make `loras` the active adapter set on `dit`. `factorQuantBits` (8 or 4) packs the factors
+    /// group-64 at apply time — the low-tier residency lever (BRIDGE-LTX-012): the i2v adapter is
+    /// 4.93 GB bf16 → ~2.5 GB int8 / ~1.3 GB int4, riding the DiT through the denoise peak.
+    /// Quantization is per-target with an `eval` per pair, so the bf16 source pages fault in and
+    /// free tensor-by-tensor (mmap) — the apply transient stays factor-sized, not adapter-sized.
+    public static func apply(_ loras: [(url: URL, strength: Float)], to dit: DiT,
+                             factorQuantBits: Int? = nil) throws {
         guard !loras.isEmpty else { dit.lora.clear(); return }
         let combo = try combined(loras, dtype: dit.dtype)
-        var kept: [String: (a: MLXArray, b: MLXArray)] = [:]
+        var kept: [String: LoRAFactors] = [:]
         var skipped = 0
         for (prefix, ab) in combo {
-            if dit.hasDenseWeight(prefix) { kept[prefix] = ab } else { skipped += 1 }
+            guard dit.hasDenseWeight(prefix) else { skipped += 1; continue }
+            if let bits = factorQuantBits, bits == 8 || bits == 4 {
+                // Pack the TRANSPOSED factors so dense() can use quantizedMatmul(transpose: true):
+                // x·A = x @ (Aᵀ)ᵀ with Aᵀ = [rank, in]; h·B = h @ (Bᵀ)ᵀ with Bᵀ = [out, rank].
+                let (aw, aS, aB) = MLX.quantized(ab.a.T, groupSize: 64, bits: bits)
+                let (bw, bS, bB) = MLX.quantized(ab.b.T, groupSize: 64, bits: bits)
+                var toEval = [aw, aS, bw, bS]
+                if let aB { toEval.append(aB) }
+                if let bB { toEval.append(bB) }
+                eval(toEval)   // materialize + release this pair's bf16 source
+                kept[prefix] = .quantized(aw: aw, aScales: aS, aBiases: aB,
+                                          bw: bw, bScales: bS, bBiases: bB, bits: bits)
+            } else {
+                kept[prefix] = .plain(a: ab.a, b: ab.b)
+            }
         }
         guard !kept.isEmpty else { throw LoRAError.noTargets("\(loras.map(\.url.lastPathComponent))") }
         if skipped > 0 {
             FileHandle.standardError.write(Data(
                 "[LTX2LoRA] applied \(kept.count) targets, skipped \(skipped) unmatched\n".utf8))
         }
+        if factorQuantBits != nil { Memory.clearCache() }   // drop the bf16 staging pool
         dit.lora.adapters = kept
     }
 
     public static func apply(_ url: URL, strength: Float = 1.0, to dit: DiT) throws {
         try apply([(url, strength)], to: dit)
+    }
+
+    /// Fidelity probe (BRIDGE-LTX-012, drives `RunLTX2 --lora-quant-gate`): cosine between the
+    /// full-precision LoRA delta `(x·A)·B` and its group-64 packed dispatch, across the first
+    /// `sample` targets of `url` on random bf16 activations. Returns (worst, mean) cosine.
+    public static func factorQuantFidelity(url: URL, bits: Int, sample: Int = 32,
+                                           strength: Float = 1.0) throws -> (worst: Float, mean: Float) {
+        let all = try factors(from: url, dtype: .bfloat16, strength: strength)
+        let picks = all.keys.sorted().prefix(max(1, sample))
+        var worst: Float = 1, sum: Float = 0
+        for key in picks {
+            let f = all[key]!
+            let x = MLXRandom.normal([1, 64, f.a.dim(0)]).asType(.bfloat16)
+            let plain = x.matmul(f.a).matmul(f.b).asType(.float32).reshaped(-1)
+            let (aw, aS, aB) = MLX.quantized(f.a.T, groupSize: 64, bits: bits)
+            let (bw, bS, bB) = MLX.quantized(f.b.T, groupSize: 64, bits: bits)
+            let h = MLX.quantizedMatmul(x, aw, scales: aS, biases: aB,
+                                        transpose: true, groupSize: 64, bits: bits)
+            let packed = MLX.quantizedMatmul(h, bw, scales: bS, biases: bB,
+                                             transpose: true, groupSize: 64, bits: bits)
+                .asType(.float32).reshaped(-1)
+            let dot = (plain * packed).sum().item(Float.self)
+            let n = (MLX.sqrt((plain * plain).sum()) * MLX.sqrt((packed * packed).sum())).item(Float.self)
+            let c = n > 0 ? dot / n : 1
+            worst = min(worst, c); sum += c
+        }
+        return (worst, sum / Float(picks.count))
     }
 
     /// Restore the pristine base.

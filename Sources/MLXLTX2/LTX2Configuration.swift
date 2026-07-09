@@ -37,6 +37,13 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     /// (T3c — decode-with-DiT-resident was the residual low-tier peak). Costs a DiT reload on the
     /// next request (mmap re-fault; kernels stay process-cached), accepted on these tiers.
     public var evictDiTBeforeDecode: Bool { self == .compact24 || self == .balanced32 }
+    /// Runtime-LoRA factor packing (BRIDGE-LTX-012): on the 24/32 GB tiers the rank-256 i2v
+    /// adapter (4.93 GB bf16) rides the DiT through the denoise peak — measured 18.86 GB on the
+    /// 24 GB target vs the 16.8 budget. int8 group-64 factors halve that residency (≈16.4 GB,
+    /// under budget); fidelity gated by `RunLTX2 --lora-quant-gate`. nil = full-precision factors.
+    public var loraFactorQuantBits: Int? {
+        switch self { case .compact24, .balanced32: return 8; default: return nil }
+    }
     public var recommendedQuant: Quant {
         switch self { case .compact24, .balanced32: .int4; case .standard64: .int8; case .max128: .bf16 }
     }

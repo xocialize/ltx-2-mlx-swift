@@ -36,6 +36,18 @@ public final class LTX2Pipeline {
     /// profile; `LTX_EVICT_DIT=1/0` overrides for measurement).
     public var evictDiTBeforeDecode = false
 
+    /// Pack runtime-LoRA factors to int8/int4 at apply (set by the wrapper from the tier profile;
+    /// `LTX_LORA_QUANT=8|4|0` overrides for measurement). nil = full-precision factors.
+    public var loraFactorQuantBits: Int?
+
+    /// The effective factor-packing choice: env override wins, else the profile-set knob.
+    private var effectiveLoRAQuantBits: Int? {
+        if let env = ProcessInfo.processInfo.environment["LTX_LORA_QUANT"], let v = Int(env) {
+            return v == 8 || v == 4 ? v : nil
+        }
+        return loraFactorQuantBits
+    }
+
     /// The requested runtime-LoRA set — REMEMBERED across DiT evict/reload cycles (LoRA factors
     /// live on the DiT instance, so `ensureDiT` must re-apply after every reload; without this a
     /// low-tier request would silently generate BASE after the pre-encode DiT drop).
@@ -47,7 +59,7 @@ public final class LTX2Pipeline {
         let span = MLXProfiler.shared.begin("load", "dit-reload")
         let d = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
         if !didWarmup { d.warmup(); didWarmup = true }   // kernels are per-process; once is enough
-        if !activeLoRASpec.isEmpty { try LTX2LoRA.apply(activeLoRASpec, to: d) }
+        if !activeLoRASpec.isEmpty { try LTX2LoRA.apply(activeLoRASpec, to: d, factorQuantBits: effectiveLoRAQuantBits) }
         MLXProfiler.shared.end(span)
         ditStorage = d
         return d
@@ -117,7 +129,7 @@ public final class LTX2Pipeline {
     /// `ensureDiT()` — no eager reload just to attach factors.
     public func setLoRAs(_ loras: [(url: URL, strength: Float)]) throws {
         activeLoRASpec = loras
-        if let d = ditStorage { try LTX2LoRA.apply(loras, to: d) }
+        if let d = ditStorage { try LTX2LoRA.apply(loras, to: d, factorQuantBits: effectiveLoRAQuantBits) }
     }
 
     /// Restore the pristine base (drop all runtime LoRAs).

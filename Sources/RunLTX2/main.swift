@@ -873,14 +873,41 @@ func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async t
 // envelope, and reports the SPLIT line (floor / peak / activation) the hint is recalibrated from.
 @InferenceActor
 func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
+    // Tier + quant via env (BRIDGE-LTX-012 low-tier measurement): `LTX_TIER=<rawValue>` selects
+    // the profile (default max128, preserving the BRIDGE-LTX-005 shape); the quant follows the
+    // tier's recommendation (int4 low tiers → q4 transformer) unless `LTX_QUANT` overrides.
+    let env = ProcessInfo.processInfo.environment
+    let profile = env["LTX_TIER"].flatMap { LTX2Profile(rawValue: $0) } ?? .max128
+    let quantName = env["LTX_QUANT"] ?? {
+        switch profile.recommendedQuant {
+        case .int4: return "int4"
+        case .int8: return "int8"
+        default: return "bf16"
+        }
+    }()
+    let base = "/Volumes/DEV_ARCHIVE/models/dgrauet"
+    let transformerPath: URL?
+    let quant: Quant
+    switch quantName {
+    case "int8", "q8":
+        transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q8/transformer-distilled.safetensors")
+        quant = .int8
+    case "int4", "q4":
+        transformerPath = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx-q4/transformer-distilled.safetensors")
+        quant = .int4
+    default:
+        transformerPath = nil
+        quant = .bf16
+    }
     let cfg = LTX2Configuration(
-        quant: .bf16,
-        ltxDirectory: URL(fileURLWithPath: "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"),
+        quant: quant,
+        ltxDirectory: URL(fileURLWithPath: "\(base)/ltx-2.3-mlx"),
+        transformerPath: transformerPath,
         gemmaDirectory: URL(fileURLWithPath: defaultGemma),
         // The LoRA cache root (`ltx-lora-cache/i2v-adapter.safetensors`, already fetched by the app).
         modelsRootDirectory: URL(fileURLWithPath: "/Volumes/DEV_ARCHIVE/weights"),
-        profile: .max128)
-    print("[i2v-spot] request \(width)×\(height)×\(frames)f bf16 · profile=max128 · lora=i2v-adapter")
+        profile: profile)
+    print("[i2v-spot] request \(width)×\(height)×\(frames)f \(quantName) · profile=\(profile.rawValue) · lora=i2v-adapter")
 
     // Prewarm off the config's own `prewarmPaths` (dirs → their safetensors) + the LoRA file,
     // mirroring the engine's WeightPrewarmer so the cold load can't trip the Metal watchdog.
@@ -1149,6 +1176,17 @@ if args.contains("--connector-gate") {
                              width: ints.count > 0 ? ints[0] : 704,
                              height: ints.count > 1 ? ints[1] : 512,
                              frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--lora-quant-gate") {
+    // BRIDGE-LTX-012 fidelity gate: packed-factor delta vs full precision on the real adapter.
+    let bits = positional.compactMap { Int($0) }.first ?? 8
+    let path = positional.first { Int($0) == nil }
+        ?? "/Volumes/DEV_ARCHIVE/weights/ltx-lora-cache/i2v-adapter.safetensors"
+    let (worst, mean) = try LTX2LoRA.factorQuantFidelity(
+        url: URL(fileURLWithPath: path), bits: bits, sample: 48)
+    print(String(format: "[lora-quant-gate] bits=%d sample=48  worst cos=%.6f  mean cos=%.6f", bits, worst, mean))
+    let pass = worst >= 0.999
+    print(pass ? "[lora-quant-gate] PASS ✅" : "[lora-quant-gate] FAIL ❌")
+    if !pass { exit(1) }
 } else if args.contains("--i2v-spot") {
     let ints = positional.compactMap { Int($0) }
     try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,

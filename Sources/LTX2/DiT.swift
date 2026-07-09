@@ -315,7 +315,15 @@ public struct DiT {
         // scale already baked into B. Added in the activation path (survives bf16/q8/q4 — factors
         // stay full precision); no-op when no adapter is registered for this prefix.
         if let ad = lora.adapters[prefix] {
-            y = y + x.matmul(ad.a).matmul(ad.b)
+            switch ad {
+            case .plain(let a, let b):
+                y = y + x.matmul(a).matmul(b)
+            case .quantized(let aw, let aS, let aB, let bw, let bS, let bB, let bits):
+                let h = MLX.quantizedMatmul(x, aw, scales: aS, biases: aB,
+                                            transpose: true, groupSize: 64, bits: bits)
+                y = y + MLX.quantizedMatmul(h, bw, scales: bS, biases: bB,
+                                            transpose: true, groupSize: 64, bits: bits)
+            }
         }
         return y
     }
