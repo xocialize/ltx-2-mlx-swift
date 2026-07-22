@@ -10,10 +10,18 @@
 // `ltx-2.3-swift-port-active` and EngineeringDocs/apple_native_berlini_opportunities.md.
 //
 // Gemma text encoder = REUSE of mlx-swift-lm's Gemma3TextModel (Path A). The
-// 49-layer hidden-state extraction needs an `allHiddenStates` method that the
-// stock model doesn't expose, added in our fork
-// (github.com/xocialize/mlx-swift-lm @ ltx/gemma-all-hidden-states) — wired here
-// as a local path dep during development.
+// 49-layer hidden-state extraction lives in THIS package
+// (Sources/LTX2/Gemma3+AllHiddenStates.swift), written against the official
+// `@_spi(GemmaEncoder)` surface upstream merged in ml-explore/mlx-swift-lm#387
+// (2026-07-21, `6608a35`). No mlx-swift-lm patch is carried any more — the
+// checkout at ../mlx-swift-lm is a plain upstream revision, not a fork.
+//
+// ⚠️ TRANSITIONAL PIN. No mlx-swift-lm RELEASE TAG contains #387 yet (latest is
+// 3.31.4, 2026-06-30, which predates the merge), so this is still a local path
+// dep pointing at an upstream-`main` checkout. A main-SHA pin is less stable
+// than a tag: DO NOT cut or ship an LTX release off this. When a tag ships,
+// adoption is the ONE-LINE edit marked below — nothing else in this package
+// changes, because the tap no longer depends on any local patch.
 
 import PackageDescription
 
@@ -29,7 +37,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMinor(from: "0.31.3")),
-        // Fork with the Gemma `allHiddenStates` text-encoder extension.
+        // ⬇️ THE ONE-LINE SWAP: replace with
+        //      .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "<tag>")
+        //    once a release tag containing #387 (`6608a35`) exists. Carries no local
+        //    patches — ../mlx-swift-lm is checked out at plain upstream `main`.
         .package(path: "../mlx-swift-lm"),
         // mlx-swift-lm 3.x decoupled the HF stack — the consumer provides these for
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
@@ -67,7 +78,8 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
-                // Gemma 3 text encoder (Path A reuse) + the allHiddenStates seam.
+                // Gemma 3 text encoder (Path A reuse). The allHiddenStates tap is ours
+                // (Sources/LTX2/Gemma3+AllHiddenStates.swift) via @_spi(GemmaEncoder).
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "MLXHuggingFace", package: "mlx-swift-lm"),

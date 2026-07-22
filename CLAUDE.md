@@ -8,7 +8,8 @@ in the parent [`../CLAUDE.md`](../CLAUDE.md)** (auto-loads) — don't duplicate 
 | File | What | Gate |
 |---|---|---|
 | `RoPE.swift` | split-type RoPE (log-spaced freq grid, fractional positions) — shared by connector + DiT | (via others) |
-| `GemmaEncoder.swift` | Gemma-3 load (mlx-swift-lm fork) + 49-state extraction + tokenize | `--gemma-gate` |
+| `GemmaEncoder.swift` | Gemma-3 load (stock mlx-swift-lm) + combined causal+padding mask + tokenize | `--gemma-gate` |
+| `Gemma3+AllHiddenStates.swift` | the 49-state encoder tap itself — uniform mask on every layer, per-layer `eval` (watchdog), per-layer `Task.checkCancellation()`. Ours, via `@_spi(GemmaEncoder) import MLXLLM` | `--gemma-gate` |
 | `Connector.swift` | `GemmaFeaturesExtractorV2` + `Embeddings1DConnector` (49-layer RMS, dual project, gated attn, GEGLU, registers) — **fp32** | `--connector-gate` |
 | `DiT.swift` | joint-AV Diffusion Transformer (48 blocks, AdaLN ×4 kinds, self/text-cross/AV-cross attn) — **bf16**. Quant-aware `dense()` (q8/q4, bits auto). Optional **per-token timesteps** (i2v). | `--dit-tiny`, `--dit-full`, `--dit-q8`, `--dit-q4`, `--dit-pertoken` |
 | `DenoiseLoop.swift` | distilled Euler (X0Model + euler_step). `run` = uniform-mask t2v; **`runConditioned`** = i2v (per-token σ + clean-latent re-blend) | `--denoise-gate` (+ i2v via `--dit-pertoken`) |
@@ -30,8 +31,13 @@ parity-gate CLI. `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 - Cores are functional (`[String: MLXArray]` + explicit ops keyed by oracle weight-key strings);
   fp32 except the DiT (bf16). New component → port from oracle → `parity/dump_*` golden →
   `RunLTX2 --*-gate` (cosine ≥0.999) → commit.
-- `mlx-swift-lm` is a **local path-dep** (`../mlx-swift-lm`, the Gemma fork). Goldens are
-  gitignored + regenerable.
+- `mlx-swift-lm` is a **local path-dep** (`../mlx-swift-lm`) checked out at plain **upstream
+  `main`** — no fork, no local patches (upstream #387 / `6608a35` exposes `@_spi(GemmaEncoder)`;
+  the tap is ours). **Transitional**: no release tag contains #387 yet, so don't ship off this
+  pin; adopting a tag is a one-line `Package.swift` edit. Goldens are gitignored + regenerable —
+  `parity/dump_text_encode_goldens.py` writes both the `.npy` set and the packed
+  `goldens.safetensors` the Swift gates read. **Page the weights in first**
+  (`cat <model>/*.safetensors > /dev/null`) or the oracle dump trips the GPU watchdog.
 - **Repo is Apache-2.0 and published** (`xocialize/ltx-2-mlx-swift`) — the port code is our own
   implementation (license stance reversed 2026-06-16, see `../CLAUDE.md` §License). **Never commit**
   the converted weights or `parity/goldens/` — those are LTX-2 weight-derivatives (Community-licensed)

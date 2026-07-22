@@ -89,9 +89,17 @@ checkpoint exists). `nil` profile = unconstrained legacy behavior.
 
 ## Build / gates
 
-Depends on the [`xocialize/mlx-swift-lm`](https://github.com/xocialize/mlx-swift-lm) fork
-(branch `ltx/gemma-all-hidden-states`, the `allHiddenStates` text-encoder seam) as a local
-path dep at `../mlx-swift-lm`.
+Depends on [`ml-explore/mlx-swift-lm`](https://github.com/ml-explore/mlx-swift-lm) as a local
+path dep at `../mlx-swift-lm`, checked out at plain upstream `main` — **no fork, no local
+patches**. The 49-layer `allHiddenStates` tap lives in this package
+(`Sources/LTX2/Gemma3+AllHiddenStates.swift`) and is written against the official
+`@_spi(GemmaEncoder)` surface upstream merged in
+[#387](https://github.com/ml-explore/mlx-swift-lm/pull/387) (`6608a35`, 2026-07-21).
+
+> ⚠️ **Transitional pin.** No mlx-swift-lm release tag contains #387 yet (latest is 3.31.4,
+> which predates the merge), so the dep is still a path dep on a `main` checkout. A main-SHA
+> pin is less stable than a tag — don't cut an LTX release off it. When a tag ships, adoption
+> is a one-line `Package.swift` edit and nothing else changes.
 
 ```bash
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer

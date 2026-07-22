@@ -1,8 +1,9 @@
 // GemmaEncoder.swift — Gemma 3 12B as a frozen text encoder (Path A reuse).
 //
-// Reuses mlx-swift-lm's `Gemma3TextModel` (loader + dual-RoPE sliding/global
-// attention already done & parity-tested) and our `allHiddenStates` fork
-// extension. Mirrors the oracle ltx_core_mlx .../gemma/encoders/base_encoder.py
+// Reuses stock mlx-swift-lm's `Gemma3TextModel` (loader + dual-RoPE sliding/global
+// attention already done & parity-tested); the 49-state tap itself is ours, in
+// `Gemma3+AllHiddenStates.swift`, via the upstream `@_spi(GemmaEncoder)` surface.
+// Mirrors the oracle ltx_core_mlx .../gemma/encoders/base_encoder.py
 // `GemmaLanguageModel.get_all_hidden_states`: embed·√h + all 48 layers under a
 // SINGLE uniform combined causal+padding mask → 49 hidden states.
 
@@ -56,8 +57,9 @@ public struct GemmaEncoder {
     }
 
     /// 49 hidden states (embed + 48 layers), each (B, T, 3840). Throws `CancellationError`
-    /// between layers (fork ≥ 3.31.4+2) — a quit/Cancel during the encode forward now stops
-    /// within ~one layer instead of riding out the whole 12B pass (MVP M2 finding).
+    /// between layers — a quit/Cancel during the encode forward stops within ~one layer
+    /// instead of riding out the whole 12B pass (MVP M2 finding). See
+    /// ``Gemma3Model/allHiddenStates(_:mask:)``.
     public func allHiddenStates(tokenIds: MLXArray, attentionMask: MLXArray) throws -> [MLXArray] {
         let mask = GemmaEncoder.combinedMask(attentionMask: attentionMask)
         return try model.allHiddenStates(tokenIds.asType(.int32), mask: .array(mask))

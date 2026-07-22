@@ -18,7 +18,15 @@ import LTX2
 import MLXLTX2
 import MLXToolKit
 
-let defaultGoldens = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors"
+// Derived from this source file's location (Sources/RunLTX2/main.swift → package root)
+// so the gates keep working when the tree is relocated — the old absolute path went
+// stale when LTX_DEV moved off ~/Development.
+let packageRoot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()   // Sources/RunLTX2
+    .deletingLastPathComponent()   // Sources
+    .deletingLastPathComponent()   // <package root>
+let defaultGoldens = packageRoot
+    .appendingPathComponent("parity/goldens/text_encode/goldens.safetensors").path
 let defaultConnector = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/connector.safetensors"
 let defaultGemma = "/Volumes/DEV_ARCHIVE/models/mlx-community/gemma-3-12b-it-4bit"
 

@@ -72,6 +72,19 @@ def main() -> None:
     np.save(OUT_DIR / "video_embeds.npy", _np(video_embeds))
     np.save(OUT_DIR / "audio_embeds.npy", _np(audio_embeds))
 
+    # Packed form — this is what the Swift side actually reads (`RunLTX2 --gemma-gate`,
+    # `--connector-gate`, `--text-encode-gate`) and what the downstream dit_full / e2e_t2v
+    # dumpers open as `TE`. Same arrays as the .npy set above, one file.
+    packed = {
+        "token_ids": token_ids.astype(mx.int32),
+        "attention_mask": attention_mask.astype(mx.int32),
+        "video_embeds": video_embeds.astype(mx.float32),
+        "audio_embeds": audio_embeds.astype(mx.float32),
+    }
+    for i, s in enumerate(states):
+        packed[f"gemma_hidden_{i:02d}"] = s.astype(mx.float32)
+    mx.save_safetensors(str(OUT_DIR / "goldens.safetensors"), packed)
+
     meta = {
         "prompt": PROMPT,
         "max_length": MAX_LENGTH,
