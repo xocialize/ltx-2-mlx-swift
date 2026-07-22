@@ -27,6 +27,7 @@ let packageRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()   // <package root>
 let defaultGoldens = packageRoot
     .appendingPathComponent("parity/goldens/text_encode/goldens.safetensors").path
+let goldensBase = packageRoot.appendingPathComponent("parity/goldens").path
 let defaultConnector = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/connector.safetensors"
 let defaultGemma = "/Volumes/DEV_ARCHIVE/models/mlx-community/gemma-3-12b-it-4bit"
 
@@ -163,7 +164,7 @@ func tinyDiTConfig() -> DiTConfig {
 
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_tiny"
+    let dir = "\(goldensBase)/dit_tiny"
     let weights = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/weights.safetensors"))
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[dit-tiny-gate] \(weights.count) weight tensors")
@@ -184,7 +185,7 @@ func ditTinyGate() throws {
 
 /// Full-scale DiT parity: real distilled transformer (bf16) vs oracle goldens.
 func ditFullGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full"
+    let dir = "\(goldensBase)/dit_full"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[dit-full-gate] loading real distilled transformer (bf16)…")
@@ -205,7 +206,7 @@ func ditFullGate() throws {
 
 /// Video VAE decode parity: latent → pixels vs oracle golden (fp32).
 func vaeDecodeGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vae_decode"
+    let dir = "\(goldensBase)/vae_decode"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
@@ -220,7 +221,7 @@ func vaeDecodeGate() throws {
 
 /// Video VAE encode parity: pixels → latent vs oracle golden (fp32).
 func vaeEncodeGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vae_encode"
+    let dir = "\(goldensBase)/vae_encode"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_encoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
@@ -236,8 +237,8 @@ func vaeEncodeGate() throws {
 /// Distilled denoise-loop parity (tiny scale): reuse the dit_tiny weights, run the
 /// Euler loop over a short sigma schedule, compare final latents to the oracle.
 func denoiseGate() throws {
-    let tinyW = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_tiny/weights.safetensors"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_denoise"
+    let tinyW = "\(goldensBase)/dit_tiny/weights.safetensors"
+    let dir = "\(goldensBase)/dit_denoise"
     let weights = try MLX.loadArrays(url: URL(fileURLWithPath: tinyW))
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dit = DiT(weights: weights, config: tinyDiTConfig())
@@ -262,8 +263,8 @@ func denoiseGate() throws {
 /// Case a: strength 1.0, downscale 2 (position scaling); case b: strength 0.7, downscale 1
 /// (partial denoise mask → per-token σ at reference tokens).
 func icTinyGate() throws {
-    let tinyW = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_tiny/weights.safetensors"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/ic_tiny"
+    let tinyW = "\(goldensBase)/dit_tiny/weights.safetensors"
+    let dir = "\(goldensBase)/ic_tiny"
     let weights = try MLX.loadArrays(url: URL(fileURLWithPath: tinyW))
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dit = DiT(weights: weights, config: tinyDiTConfig())
@@ -333,7 +334,7 @@ func icIngestGate() throws {
         }
     }
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/ic_ingest"
+    let dir = "\(goldensBase)/ic_ingest"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dims = io["dims"]!.asArray(Float.self)
     let (F, H, W) = (Int(dims[0]), Int(dims[1]), Int(dims[2]))
@@ -355,7 +356,7 @@ func icIngestGate() throws {
 /// End-to-end one-stage t2v parity (real weights): noise → denoise → unpatchify → VAE decode.
 func e2eGate() throws {
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/e2e_t2v"
+    let dir = "\(goldensBase)/e2e_t2v"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[e2e-gate] loading real DiT (bf16) + VAE decoder…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: "\(base)/transformer-distilled.safetensors"), config: DiTConfig(), computeDtype: .bfloat16)
@@ -387,7 +388,7 @@ func e2eGate() throws {
 
 /// Audio VAE decode parity: audio latent → mel vs oracle golden (fp32).
 func audioVaeDecodeGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/audio_vae_decode"
+    let dir = "\(goldensBase)/audio_vae_decode"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dec = try AudioVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
@@ -403,7 +404,7 @@ func audioVaeDecodeGate() throws {
 /// Audio VAE encode parity (IC-LORA-PLAN P3b, LipDub): waveform → mel → latent vs oracle
 /// golden (fp32), + the LipDub patchify/negative-positions helper on the golden latent.
 func audioVaeEncodeGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/audio_vae_encode"
+    let dir = "\(goldensBase)/audio_vae_encode"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try AudioVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
@@ -439,7 +440,7 @@ func audioVaeEncodeGate() throws {
 
 /// Vocoder+BWE parity: mel → 48kHz waveform vs oracle golden (fp32).
 func vocoderGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vocoder"
+    let dir = "\(goldensBase)/vocoder"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vocoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let voc = try Vocoder.load(path: URL(fileURLWithPath: weightsPath))
@@ -456,7 +457,7 @@ func vocoderGate() throws {
 /// Mirrors LTX2Pipeline.decodeAudio without loading the full pipeline.
 func audioDecodeGate() throws {
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/audio_decode"
+    let dir = "\(goldensBase)/audio_decode"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let audioVAE = try AudioVAEDecoder.load(path: URL(fileURLWithPath: "\(base)/audio_vae.safetensors"))
     let voc = try Vocoder.load(path: URL(fileURLWithPath: "\(base)/vocoder.safetensors"))
@@ -474,7 +475,7 @@ func audioDecodeGate() throws {
 
 /// Spatial-x2 upsampler parity: latent → 2×-spatial latent vs oracle golden (fp32).
 func upsamplerGate() throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/upsampler"
+    let dir = "\(goldensBase)/upsampler"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/spatial_upscaler_x2_v1_1.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let up = try Upsampler.load(path: URL(fileURLWithPath: weightsPath))
@@ -490,7 +491,7 @@ func upsamplerGate() throws {
 /// Two-stage upscale-step parity: half-res latent → denorm → upsample → renorm vs oracle.
 func upscaleStepGate() throws {
     let base = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx"
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/upscale_step"
+    let dir = "\(goldensBase)/upscale_step"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: "\(base)/vae_encoder.safetensors"))
     let up = try Upsampler.load(path: URL(fileURLWithPath: "\(base)/spatial_upscaler_x2_v1_1.safetensors"))
@@ -506,7 +507,7 @@ func upscaleStepGate() throws {
 /// q8 DiT parity: int8-quantized transformer (bf16 activations) vs oracle q8 golden.
 func ditQ8Gate() throws {
     let q8 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx-q8/transformer-distilled.safetensors"
-    let base = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q8/io.safetensors"))     // q8 outputs
     print("[dit-q8-gate] loading int8 transformer…")
@@ -529,7 +530,7 @@ func ditQ8Gate() throws {
 /// checks Swift-q4-forward == oracle-q4-forward on identical q4 weights (so the bar stays 0.999).
 func ditQ4Gate() throws {
     let q4 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx-q4/transformer-distilled.safetensors"
-    let base = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q4/io.safetensors"))     // q4 outputs
     print("[dit-q4-gate] loading int4 transformer…")
@@ -552,7 +553,7 @@ func ditQ4Gate() throws {
 /// timesteps + expected outputs come from the dit_pertoken fixture.
 func ditPerTokenGate() throws {
     let bf16 = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
-    let base = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens"
+    let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))       // base inputs
     let pt = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_pertoken/io.safetensors"))   // timesteps + outputs
     print("[dit-pertoken-gate] loading bf16 transformer…")
@@ -576,7 +577,7 @@ func ditPerTokenGate() throws {
 ///   2. apply LoRA → output changes, stays finite (cosine < 1 vs base, no NaN)
 ///   3. detach → output restores to the base exactly
 func loraGate(loraPath: String) throws {
-    let dir = "/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full"
+    let dir = "\(goldensBase)/dit_full"
     let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[lora-gate] lora: \(loraPath)")
