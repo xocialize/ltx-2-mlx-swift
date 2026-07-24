@@ -72,9 +72,11 @@ final class MaterializationTests: XCTestCase {
         let cfg = LTX2Configuration()   // bf16: components (incl. transformer) + gemma
         // Empty store: everything missing.
         XCTAssertEqual(cfg.missingWeightSources(storeRoot: root).count, 2)
-        // Populate the expected layout.
-        let ltxDir = root.appending(path: "dgrauet/ltx-2.3-mlx")
-        let gemmaDir = root.appending(path: "mlx-community/gemma-3-12b-it-4bit")
+        // Populate the expected layout — paths from ModelStore so the fixture tracks the
+        // engine's canonical models--org--name layout (contract 1.22.0), not a stale literal.
+        let store = ModelStore(root: root)
+        let ltxDir = store.directory(for: "dgrauet/ltx-2.3-mlx")!
+        let gemmaDir = store.directory(for: "mlx-community/gemma-3-12b-it-4bit")!
         try FileManager.default.createDirectory(at: ltxDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: gemmaDir, withIntermediateDirectories: true)
         for f in LTX2Configuration.componentFiles + ["transformer-distilled.safetensors"] {
@@ -90,7 +92,8 @@ final class MaterializationTests: XCTestCase {
         // Quant resolution derives the transformer path from the quant repo.
         let q8 = LTX2Configuration(quant: .int8).resolved(storeRoot: root)
         XCTAssertEqual(q8.transformerPath?.path,
-                       root.appending(path: "dgrauet/ltx-2.3-mlx-q8/transformer-distilled.safetensors").path)
+                       store.directory(for: "dgrauet/ltx-2.3-mlx-q8")!
+                           .appending(path: "transformer-distilled.safetensors").path)
     }
 
     func testPrewarmPathsUseResolvedStoreLayout() {
@@ -98,9 +101,10 @@ final class MaterializationTests: XCTestCase {
         let cfg = LTX2Configuration(modelsRootDirectory: root)
         // Nil dirs + store root ⇒ prewarm targets the resolved store layout (files may not exist
         // yet on a true first run — the prewarmer is best-effort).
+        let store = ModelStore(root: root)
         let paths = cfg.prewarmPaths.map(\.path)
-        XCTAssertTrue(paths.contains(root.appending(path: "dgrauet/ltx-2.3-mlx").path))
-        XCTAssertTrue(paths.contains(root.appending(path: "mlx-community/gemma-3-12b-it-4bit").path))
+        XCTAssertTrue(paths.contains(store.directory(for: "dgrauet/ltx-2.3-mlx")!.path))
+        XCTAssertTrue(paths.contains(store.directory(for: "mlx-community/gemma-3-12b-it-4bit")!.path))
     }
 
     func testCodableRoundTripCarriesRepos() throws {

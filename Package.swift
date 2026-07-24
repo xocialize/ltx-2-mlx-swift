@@ -63,7 +63,11 @@ let package = Package(
         //  • 0.27.0 added the CAN gate (`CancellationConformance`, CAN-1..3): entry checkpoint
         //    first act of run(), no laundering, cadence declared in Tests/CancellationTests.swift
         //    (the LTX-proven per-step/per-chunk placements, RunProgress-evidenced).
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.27.0"),
+        //  • 0.32.0 (contract 1.24.0) moved first-run materialization ENGINE-side: resident()/
+        //    prepare() downloads a WeightSourcing configuration's missing sources before load()
+        //    runs, replacing this package's own WeightMaterializer (the original of the four
+        //    per-package copies). load() now only resolves directories off the store.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.32.0"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not

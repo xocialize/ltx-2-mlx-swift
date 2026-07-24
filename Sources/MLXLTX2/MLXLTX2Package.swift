@@ -112,9 +112,10 @@ public final class MLXLTX2Package: ModelPackage {
     public func load() async throws {
         guard pipeline == nil else { return }
         // Auto-materialization (BRIDGE M4): nil directories resolve to the engine ModelStore
-        // layout, downloading missing declared sources first (progress reaches the engine's
-        // PreparationMonitor via WeightDownloadProgress). Explicit directories always win and
-        // never touch the network — the DEV_ARCHIVE flows are unchanged.
+        // layout. The DOWNLOAD is engine-executed since mlx-engine-swift 0.32.0 (contract
+        // 1.24.0) — resident()/prepare() fetches the missing declared sources before load()
+        // runs — so this only resolves directories off the store. Explicit directories always
+        // win and never touch the network; the DEV_ARCHIVE flows are unchanged.
         var cfg = configuration
         if cfg.ltxDirectory == nil || cfg.gemmaDirectory == nil
             || (cfg.transformerPath == nil && cfg.effectiveTransformerRepo != nil) {
@@ -122,10 +123,6 @@ public final class MLXLTX2Package: ModelPackage {
                 throw PackageError.configurationMismatch(
                     expected: "explicit weight directories OR an engine model store (useModelStore)",
                     got: "no ltxDirectory/gemmaDirectory and no modelsRootDirectory")
-            }
-            let missing = cfg.missingWeightSources(storeRoot: root)
-            if !missing.isEmpty {
-                try await WeightMaterializer.materialize(missing, into: root)
             }
             cfg = cfg.resolved(storeRoot: root)
         }
