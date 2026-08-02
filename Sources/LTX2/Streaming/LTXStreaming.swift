@@ -17,7 +17,7 @@
 
 import Foundation
 import MLX
-import BlockStreamKit
+@_exported import BlockStreamKit
 
 /// Re-exported so gates/consumers keep one import.
 public typealias BlockStreamingOptions = BlockStreamKit.BlockStreamingOptions
