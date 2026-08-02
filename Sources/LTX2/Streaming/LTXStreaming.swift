@@ -138,9 +138,20 @@ public final class LTXBlockStreamer: @unchecked Sendable {
         let prefix = modelBlockPrefix
         let store = DiTWeightStore(w: [:])
 
+        // Two provenance regimes: with the source checkpoint present, v1-style
+        // source-file/size validation; without it (a HOSTED v2 tree — manifest
+        // v2's whole point), the sidecar serves globals and integrity comes
+        // from the manifest hashes (`verifyIntegrity()` post-download).
+        let checkpointPresent = FileManager.default.fileExists(atPath: checkpoint.path)
+        if !checkpointPresent, core.manifest.globals == nil {
+            throw BlockStreamError.contract(
+                "checkpoint \(checkpoint.lastPathComponent) absent and the granule tree "
+                    + "has no globals sidecar (v1) — one of the two is required")
+        }
+
         let blocks = try core.bind(
             computeDtype: computeDtype,
-            provenanceCheckpoint: checkpoint,
+            provenanceCheckpoint: checkpointPresent ? checkpoint : nil,
             installResident: { [weak store] i, pairs in
                 // .auto fallback: swap the dict entries for block i resident.
                 guard let store else { return }
@@ -157,13 +168,12 @@ public final class LTXBlockStreamer: @unchecked Sendable {
             }
         }
 
-        // Globals: resident load off the checkpoint, CPU stream (cold-load
-        // watchdog discipline), same strip + quant-aware cast as `DiT.init`.
-        let globalSet = Set(core.manifest.globalKeys)
-        let globals = try Device.withDefaultDevice(.cpu) {
-            let all = try MLX.loadArrays(url: checkpoint)
+        // Globals: from the checkpoint when present (CPU stream — cold-load
+        // watchdog discipline), else the v2 sidecar. Either way, the same
+        // strip + quant-aware cast as `DiT.init`.
+        func stripAndCast(_ raw: [(String, MLXArray)]) -> [String: MLXArray] {
             var picked: [String: MLXArray] = [:]
-            for (k, v) in all where globalSet.contains(k) {
+            for (k, v) in raw {
                 let stripped =
                     k.hasPrefix("transformer.") ? String(k.dropFirst("transformer.".count)) : k
                 picked[stripped] = v
@@ -177,6 +187,18 @@ public final class LTXBlockStreamer: @unchecked Sendable {
             }
             eval(Array(picked.values))
             return picked
+        }
+        let globals: [String: MLXArray]
+        if checkpointPresent {
+            let globalSet = Set(core.manifest.globalKeys)
+            globals = try Device.withDefaultDevice(.cpu) {
+                let all = try MLX.loadArrays(url: checkpoint)
+                return stripAndCast(all.filter { globalSet.contains($0.key) }.map { ($0, $1) })
+            }
+        } else {
+            globals = try Device.withDefaultDevice(.cpu) {
+                stripAndCast(try core.loadGlobalTensors())
+            }
         }
         for (k, v) in globals { w[k] = v }
 
