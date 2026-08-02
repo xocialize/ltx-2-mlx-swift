@@ -5,9 +5,15 @@
 // substrate (Gemma-3 text encoder, 128-ch VAE, joint-AV DiT, BigVGAN+BWE audio)
 // — NOT a wan-core consumer.
 //
-// LICENSE POSTURE: LTX-2 Community License → EVAL-ONLY GATED SPECIALTY. Not
-// shippable; never wired into a commercial product. See the memory note
-// `ltx-2.3-swift-port-active` and EngineeringDocs/apple_native_berlini_opportunities.md.
+// LICENSE POSTURE (reversed 2026-06-16 — permitted by default): TWO LAYERS.
+// Weights = LTX-2 Community License, on the engine `permissiveAllowlist` since
+// mlx-engine-swift 0.6.0 → admitted by the default `MLXServeEngine()`. Port code
+// = Apache-2.0 (Lightricks license their OWN inference code Apache-2.0, so
+// inference code is not a §3 weight-derivative); repo published to
+// xocialize/ltx-2-mlx-swift. Distribution ≠ admission: the weights' §2 revenue
+// gate + §A.20 non-compete still bind anyone SHIPPING output. Converted weights
+// and parity/goldens/ are weight-derivatives — gitignored, never committed.
+// Authoritative: ../CLAUDE.md §License.
 //
 // Gemma text encoder = REUSE of mlx-swift-lm's Gemma3TextModel (Path A). The
 // 49-layer hidden-state extraction lives in THIS package
