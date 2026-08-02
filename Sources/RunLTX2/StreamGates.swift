@@ -121,7 +121,7 @@ func streamTinyGate(scratch: String) throws {
 
     let granuleDir = URL(fileURLWithPath: "\(scratch)/ltx-stream-tiny-granules")
     try? FileManager.default.removeItem(at: granuleDir)
-    let result = try GranuleLayout.write(
+    let result = try LTXGranuleLayout.write(
         safetensors: weightsURL, outputDir: granuleDir, blockPrefix: blockPrefix)
     let blockCount = result.manifest.blockCount
     print("[stream-tiny-gate] laid out \(blockCount) blocks, "

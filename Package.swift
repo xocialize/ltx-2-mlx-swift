@@ -68,6 +68,11 @@ let package = Package(
         //    runs, replacing this package's own WeightMaterializer (the original of the four
         //    per-package copies). load() now only resolves directories off the store.
         .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.32.0"),
+        // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
+        // extracted from this package's in-tree implementation (and wan-core's) once the
+        // second consumer pinned the seam. Path dep like ../mlx-swift-lm (sibling checkout);
+        // flips to a versioned dep when the kit repo publishes + tags.
+        .package(path: "../mlx-block-stream-swift"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
@@ -90,6 +95,7 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
                 .product(name: "MLXProfiling", package: "mlx-profiling"),
+                .product(name: "BlockStreamKit", package: "mlx-block-stream-swift"),
             ],
             path: "Sources/LTX2"
         ),

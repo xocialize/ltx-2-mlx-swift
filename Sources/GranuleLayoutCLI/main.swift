@@ -19,10 +19,10 @@ guard args.count >= 2 else {
 }
 let source = URL(fileURLWithPath: Array(args)[0])
 let outDir = URL(fileURLWithPath: Array(args)[1])
-let prefix = args.count >= 3 ? Array(args)[2] : GranuleLayout.ltxBlockPrefix
+let prefix = args.count >= 3 ? Array(args)[2] : LTXGranuleLayout.ltxBlockPrefix
 
 do {
-    let result = try GranuleLayout.write(
+    let result = try LTXGranuleLayout.write(
         safetensors: source, outputDir: outDir, blockPrefix: prefix
     ) { done, total in
         print(String(format: "[ltx-granule-layout] block %3d/%d", done, total))
