@@ -134,6 +134,10 @@ public final class MLXLTX2Package: ModelPackage {
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
                                                transformerPath: cfg.transformerPath,
                                                vaeDecoderPath: cfg.vaeDecoderPath)
+        // HV2 opt-in (STREAMING-PLAN.md): stream DiT blocks from the granule tree for the
+        // configured quant. The streamer's .auto gate still falls back resident when this
+        // machine/request's arithmetic doesn't clear — output-invisibly.
+        pipeline?.streamingGranuleDirectory = configuration.resolvedGranuleDirectory
 
         // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
         // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).

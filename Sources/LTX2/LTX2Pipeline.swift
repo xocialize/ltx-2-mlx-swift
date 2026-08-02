@@ -36,6 +36,35 @@ public final class LTX2Pipeline {
     /// profile; `LTX_EVICT_DIT=1/0` overrides for measurement).
     public var evictDiTBeforeDecode = false
 
+    /// HV2 weight streaming (STREAMING-PLAN.md): when set, `ensureDiT` builds the DiT with
+    /// slot-backed blocks refilled from this granule tree instead of loading them resident
+    /// (set by the wrapper from `LTX2Configuration.resolvedGranuleDirectory`, or
+    /// `LTX_STREAM_GRANULES=<dir>` overrides for measurement). The self-calibrating gate
+    /// falls back resident automatically when the arithmetic doesn't clear; each entry point
+    /// arms `gateEvaluationThresholdTokens` with its LARGEST stage's token count so a
+    /// half-res stage-1 forward never condemns a run whose stage 2 would stream.
+    public var streamingGranuleDirectory: URL?
+    /// Streaming knobs (group size, gate policy/margin) — wrapper- or harness-set.
+    public var streamingOptions = BlockStreamingOptions()
+
+    private var effectiveGranuleDirectory: URL? {
+        if let env = ProcessInfo.processInfo.environment["LTX_STREAM_GRANULES"] {
+            return env.isEmpty ? nil : URL(fileURLWithPath: env)
+        }
+        return streamingGranuleDirectory
+    }
+
+    /// Arm the streamer's gate threshold for the request being run (no-op when resident).
+    private func armStreamingGate(largestStageTokens: Int) {
+        ditStorage?.blockStreamer?.gateEvaluationThresholdTokens = largestStageTokens
+    }
+
+    /// Stop the refill thread between the denoise and decode phases (slots and bindings
+    /// stay; the next request's first forward re-activates IO).
+    private func quiesceStreaming() {
+        ditStorage?.blockStreamer?.finish()
+    }
+
     /// Pack runtime-LoRA factors to int8/int4 at apply (set by the wrapper from the tier profile;
     /// `LTX_LORA_QUANT=8|4|0` overrides for measurement). nil = full-precision factors.
     public var loraFactorQuantBits: Int?
@@ -57,8 +86,20 @@ public final class LTX2Pipeline {
     func ensureDiT() throws -> DiT {
         if let d = ditStorage { return d }
         let span = MLXProfiler.shared.begin("load", "dit-reload")
-        let d = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
+        let d: DiT
+        if let granuleDir = effectiveGranuleDirectory {
+            // Streamed blocks: slots + globals only. A reload after an evict
+            // re-binds fresh slots (the granule tree is the weight source; the
+            // checkpoint provenance-gates it and provides the 58 globals).
+            let streamer = try LTXBlockStreamer(granuleDir: granuleDir, options: streamingOptions)
+            d = try DiT(
+                streaming: streamer, checkpoint: ditPath, config: DiTConfig(),
+                computeDtype: .bfloat16)
+        } else {
+            d = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
+        }
         if !didWarmup { d.warmup(); didWarmup = true }   // kernels are per-process; once is enough
+        // (streamed: the warmup sweep doubles as S calibration, gate suspended inside warmup)
         if !activeLoRASpec.isEmpty { try LTX2LoRA.apply(activeLoRASpec, to: d, factorQuantBits: effectiveLoRAQuantBits) }
         MLXProfiler.shared.end(span)
         ditStorage = d
@@ -384,11 +425,14 @@ public final class LTX2Pipeline {
         let audioPositions = Positions.audio(tokens: audioT)
 
         // 4. Distilled Euler denoise (joint video + audio) — the memory peak (DiT only resident).
+        let dit = try ensureDiT()
+        armStreamingGate(largestStageTokens: nv + audioT)  // one-stage: this IS the largest
         let (vfinal, afinal) = try DenoiseLoop.run(
-            dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
+            dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions, label: "")
         eval(vfinal, afinal)
+        quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
@@ -444,6 +488,8 @@ public final class LTX2Pipeline {
         if let seed { MLXRandom.seed(seed) }
         let videoLatent = MLXRandom.normal([1, nv, 128])
         let audioLatent = MLXRandom.normal([1, audioT, 128])
+        _ = try ensureDiT()
+        armStreamingGate(largestStageTokens: nv + audioT)  // one-stage i2v
         let (vfinal, afinal) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
@@ -451,6 +497,7 @@ public final class LTX2Pipeline {
             audioPositions: Positions.audio(tokens: audioT),
             videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
         eval(vfinal, afinal)
+        quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         // 6. Decode
@@ -600,6 +647,11 @@ public final class LTX2Pipeline {
         let hLat1 = hHalf / 32, wLat1 = wHalf / 32, nv1 = fLat * hLat1 * wLat1
         let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
         let a1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, audioT, 128]), sigma: 1.0, shape: [1, audioT, 128], seed: seed.map { $0 &+ 1 })
+        _ = try ensureDiT()
+        // Two-stage: gate on STAGE 2's tokens — stage 1 streams at the IO floor
+        // rather than condemning a run whose full-res stage would stream
+        // (STREAMING-PLAN §4).
+        armStreamingGate(largestStageTokens: nv2 + audioT)
         let (v1f, a1f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
@@ -628,6 +680,7 @@ public final class LTX2Pipeline {
             videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT), label: "s2-", stage: 2, totalStages: 2)
         eval(v2f, a2f)
+        quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)

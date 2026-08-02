@@ -107,6 +107,14 @@ let package = Package(
             path: "Sources/MLXLTX2",
             resources: [.process("Resources")]  // ltx-lora-registry.json → Bundle.module
         ),
+        // HV2 weight streaming: lays a transformer checkpoint out as per-block
+        // granule files for LTXBlockStreamer (STREAMING-PLAN.md). The layout code
+        // itself lives in LTX2 (Sources/LTX2/Streaming/); this is the thin CLI.
+        .executableTarget(
+            name: "ltx-granule-layout",
+            dependencies: ["LTX2"],
+            path: "Sources/GranuleLayoutCLI"
+        ),
         .executableTarget(
             name: "RunLTX2",
             dependencies: [

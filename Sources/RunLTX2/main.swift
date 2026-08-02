@@ -1296,6 +1296,21 @@ if args.contains("--connector-gate") {
     let pass = worst >= 0.999
     print(pass ? "[lora-quant-gate] PASS ✅" : "[lora-quant-gate] FAIL ❌")
     if !pass { exit(1) }
+} else if args.contains("--stream-tiny-gate") {
+    // HV2 streaming gates (StreamGates.swift; STREAMING-PLAN.md)
+    try streamTinyGate(scratch: NSTemporaryDirectory())
+} else if args.contains("--stream-parity-gate") {
+    try streamParityGate(quant: positional.first ?? "bf16")
+} else if args.contains("--stream-auto-gate") {
+    let quant = positional.first(where: { Int($0) == nil }) ?? "bf16"
+    try streamAutoGate(quant: quant, videoN: positional.compactMap { Int($0) }.first)
+} else if args.contains("--stream-budget-gate") {
+    let quant = positional.first(where: { Int($0) == nil }) ?? "q4"
+    let ints = positional.compactMap { Int($0) }
+    try streamBudgetGate(
+        quant: quant, videoN: ints.count > 0 ? ints[0] : 5632,
+        budgetGB: ints.count > 1 ? Double(ints[1]) : 12.0,
+        steps: ints.count > 2 ? ints[2] : 4)
 } else if args.contains("--i2v-spot") {
     let ints = positional.compactMap { Int($0) }
     try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,

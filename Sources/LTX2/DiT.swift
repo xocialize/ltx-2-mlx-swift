@@ -30,8 +30,20 @@ public struct DiTConfig {
     public init() {}
 }
 
+/// The DiT's weight dict behind a reference so (a) struct copies share it (the
+/// LoRAStore idiom) and (b) the HV2 streaming plane can swap block entries on a
+/// resident fallback without mutating the value-type `DiT`. `streamer` non-nil
+/// routes the block loop through the granule group windows (STREAMING-PLAN.md);
+/// nil keeps every existing path byte-for-byte untouched.
+final class DiTWeightStore {
+    var w: [String: MLXArray]
+    var streamer: LTXBlockStreamer?
+    init(w: [String: MLXArray]) { self.w = w }
+}
+
 public struct DiT {
-    let w: [String: MLXArray]
+    let store: DiTWeightStore
+    var w: [String: MLXArray] { store.w }
     let cfg: DiTConfig
     let dtype: DType
     let quantGroupSize = 64
@@ -56,7 +68,7 @@ public struct DiT {
             if key.hasSuffix(".weight"), m[String(key.dropLast("weight".count)) + "scales"] != nil { continue }
             m[key] = m[key]!.asType(computeDtype)
         }
-        self.w = m
+        self.store = DiTWeightStore(w: m)
         self.cfg = config
         self.dtype = computeDtype
     }
@@ -65,6 +77,28 @@ public struct DiT {
         DiT(weights: try MLX.loadArrays(url: weightsPath), config: config, computeDtype: computeDtype)
     }
 
+    /// HV2 streamed-weight construction: block parameters are slot-backed arrays
+    /// refilled from `streamer`'s granule files; only the 58 globals load
+    /// resident (from `checkpoint`, which also provenance-gates the granule
+    /// tree). The block loop routes through the streamer's group windows until
+    /// an `.auto` gate fallback swaps the dict entries resident and detaches.
+    public init(
+        streaming streamer: LTXBlockStreamer, checkpoint: URL, config: DiTConfig,
+        computeDtype: DType = .bfloat16
+    ) throws {
+        self.store = try streamer.bindStore(checkpoint: checkpoint, computeDtype: computeDtype)
+        self.cfg = config
+        self.dtype = computeDtype
+    }
+
+    /// The streaming plane, if this DiT is (still) streamed. Becomes nil after
+    /// an `.auto` gate fallback or an explicit `detach()`.
+    public var blockStreamer: LTXBlockStreamer? { store.streamer }
+
+    /// Diagnostic access for gates/harnesses (weight-dict key list + lookup).
+    public var weightKeys: [String] { Array(store.w.keys) }
+    public func weight(_ key: String) -> MLXArray? { store.w[key] }
+
     /// Compile the block kernels with a tiny (nv=1) forward so the one-time Metal JIT cost (~50–160s
     /// cold) is paid HERE — during load/"Loading" — instead of on the first denoise step, where it
     /// idles the GPU and reads as a hang. Most DiT kernels are shape-agnostic, so the real first step
@@ -72,6 +106,13 @@ public struct DiT {
     /// text-cross-attn kernels compile too. Output is discarded. Disable with `LTX_NO_WARMUP=1`.
     public func warmup() {
         guard ProcessInfo.processInfo.environment["LTX_NO_WARMUP"] == nil else { return }
+        // Streamed: the nv=1 sweep routes through the group windows like any
+        // forward — it primes Metal JIT AND doubles as the streamer's first S
+        // (refill bandwidth) calibration sweep. Its pathological N must never
+        // feed the gate's C measurement, so the gate is suspended around it.
+        let streamer = store.streamer
+        streamer?.gateSuspended = true
+        defer { streamer?.gateSuspended = false }
         let v = MLXArray.zeros([1, 1, 128]), a = MLXArray.zeros([1, 1, 128])
         let vText = MLXArray.zeros([1, 1, cfg.videoDim]), aText = MLXArray.zeros([1, 1, cfg.audioDim])
         let (vo, ao) = self(
@@ -139,9 +180,33 @@ public struct DiT {
             videoText: videoText?.asType(.float32), audioText: audioText?.asType(.float32),
             videoRope: videoRope, audioRope: audioRope, videoCrossRope: videoCrossRope, audioCrossRope: audioCrossRope)
 
-        for i in 0 ..< cfg.numLayers {
-            (videoHidden, audioHidden) = block(i, videoHidden, audioHidden, cond)
-            if (i + 1) % 8 == 0 { eval(videoHidden, audioHidden) }
+        if let streamer = store.streamer {
+            // HV2 streamed block loop: STEP-MAJOR over granule groups — wait for
+            // the group's slot, run its blocks, `eval` at the group boundary,
+            // hand the slot back to the refill thread. The group-boundary eval
+            // is the slot handoff that makes refills invisible to the lazy
+            // graph (it subsumes the resident path's every-8-blocks watchdog
+            // eval at a finer cadence). The first gating forward at or above
+            // the token threshold feeds the runtime gate; `.auto` may fall back
+            // to fully-resident (swapping the dict entries) before the next
+            // forward — this branch is then never taken again.
+            streamer.ensureActive()
+            streamer.beginForward(
+                tokens: videoLatent.dim(0) * (videoLatent.dim(1) + audioLatent.dim(1)))
+            for g in 0..<streamer.numGroups {
+                streamer.acquireGroup()
+                for i in streamer.blockRange(g) {
+                    (videoHidden, audioHidden) = block(i, videoHidden, audioHidden, cond)
+                }
+                eval(videoHidden, audioHidden)  // slot handoff; MUST precede releaseGroup
+                streamer.releaseGroup()
+            }
+            streamer.endForward()
+        } else {
+            for i in 0 ..< cfg.numLayers {
+                (videoHidden, audioHidden) = block(i, videoHidden, audioHidden, cond)
+                if (i + 1) % 8 == 0 { eval(videoHidden, audioHidden) }
+            }
         }
 
         let videoOut = outputBlock(videoHidden, videoEmbeddedTs, "scale_shift_table", "proj_out")

@@ -97,6 +97,30 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// Memory-tier profile (nil = unconstrained legacy behavior — no clamp, two-stage preferred,
     /// footprint falls back to the per-quant `QuantFootprint` measured at 704×512).
     public var profile: LTX2Profile?
+    /// HV2 weight streaming (STREAMING-PLAN.md): stream the DiT's 48 transformer blocks from a
+    /// per-block granule tree (two ~2×`groupSize`-block slots resident, background pread refill,
+    /// self-calibrating gate with automatic output-invisible resident fallback) instead of
+    /// loading them resident. Requires `granuleRootDirectory` pointing at a tree laid out by
+    /// `ltx-granule-layout` with `bf16/`, `q8/`, `q4/` subdirectories (the configured `quant`
+    /// picks the subdirectory; provenance vs the transformer checkpoint is verified at bind).
+    /// Both fields are EXCLUDED from Codable — the root is an environment path like
+    /// `ltxDirectory`, and encoding the flag alone would buy nothing while making the key
+    /// mandatory for configs persisted before it existed (the bernini d02cfa1 pattern).
+    public var streamedBlocks = false
+    /// Root of the granule store (e.g. `/Volumes/Satechi/Models/ltx-granules`).
+    public var granuleRootDirectory: URL?
+
+    /// The granule tree for the configured quant, when streaming is enabled.
+    public var resolvedGranuleDirectory: URL? {
+        guard streamedBlocks, let root = granuleRootDirectory else { return nil }
+        let sub: String
+        switch quant {
+        case .int8: sub = "q8"
+        case .int4: sub = "q4"
+        default: sub = "bf16"
+        }
+        return root.appendingPathComponent(sub)
+    }
 
     public init(
         repo: String = "dgrauet/ltx-2.3-mlx",
@@ -264,22 +288,30 @@ extension LTX2Configuration: WeightPrewarming {
         // downloaded layout on later cold launches; not-yet-downloaded paths simply don't exist
         // and the prewarmer skips them (best-effort). Explicit dirs resolve to themselves.
         let r = resolved(storeRoot: modelsRootDirectory)
+        // Streamed blocks: NEVER prewarm the transformer checkpoint — the blocks refill from
+        // granules (F_NOCACHE by design) and only the ~58 small globals load from it; paging
+        // the full 20–38 GB file would defeat the point (the quant-aware prewarm lesson, one
+        // level up).
+        let transformer = streamedBlocks ? nil : r.transformerPath
         guard let ltxDir = r.ltxDirectory else {
-            return [r.gemmaDirectory, r.transformerPath, r.vaeDecoderPath].compactMap { $0 }
+            return [r.gemmaDirectory, transformer, r.vaeDecoderPath].compactMap { $0 }
         }
-        return Self.prewarmPaths(ltxDir: ltxDir, transformerPath: r.transformerPath,
-                                 vaeDecoderPath: r.vaeDecoderPath, gemmaDirectory: r.gemmaDirectory)
+        return Self.prewarmPaths(ltxDir: ltxDir, transformerPath: transformer,
+                                 vaeDecoderPath: r.vaeDecoderPath, gemmaDirectory: r.gemmaDirectory,
+                                 excludeDefaultTransformer: streamedBlocks)
     }
 
     private static func prewarmPaths(ltxDir: URL, transformerPath: URL?, vaeDecoderPath: URL?,
-                                     gemmaDirectory: URL?) -> [URL] {
+                                     gemmaDirectory: URL?, excludeDefaultTransformer: Bool = false)
+        -> [URL]
+    {
         let overrides = [transformerPath, vaeDecoderPath].compactMap { $0 }
-        // No override: whole LTX dir + Gemma — every weight file in ltxDir IS used.
-        if overrides.isEmpty {
+        // No override: whole LTX dir + Gemma — every weight file in ltxDir IS used…
+        if overrides.isEmpty && !excludeDefaultTransformer {
             return [ltxDir, gemmaDirectory].compactMap { $0 }
         }
         var superseded = Set<URL>()
-        if transformerPath != nil {
+        if transformerPath != nil || excludeDefaultTransformer {
             superseded.insert(ltxDir.appendingPathComponent(defaultTransformerFile).standardizedFileURL)
         }
         if vaeDecoderPath != nil {
