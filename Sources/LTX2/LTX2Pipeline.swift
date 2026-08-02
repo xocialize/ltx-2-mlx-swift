@@ -85,6 +85,10 @@ public final class LTX2Pipeline {
     // Stored loaders (`ltxDir`/`gemmaDir`) let a dropped stage re-load on the next request.
     private let ltxDir: URL
     private let gemmaDir: URL
+    /// Override for the video VAE decoder file (nil = stock `vae_decoder.safetensors`).
+    /// A pruned sibling such as PrunaVAED loads through the same `VideoVAEDecoder`, which
+    /// derives every width from the weights and enables its channel adapters on sight.
+    private let vaeDecoderPath: URL?
     private var gemma: GemmaEncoder?
     private var connector: Connector?
     private var vae: VideoVAEDecoder?
@@ -106,12 +110,14 @@ public final class LTX2Pipeline {
     /// the default.
     public var keepStagesResident = false
 
-    init(dit: DiT, ditPath: URL, ltxDir: URL, gemmaDir: URL, hasAudio: Bool, hasEncoder: Bool, hasUpsampler: Bool) {
+    init(dit: DiT, ditPath: URL, ltxDir: URL, gemmaDir: URL, hasAudio: Bool, hasEncoder: Bool,
+         hasUpsampler: Bool, vaeDecoderPath: URL? = nil) {
         self.ditStorage = dit
         self.didWarmup = true      // LTX2Pipeline.load warmed it
         self.ditPath = ditPath
         self.ltxDir = ltxDir
         self.gemmaDir = gemmaDir
+        self.vaeDecoderPath = vaeDecoderPath
         self.hasAudio = hasAudio
         self.hasEncoder = hasEncoder
         self.hasUpsampler = hasUpsampler
@@ -191,7 +197,10 @@ public final class LTX2Pipeline {
     /// Page in the VAE decoder stack (video + optional audio) — deferred until AFTER denoise so it
     /// is never co-resident with the denoise activation peak.
     private func ensureDecoder() throws {
-        if vae == nil { vae = try VideoVAEDecoder.load(path: ltxDir.appending(path: "vae_decoder.safetensors")) }
+        if vae == nil {
+            vae = try VideoVAEDecoder.load(
+                path: vaeDecoderPath ?? ltxDir.appending(path: "vae_decoder.safetensors"))
+        }
         if hasAudio {
             if audioVAE == nil { audioVAE = try AudioVAEDecoder.load(path: ltxDir.appending(path: "audio_vae.safetensors")) }
             if vocoder == nil { vocoder = try Vocoder.load(path: ltxDir.appending(path: "vocoder.safetensors")) }
@@ -265,7 +274,8 @@ public final class LTX2Pipeline {
     /// connector/transformer-distilled/vae_decoder (+ optional audio_vae/vocoder/vae_encoder/
     /// upsampler); `gemmaDir` is the Gemma-3 weights dir. Audio decode is enabled when both
     /// audio_vae.safetensors and vocoder.safetensors exist.
-    public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil) async throws -> LTX2Pipeline {
+    public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil,
+                            vaeDecoderPath: URL? = nil) async throws -> LTX2Pipeline {
         // DIAGNOSTIC LEVER: `LTX_CACHE_LIMIT_GB=N` caps the MLX buffer pool (uncapped by default).
         // An unbounded cache inflates phys_footprint until the OS pages — the suspected cause of the
         // 48f "<10% GPU, 1000s" stall. Set this to test whether capping restores throughput.
@@ -275,6 +285,10 @@ public final class LTX2Pipeline {
         }
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
+        // DIAGNOSTIC LEVER: `LTX_VAE_DECODER=pruna|stock|<abs-path>` picks the video decoder without
+        // an app change (BRIDGE-LTX-014). An explicit `vaeDecoderPath` from the config always wins.
+        // A missing file falls back to stock with a note rather than failing a test run.
+        let vaePath = vaeDecoderPath ?? Self.envVAEDecoder(ltxDir: ltxDir)
         // Cold-load cancellation checkpoints (M2/M3 extension): a Cancel/quit during "Loading"
         // stops before/after the two heavy phases (weight load, kernel warmup) instead of
         // waiting the whole load out.
@@ -295,7 +309,29 @@ public final class LTX2Pipeline {
         let hasEncoder = fm.fileExists(atPath: ltxDir.appending(path: "vae_encoder.safetensors").path)
         let hasUpsampler = fm.fileExists(atPath: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors").path)
         return LTX2Pipeline(dit: dit, ditPath: ditPath, ltxDir: ltxDir, gemmaDir: gemmaDir,
-                            hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler)
+                            hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler,
+                            vaeDecoderPath: vaePath)
+    }
+
+    /// Resolve `LTX_VAE_DECODER` to a decoder file, or nil for the stock default.
+    private static func envVAEDecoder(ltxDir: URL) -> URL? {
+        let raw = (ProcessInfo.processInfo.environment["LTX_VAE_DECODER"] ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        switch raw.lowercased() {
+        case "stock", "default", "off":
+            return nil
+        default:
+            let url = ["pruna", "lean"].contains(raw.lowercased())
+                ? ltxDir.appending(path: "vae_decoder_pruna.safetensors")
+                : URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+            guard FileManager.default.fileExists(atPath: url.path) else {
+                MLXProfiler.shared.note("LTX_VAE_DECODER=\(raw): \(url.lastPathComponent) not found — using stock decoder")
+                return nil
+            }
+            MLXProfiler.shared.note("LTX_VAE_DECODER=\(raw) → \(url.lastPathComponent)")
+            return url
+        }
     }
 
     /// Flow-matching noised init: noise·σ + clean·(1-σ). Stage-1 (clean=0,σ=1)=noise;

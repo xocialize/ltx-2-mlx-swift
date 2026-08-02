@@ -219,6 +219,91 @@ func vaeDecodeGate() throws {
     if !pass { exit(1) }
 }
 
+/// PrunaVAED (pruned decoder) parity: latent → pixels vs oracle golden (fp32).
+/// Exercises the channel-adapter blocks, which the stock decoder does not have.
+/// Also checks the diffusers reference dump when present — that is the independent
+/// ground truth for the adapter, since oracle and port were written from one reading.
+func vaeDecodePrunaGate() throws {
+    let dir = "\(goldensBase)/vae_decode_pruna"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
+    let pixels = dec.decode(io["latent"]!)
+    eval(pixels)
+    let cos = cosine(pixels, io["pixels"]!), m = maxAbs(pixels, io["pixels"]!)
+    print(String(format: "[vae-decode-pruna-gate] cosine=%.6f maxAbs=%.5f  shape %@ vs %@", cos, m, "\(pixels.shape)" as NSString, "\(io["pixels"]!.shape)" as NSString))
+
+    let refURL = URL(fileURLWithPath: "\(dir)/reference.safetensors")
+    if FileManager.default.fileExists(atPath: refURL.path),
+       let ref = try? MLX.loadArrays(url: refURL)["pixels"] {
+        print(String(format: "[vae-decode-pruna-gate] vs diffusers reference: cosine=%.6f maxAbs=%.5f", cosine(pixels, ref), maxAbs(pixels, ref)))
+    }
+
+    let pass = cos >= 0.999
+    print(pass ? "[vae-decode-pruna-gate] PASS ✅" : "[vae-decode-pruna-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
+/// Stock-vs-PrunaVAED decode A/B: wall time + phys_footprint peak at shipping tiers.
+///
+/// Upstream measured 1.68–2.08× on an H100 with ~50% lower peak VRAM; this is the Metal
+/// number, which is the only one that governs our tier ladder. Decode's share of e2e has
+/// never been measured on target hardware (the M1 stage-split table is still blank), so
+/// this reports absolute seconds per decode, not just the ratio.
+func vaeDecodeBench() throws {
+    // (label, latentFrames, latentH, latentW) → pixels (8F−7, H·32, W·32).
+    let tiers: [(String, Int, Int, Int)] = [
+        ("512×288×121f", 16, 9, 16),
+        ("704×512×121f", 16, 16, 22),
+    ]
+    let variants: [(String, String)] = [
+        ("stock", "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"),
+        ("pruna", "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"),
+    ]
+    let reps = 3
+    let sampler = PhysSampler()
+    sampler.start()
+    defer { sampler.stop() }
+
+    for (tier, f, h, wl) in tiers {
+        print("\n[vae-decode-bench] tier \(tier)  latent (1,128,\(f),\(h),\(wl))")
+        var best: [String: Double] = [:]
+        for (name, path) in variants {
+            let url = URL(fileURLWithPath: path)
+            prewarmFiles([url])
+            let dec = try VideoVAEDecoder.load(path: url)
+            MLXRandom.seed(7)
+            let latent = MLXRandom.normal([1, 128, f, h, wl]).asType(.float32)
+            eval(latent)
+
+            _ = { let p = dec.decode(latent); eval(p) }()   // warm the kernels
+            Memory.clearCache()
+            let floor = physFootprintBytes()
+            sampler.resetMax()
+
+            var times: [Double] = []
+            for _ in 0 ..< reps {
+                let t0 = Date()
+                let px = dec.decode(latent)
+                eval(px)
+                times.append(Date().timeIntervalSince(t0))
+            }
+            let peak = sampler.maxBytes()
+            let median = times.sorted()[reps / 2]
+            best[name] = median
+            print(String(
+                format: "[vae-decode-bench]   %-5@ median %.3fs  (min %.3f max %.3f)  floor %.2f GB  peak %.2f GB  Δ %.2f GB",
+                name as NSString, median, times.min()!, times.max()!,
+                gbOf(floor), gbOf(peak), gbOf(peak > floor ? peak - floor : 0)
+            ))
+            Memory.clearCache()
+        }
+        if let s = best["stock"], let p = best["pruna"], p > 0 {
+            print(String(format: "[vae-decode-bench]   → speedup %.2f×", s / p))
+        }
+    }
+}
+
 /// Video VAE encode parity: pixels → latent vs oracle golden (fp32).
 func vaeEncodeGate() throws {
     let dir = "\(goldensBase)/vae_encode"
@@ -844,6 +929,11 @@ func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async t
               "audio_vae.safetensors", "vocoder.safetensors"] {
         warm.append(ltxDir.appendingPathComponent(f))
     }
+    // An LTX_VAE_DECODER override is NOT in the list above, so without this it cold-faults off the
+    // archive volume mid-decode and the A/B measures paging, not the decoder.
+    if ProcessInfo.processInfo.environment["LTX_VAE_DECODER"] != nil {
+        warm.append(ltxDir.appendingPathComponent("vae_decoder_pruna.safetensors"))
+    }
     warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(at: gemmaDir, includingPropertiesForKeys: nil)) ?? [])
         .filter { $0.pathExtension == "safetensors" })
     prewarmFiles(warm)
@@ -1036,8 +1126,13 @@ func encodeStressGate(frames n: Int, software: Bool, hog: Bool, audio: Bool) asy
 // of SHAPE, not content. Usage: --vae-chunk-gate [Flat] [chunk] [halo]  (defaults 15, 5, 4 —
 // F_lat 15 = 113 output frames @704×512).
 @InferenceActor
-func vaeChunkGate(fLat: Int, chunk: Int, halo: Int) async throws {
-    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"
+func vaeChunkGate(fLat: Int, chunk: Int, halo: Int, pruna: Bool = false) async throws {
+    // `--pruna` runs the same seam check on the lean decoder: the halo/trim math is
+    // width-independent, but its channel-adapter blocks sit inside each chunk's decode, so the
+    // seam is worth re-proving on the variant that actually ships it.
+    let file = pruna ? "vae_decoder_pruna.safetensors" : "vae_decoder.safetensors"
+    let weightsPath = "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx/\(file)"
+    print("[vae-chunk-gate] decoder=\(pruna ? "pruna" : "stock")")
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
     let hLat = 512 / 32, wLat = 704 / 32
     MLXRandom.seed(7)
@@ -1140,6 +1235,10 @@ if args.contains("--connector-gate") {
     try loraGate(loraPath: positional.first ?? "/tmp/ltx_transition_lora.safetensors")
 } else if args.contains("--vae-decode-gate") {
     try vaeDecodeGate()
+} else if args.contains("--vae-decode-pruna-gate") {
+    try vaeDecodePrunaGate()
+} else if args.contains("--vae-decode-bench") {
+    try vaeDecodeBench()
 } else if args.contains("--vae-encode-gate") {
     try vaeEncodeGate()
 } else if args.contains("--audio-vae-decode-gate") {
@@ -1166,7 +1265,8 @@ if args.contains("--connector-gate") {
     let ints = positional.compactMap { Int($0) }
     try await vaeChunkGate(fLat: ints.count > 0 ? ints[0] : 15,
                            chunk: ints.count > 1 ? ints[1] : 5,
-                           halo: ints.count > 2 ? ints[2] : 4)
+                           halo: ints.count > 2 ? ints[2] : 4,
+                           pruna: args.contains("--pruna"))
 } else if args.contains("--encode-stress") {
     let n = positional.first.flatMap { Int($0) } ?? 41
     try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"),

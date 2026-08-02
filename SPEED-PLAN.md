@@ -200,6 +200,40 @@ S1 re-ranked the lanes: at the compact24 envelope on target hardware, **decode i
 (25.7 s of 81.1 — read the `vae-decode/video` parent span, not the double-counting group sum),
 second only to denoise. Not in the original S2–S6 ranking; formalized here. Candidates, profile
 order (`MLX_PROFILE_DEEP=vae`):
+- **PrunaVAED lean decoder — PORTED + GATED 2026-07-31; the largest lever in this lane.** A
+  pruned, distillation-finetuned drop-in for the video decoder (encoder + latent format unchanged;
+  latent stats verified bit-identical to stock). Measured on THIS desktop (M5 Max 128 GB, full
+  unchunked decode, fp32, median of 3):
+
+  | tier | stock | pruna | speedup | activation Δ (peak−floor) |
+  |---|---|---|---|---|
+  | 512×288×121f | 3.468 s | 1.753 s | **1.98×** | 4.79 → 1.92 GB |
+  | 704×512×121f | 9.548 s | 4.565 s | **2.09×** | 19.47 → 12.64 GB |
+
+  Beats the upstream H100 claim (1.68–1.7×), and holds on the **chunked** production path:
+  704×512×113f chunk 5 halo 4 goes **17.1 s → 7.9 s (2.16×)**, peak Δ 30.65 → 22.37 GB, seam gate
+  green (60.8 dB vs stock 60.4).
+
+  ⚠️ **The e2e win is NOT established — do not quote one.** A desktop `--speed-bench` A/B at
+  512×288×121f could not resolve it: run-to-run totals varied ±15 s (stock 45.2 / 39.7 s, pruna
+  79.1 / 55.4 s), far larger than the ~1.7 s decode saving, so the totals measured machine noise.
+  **Decode's share is the whole story and it is tier-dependent:** unchunked on this 128 GB desktop
+  decode is only ~8–9% of a ~40 s run (≈4% e2e for a 2× decoder), whereas S1 measured **32% on the
+  M5 Pro compact24 target** precisely because it is chunked there and pays halo recompute. So the
+  payoff should concentrate on the low, memory-constrained tiers — that is the hypothesis, and
+  BRIDGE-LTX-014 is the live measurement that settles it.
+
+  Two measurement traps, both hit here: prewarm the pruna file (unwarmed it cold-faults mid-decode,
+  7092 → 4536 ms), and **never compare decode timings across variants under `MLX_PROFILE=1`** —
+  profiling forces a per-up-block `eval` that breaks fusion and inflates decode (5530 ms profiled
+  vs 3468 ms unprofiled, same stock decode), compressing the gap to ~1.2×. Profile for the split,
+  measure the ratio unprofiled. Select via `LTX_VAE_DECODER=pruna` (no app change) or
+  `LTX2Configuration.vaeDecoderPath`; weights need `scripts/convert_pruna_vae_decoder.py` first
+  (diffusers → ltx-core dialect) and are not auto-materializable yet. Quality is
+  near-identical-not-bit-exact by construction (upstream: PSNR 39.23 dB / SSIM 0.981 / LPIPS
+  0.0087 at 720p), so acceptance is perceptual — **the perceptual A/B on a real clip is still
+  owed**; only numerical parity vs the reference implementation is done so far.
+  Gate: `--vae-decode-pruna-gate`. Bench: `--vae-decode-bench`.
 - **Chunk sizing on target:** compact24 uses chunk 4 (a MEMORY choice); with 15 GB peak vs 16.8
   budget there is headroom to try chunk 6/8 — fewer halo recomputes = fewer decoded-twice frames.
   Free experiment via `LTX_VAE_CHUNK`; keep the seam gate green (`--vae-chunk-gate`).

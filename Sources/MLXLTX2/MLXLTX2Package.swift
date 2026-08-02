@@ -132,7 +132,8 @@ public final class MLXLTX2Package: ModelPackage {
                 got: "materialization did not yield ltxDirectory/gemmaDirectory")
         }
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
-                                               transformerPath: cfg.transformerPath)
+                                               transformerPath: cfg.transformerPath,
+                                               vaeDecoderPath: cfg.vaeDecoderPath)
 
         // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
         // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).

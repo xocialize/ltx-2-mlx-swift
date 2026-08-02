@@ -50,6 +50,11 @@ public struct VideoVAEDecoder {
                 x = resStage(x, "up_blocks.\(i)", VideoVAEDecoder.resStageBlocks[i]!)
                 if prof.enabled { eval(x) }
             } else {
+                // Pruned decoders (PrunaVAED) prefix the upsample with a channel adapter;
+                // the stock decoder has none, so presence is keyed off the weights.
+                if w["up_blocks.\(i).conv_in.norm3.weight"] != nil {
+                    x = channelAdapter(x, "up_blocks.\(i).conv_in")
+                }
                 x = conv3dBlock(x, "up_blocks.\(i).conv")
                 let (sf, tf) = VideoVAEDecoder.upsampleConfig[upIdx]
                 x = pixelShuffle3d(x, spatialFactor: sf, temporalFactor: tf)
@@ -122,6 +127,26 @@ public struct VideoVAEDecoder {
             x = x + residual
         }
         return x
+    }
+
+    /// Channel-changing residual block — PrunaVAED's `conv_in`, present only on pruned
+    /// decoders. Pruna prunes inside each stage but keeps the wider skip between stages;
+    /// this reconciles the two widths ahead of the upsample conv.
+    ///
+    /// Unlike every stock block, the residual path here is *learned*: an affine LayerNorm
+    /// over channels (`norm3`, eps 1e-6 — mean-subtracting, so NOT `pixelNorm`) followed by
+    /// a 1×1×1 conv, which takes no padding and so bypasses `conv3dBlock`.
+    private func channelAdapter(_ x0: MLXArray, _ prefix: String) -> MLXArray {
+        var h = conv3dBlock(silu(pixelNorm(x0)), "\(prefix).conv1")
+        h = conv3dBlock(silu(pixelNorm(h)), "\(prefix).conv2")
+        let r = MLXFast.layerNorm(
+            x0,
+            weight: w["\(prefix).norm3.weight"]!,
+            bias: w["\(prefix).norm3.bias"]!,
+            eps: 1e-6
+        )
+        return h + (conv3d(r, w["\(prefix).conv_shortcut.weight"]!, stride: 1, padding: 0)
+            + w["\(prefix).conv_shortcut.bias"]!)
     }
 
     /// Non-causal Conv3dBlock: symmetric replicate temporal pad + zeros spatial pad, then conv.

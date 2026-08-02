@@ -78,6 +78,18 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// int8/int4 — the loader auto-detects quantization from the weights (scales/biases).
     /// Only the transformer is quantized; everything else loads from `ltxDirectory`.
     public var transformerPath: URL?
+    /// Optional override for the video VAE decoder file. Defaults to
+    /// `ltxDirectory/vae_decoder.safetensors` (stock). Point at a pruned sibling — e.g. the
+    /// converted `vae_decoder_pruna.safetensors` (PrunaVAED) — for the lean decode tier:
+    /// ~2× faster decode and a materially smaller decode activation peak, at a decode that is
+    /// near-identical but not bit-exact. The decoder derives every channel width from the
+    /// weights and enables PrunaVAED's channel-adapter blocks on sight, so this is the only
+    /// switch; encoder, latents and every other component are untouched.
+    ///
+    /// Not auto-materializable yet: PrunaAI publishes diffusers-format weights that must go
+    /// through `scripts/convert_pruna_vae_decoder.py` first, so this takes an explicit path
+    /// until the converted file is hosted alongside the other components.
+    public var vaeDecoderPath: URL?
     /// Resolved Gemma-3 text-encoder directory.
     public var gemmaDirectory: URL?
     /// Engine-chosen models root (auto-materialization target). Environment-specific.
@@ -94,6 +106,7 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         quant: Quant = .bf16,
         ltxDirectory: URL? = nil,
         transformerPath: URL? = nil,
+        vaeDecoderPath: URL? = nil,
         gemmaDirectory: URL? = nil,
         modelsRootDirectory: URL? = nil,
         profile: LTX2Profile? = nil
@@ -105,6 +118,7 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         self.quant = quant
         self.ltxDirectory = ltxDirectory
         self.transformerPath = transformerPath
+        self.vaeDecoderPath = vaeDecoderPath
         self.gemmaDirectory = gemmaDirectory
         self.modelsRootDirectory = modelsRootDirectory
         self.profile = profile
@@ -234,14 +248,16 @@ extension LTX2Configuration: FootprintConfigured {
 /// `kIOGPUCommandBufferCallbackErrorTimeout`). Only the config knows these resolved `/Volumes`
 /// paths — execution is the engine's (`WeightPrewarmer`, best-effort).
 ///
-/// **Quant-aware exclusion.** When `transformerPath` (a quant override, e.g. the q8 transformer)
-/// is set, the default bf16 `transformer-distilled.safetensors` inside `ltxDirectory` is NEVER
-/// loaded — so paging the whole dir would read ~35 GB of cold cost for nothing. In that case we
-/// page `ltxDirectory`'s weight files *individually, minus that bf16 transformer*, plus the
-/// override. (bf16 path keeps the simple whole-dir prewarm.)
+/// **Override-aware exclusion.** An override means the default file it replaces is NEVER loaded,
+/// so paging the whole dir reads that file's cold cost for nothing — ~35 GB for the bf16
+/// transformer under a q8/q4 override, ~0.8 GB for the stock decoder under a lean-decoder
+/// override. With any override set we page `ltxDirectory`'s weight files *individually, minus the
+/// superseded defaults*, plus the overrides. With no override the simple whole-dir prewarm stands.
 extension LTX2Configuration: WeightPrewarming {
     /// Basename of the bf16 transformer that a `transformerPath` override replaces.
     static let defaultTransformerFile = "transformer-distilled.safetensors"
+    /// Basename of the stock video decoder that a `vaeDecoderPath` override replaces.
+    static let defaultVAEDecoderFile = "vae_decoder.safetensors"
 
     public var prewarmPaths: [URL] {
         // Operate on the store-resolved view so auto-materialize (nil-dir) configs prewarm the
@@ -249,26 +265,35 @@ extension LTX2Configuration: WeightPrewarming {
         // and the prewarmer skips them (best-effort). Explicit dirs resolve to themselves.
         let r = resolved(storeRoot: modelsRootDirectory)
         guard let ltxDir = r.ltxDirectory else {
-            return [r.gemmaDirectory, r.transformerPath].compactMap { $0 }
+            return [r.gemmaDirectory, r.transformerPath, r.vaeDecoderPath].compactMap { $0 }
         }
         return Self.prewarmPaths(ltxDir: ltxDir, transformerPath: r.transformerPath,
-                                 gemmaDirectory: r.gemmaDirectory)
+                                 vaeDecoderPath: r.vaeDecoderPath, gemmaDirectory: r.gemmaDirectory)
     }
 
-    private static func prewarmPaths(ltxDir: URL, transformerPath: URL?, gemmaDirectory: URL?) -> [URL] {
-        // bf16 (no override): whole LTX dir + Gemma — the bf16 transformer in ltxDir IS used.
-        guard let txPath = transformerPath else {
+    private static func prewarmPaths(ltxDir: URL, transformerPath: URL?, vaeDecoderPath: URL?,
+                                     gemmaDirectory: URL?) -> [URL] {
+        let overrides = [transformerPath, vaeDecoderPath].compactMap { $0 }
+        // No override: whole LTX dir + Gemma — every weight file in ltxDir IS used.
+        if overrides.isEmpty {
             return [ltxDir, gemmaDirectory].compactMap { $0 }
         }
-        // Quant override active: page ltxDir's weight files except the unused bf16 transformer.
-        let bf16 = ltxDir.appendingPathComponent(Self.defaultTransformerFile).standardizedFileURL
+        var superseded = Set<URL>()
+        if transformerPath != nil {
+            superseded.insert(ltxDir.appendingPathComponent(defaultTransformerFile).standardizedFileURL)
+        }
+        if vaeDecoderPath != nil {
+            superseded.insert(ltxDir.appendingPathComponent(defaultVAEDecoderFile).standardizedFileURL)
+        }
         let ltxWeights = ((try? FileManager.default.contentsOfDirectory(
             at: ltxDir, includingPropertiesForKeys: nil)) ?? [])
-            .filter { $0.pathExtension == "safetensors" && $0.standardizedFileURL != bf16 }
+            .filter { $0.pathExtension == "safetensors" && !superseded.contains($0.standardizedFileURL) }
         // Correctness-first fallback: if enumeration turned up nothing, page the whole dir.
         var paths = ltxWeights.isEmpty ? [ltxDir] : ltxWeights
-        paths.append(txPath)
+        paths.append(contentsOf: overrides)
         if let gemma = gemmaDirectory { paths.append(gemma) }
-        return paths
+        // An override living inside ltxDir is already in the enumeration — don't page it twice.
+        var seen = Set<URL>()
+        return paths.filter { seen.insert($0.standardizedFileURL).inserted }
     }
 }
