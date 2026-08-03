@@ -200,7 +200,7 @@ S1 re-ranked the lanes: at the compact24 envelope on target hardware, **decode i
 (25.7 s of 81.1 — read the `vae-decode/video` parent span, not the double-counting group sum),
 second only to denoise. Not in the original S2–S6 ranking; formalized here. Candidates, profile
 order (`MLX_PROFILE_DEEP=vae`):
-- **PrunaVAED lean decoder — PORTED + GATED 2026-07-31; the largest lever in this lane.** A
+- **PrunaVAED lean decoder — PORTED + GATED 2026-08-03; the largest lever in this lane.** A
   pruned, distillation-finetuned drop-in for the video decoder (encoder + latent format unchanged;
   latent stats verified bit-identical to stock). Measured on THIS desktop (M5 Max 128 GB, full
   unchunked decode, fp32, median of 3):

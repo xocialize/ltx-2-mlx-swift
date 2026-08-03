@@ -42,7 +42,13 @@ public final class MLXLTX2Package: ModelPackage {
                 weightLicense: .ltx2Community,
                 portCodeLicense: .apache2),
             provenance: Provenance(
-                sourceRepo: "dgrauet/ltx-2.3-mlx",  // LTX-2.3 MLX collection (eval mirror)
+                // The ORIGIN of these tensors, which is a three-link chain: Lightricks trained
+                // LTX-2.3; dgrauet converted it to MLX (mlx-forge) and published this repo; we
+                // mirror that conversion verbatim at `xocialize/ltx-2.3-mlx`. Provenance names
+                // the conversion because that is where these exact bytes come from — the served
+                // repo (`LTX2Configuration.repo`) is our mirror, and conflating the two would
+                // let the mirror launder its origin.
+                sourceRepo: "dgrauet/ltx-2.3-mlx",
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma + connector + DiT + VAE)
             requirements: RequirementsManifest(

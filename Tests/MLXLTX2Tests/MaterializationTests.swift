@@ -56,7 +56,7 @@ final class MaterializationTests: XCTestCase {
     func testQuantDeclaresDerivedTransformerRepo() {
         let sources = LTX2Configuration(quant: .int4).weightSources
         XCTAssertEqual(sources.map(\.role), ["components", "text-encoder", "transformer-int4"])
-        XCTAssertEqual(sources[2].repo, "dgrauet/ltx-2.3-mlx-q4")
+        XCTAssertEqual(sources[2].repo, "xocialize/ltx-2.3-mlx-q4")
         // The quant config's components glob must EXCLUDE the 35 GB bf16 transformer.
         XCTAssertFalse(sources[0].matching!.contains("transformer-distilled.safetensors"))
         // Explicit override wins.
@@ -75,7 +75,7 @@ final class MaterializationTests: XCTestCase {
         // Populate the expected layout — paths from ModelStore so the fixture tracks the
         // engine's canonical models--org--name layout (contract 1.22.0), not a stale literal.
         let store = ModelStore(root: root)
-        let ltxDir = store.directory(for: "dgrauet/ltx-2.3-mlx")!
+        let ltxDir = store.directory(for: "xocialize/ltx-2.3-mlx")!
         let gemmaDir = store.directory(for: "mlx-community/gemma-3-12b-it-4bit")!
         try FileManager.default.createDirectory(at: ltxDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: gemmaDir, withIntermediateDirectories: true)
@@ -92,7 +92,7 @@ final class MaterializationTests: XCTestCase {
         // Quant resolution derives the transformer path from the quant repo.
         let q8 = LTX2Configuration(quant: .int8).resolved(storeRoot: root)
         XCTAssertEqual(q8.transformerPath?.path,
-                       store.directory(for: "dgrauet/ltx-2.3-mlx-q8")!
+                       store.directory(for: "xocialize/ltx-2.3-mlx-q8")!
                            .appending(path: "transformer-distilled.safetensors").path)
     }
 
@@ -103,7 +103,7 @@ final class MaterializationTests: XCTestCase {
         // yet on a true first run — the prewarmer is best-effort).
         let store = ModelStore(root: root)
         let paths = cfg.prewarmPaths.map(\.path)
-        XCTAssertTrue(paths.contains(store.directory(for: "dgrauet/ltx-2.3-mlx")!.path))
+        XCTAssertTrue(paths.contains(store.directory(for: "xocialize/ltx-2.3-mlx")!.path))
         XCTAssertTrue(paths.contains(store.directory(for: "mlx-community/gemma-3-12b-it-4bit")!.path))
     }
 

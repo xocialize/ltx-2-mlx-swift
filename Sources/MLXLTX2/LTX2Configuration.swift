@@ -57,7 +57,18 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
 /// vae_decoder). `gemmaDirectory` is the Gemma-3 MLX weights dir (mlx-community/
 /// gemma-3-12b-it-4bit). Both are environment-specific → excluded from Codable.
 public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfigured {
-    /// Provenance repo id (the LTX-2.3 MLX collection).
+    /// The repo serving the LTX-2.3 MLX components.
+    ///
+    /// 🚨 **Weight-durability rule** (`mlx-porting` skill, Step 8): a shipped source never points
+    /// at a namespace we do not control. The default is `xocialize/ltx-2.3-mlx`, a byte-verified
+    /// verbatim mirror of `dgrauet/ltx-2.3-mlx` (every tensor SHA-256-matched at mirror time, and
+    /// the LTX-2 Community License propagated per its §3). The upstream conversion lives on a
+    /// PERSONAL account, which can disappear via account deletion or a username change — routes
+    /// an org cannot take. `Provenance.sourceRepo` still names dgrauet, because that is where
+    /// these bytes originate; this is only where they are fetched from.
+    ///
+    /// ⚠️ `effectiveTransformerRepo` derives the quant repos as `repo + "-q8"` / `"-q4"`, so
+    /// overriding this to another namespace requires that namespace to carry all three.
     public var repo: String
     public var revision: String?
     /// Text-encoder repo (Gemma-3), materialized when `gemmaDirectory` is nil (BRIDGE M4).
@@ -123,7 +134,7 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     }
 
     public init(
-        repo: String = "dgrauet/ltx-2.3-mlx",
+        repo: String = "xocialize/ltx-2.3-mlx",
         revision: String? = nil,
         gemmaRepo: String = "mlx-community/gemma-3-12b-it-4bit",
         transformerRepo: String? = nil,
