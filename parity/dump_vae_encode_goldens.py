@@ -16,7 +16,7 @@ from ltx_core_mlx.model.video_vae.ops import remap_encoder_weight_keys
 from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
-MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+MODEL_DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/vae_encode")
 F, H, W = 9, 128, 128  # 1+8k frames → latent F=2; 128/32 = 4
 

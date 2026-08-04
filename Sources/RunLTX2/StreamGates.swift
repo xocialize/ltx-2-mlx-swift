@@ -55,7 +55,7 @@ private struct QuantPaths {
         guard let repo = repos[quant] else { return nil }
         checkpoint = URL(
             fileURLWithPath:
-                "/Volumes/DEV_ARCHIVE/models/dgrauet/\(repo)/transformer-distilled.safetensors")
+                "/Volumes/Satechi/Models/dgrauet/\(repo)/transformer-distilled.safetensors")
         granules = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules/\(quant)")
     }
 }

@@ -121,7 +121,7 @@ public final class MLXLTX2Package: ModelPackage {
         // layout. The DOWNLOAD is engine-executed since mlx-engine-swift 0.32.0 (contract
         // 1.24.0) — resident()/prepare() fetches the missing declared sources before load()
         // runs — so this only resolves directories off the store. Explicit directories always
-        // win and never touch the network; the DEV_ARCHIVE flows are unchanged.
+        // win and never touch the network; the local-store flows are unchanged.
         var cfg = configuration
         if cfg.ltxDirectory == nil || cfg.gemmaDirectory == nil
             || (cfg.transformerPath == nil && cfg.effectiveTransformerRepo != nil) {

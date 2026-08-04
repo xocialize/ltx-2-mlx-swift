@@ -33,8 +33,8 @@ from ltx_core_mlx.text_encoders.gemma.feature_extractor import GemmaFeaturesExtr
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
 # --- Fixed inputs (keep stable across reruns; the Swift parity test pins these) ---
-GEMMA_DIR = os.environ.get("GEMMA_DIR", "/Volumes/DEV_ARCHIVE/models/mlx-community/gemma-3-12b-it-4bit")
-LTX_DIR = os.environ.get("LTX_DIR", "/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+GEMMA_DIR = os.environ.get("GEMMA_DIR", "/Volumes/Satechi/Models/mlx-community/gemma-3-12b-it-4bit")
+LTX_DIR = os.environ.get("LTX_DIR", "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 PROMPT = "A red fox trotting through a snowy forest at dawn, cinematic lighting, shallow depth of field."
 MAX_LENGTH = 1024
 OUT_DIR = Path(__file__).resolve().parent / "goldens" / "text_encode"

@@ -20,7 +20,7 @@ import mlx.core as mx
 from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig
 from ltx_core_mlx.utils.weights import apply_quantization, load_split_safetensors
 
-Q8_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx-q8")
+Q8_DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx-q8")
 IO = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full/io.safetensors")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_q8")
 

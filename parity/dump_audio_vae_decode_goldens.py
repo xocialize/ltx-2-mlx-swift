@@ -15,7 +15,7 @@ import mlx.core as mx
 from ltx_core_mlx.model.audio_vae.audio_vae import AudioVAEDecoder
 from ltx_core_mlx.utils.weights import load_split_safetensors, remap_audio_vae_keys
 
-MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+MODEL_DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/audio_vae_decode")
 T = 8
 

@@ -21,7 +21,7 @@ import mlx.core as mx
 
 from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig
 
-DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 IO = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_full/io.safetensors")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/dit_pertoken")
 

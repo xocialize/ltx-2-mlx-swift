@@ -29,7 +29,7 @@ from ltx_core_mlx.utils.weights import load_split_safetensors
 from ltx_pipelines_mlx.scheduler import DISTILLED_SIGMAS
 from ltx_pipelines_mlx.utils.samplers import denoise_loop
 
-MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+MODEL_DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 TE = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/goldens/e2e_t2v")
 

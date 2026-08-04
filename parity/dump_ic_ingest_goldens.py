@@ -22,7 +22,7 @@ from ltx_core_mlx.model.video_vae.video_vae import VideoEncoder
 from ltx_core_mlx.utils.positions import compute_video_positions
 from ltx_core_mlx.utils.weights import load_split_safetensors
 
-MODEL_DIR = Path("/Volumes/DEV_ARCHIVE/models/dgrauet/ltx-2.3-mlx")
+MODEL_DIR = Path("/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
 OUT = Path("/Users/dustinnielson/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/ic_ingest")
 F, H, W = 17, 96, 96   # 8k+1 frames (k=2); 96/32 = 3 → latent (3, 3, 3), Nr = 27
 
