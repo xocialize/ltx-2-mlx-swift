@@ -1,0 +1,84 @@
+{
+  "blockRecords" : [
+    {
+      "arm" : "base",
+      "block" : 0,
+      "loadSeconds" : 1.361649990081787,
+      "postDropFloorGB" : 0.831227848,
+      "prewarmSeconds" : 9.08804702758789
+    },
+    {
+      "arm" : "tiled",
+      "block" : 0,
+      "loadSeconds" : 1.4085670709609985,
+      "postDropFloorGB" : 1.252493448,
+      "prewarmSeconds" : 2.1397290229797363
+    }
+  ],
+  "blocks" : 1,
+  "cooldownS" : 0,
+  "geometry" : "1920x1088x9f fps=24 one-stage",
+  "git" : "3d5ee0f",
+  "host" : "Mac17,7",
+  "label" : "tile-smoke-1080p",
+  "memGB" : 137,
+  "os" : "Version 27.0 (Build 26A5388g)",
+  "prompt" : "a cat playing piano",
+  "runs" : [
+    {
+      "arm" : "base",
+      "block" : 0,
+      "mlxActiveGB" : 38.206365528,
+      "mlxCacheGB" : 0.029422116,
+      "outputMean" : -0.2621673,
+      "outputStd" : 0.636232,
+      "peakPhysGB" : 52.529578672,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 89.71981692314148
+    },
+    {
+      "arm" : "base",
+      "block" : 0,
+      "mlxActiveGB" : 38.20637096,
+      "mlxCacheGB" : 0.029422116,
+      "outputMean" : -0.2621673,
+      "outputStd" : 0.636232,
+      "peakPhysGB" : 52.502185128,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 93.55120599269867
+    },
+    {
+      "arm" : "tiled",
+      "block" : 0,
+      "mlxActiveGB" : 38.431951304,
+      "mlxCacheGB" : 0.029422116,
+      "outputMean" : -0.2621673,
+      "outputStd" : 0.636232,
+      "peakPhysGB" : 52.906378168,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 112.94635093212128
+    },
+    {
+      "arm" : "tiled",
+      "block" : 0,
+      "mlxActiveGB" : 38.431956736,
+      "mlxCacheGB" : 0.029422116,
+      "outputMean" : -0.2621673,
+      "outputStd" : 0.636232,
+      "peakPhysGB" : 52.922697184,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 115.04751801490784
+    }
+  ],
+  "runsPerBlock" : 1,
+  "seed" : 42,
+  "stamp" : "20260804-060243"
+}
