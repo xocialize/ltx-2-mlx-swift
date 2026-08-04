@@ -1311,6 +1311,8 @@ if args.contains("--connector-gate") {
         quant: quant, videoN: ints.count > 0 ? ints[0] : 5632,
         budgetGB: ints.count > 1 ? Double(ints[1]) : 12.0,
         steps: ints.count > 2 ? ints[2] : 4)
+} else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") {
+    try await tileGatesMain(args: args, positional: Array(positional))  // TileGates.swift (spatial tiling)
 } else if args.contains("--i2v-spot") {
     let ints = positional.compactMap { Int($0) }
     try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,

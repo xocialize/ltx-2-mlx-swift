@@ -94,6 +94,20 @@ Structure that matters (`VideoVAE.swift`): NON-causal temporal convs (k=3, symme
 > knob now controls the decode peak: chunk 5 (window 15 ≈ 37 GB) would put this run near ~81 GB.
 > **Budget-driven window sizing folds into T3's tier profiles.**
 
+> **T1 addendum (2026-08-03): SPATIAL halo+crop tiling landed** (`decodeSpatialTiled`,
+> composing inside `decodeChunked` — outer temporal, inner spatial; gated by
+> `RunLTX2 --vae-tile-gate`, stock + pruna). At ≤704×512 it is a strict no-op (the tile
+> window spans the grid — decoder spatial RF measured at 15.12 latent cells/side, bit-exact
+> halo 16) and the T0/T1 law above stands unchanged. At 4K-class geometry the whole-frame
+> law is SUPERLINEAR, not the 704×512-linear 2.2 GB/frame: 3840×2176 whole decode peaks
+> 18.7 GB @F_lat 1 → 69.6 GB @F_lat 2; spatial tiling makes decode window-bound again
+> (4×4 tiles halo 5 → 14.25 GB @F_lat 2, seam ≥70 dB). Composed with temporal chunking the
+> peak is NOT flat at 4K — the temporal halo floors every window at chunk+10 latent frames
+> (113-frame 4K clip: chunk8 × 4×4 ran at 99.78 GB peak) — so 4K clip decode is
+> big-host-only until the §1.4d ④b follow-ups. Opt-in via `LTX_VAE_TILES` / `LTX_VAE_SHALO`
+> (T3 tier profiles own the defaults). Design + full receipts:
+> `mlxengine-todo/BLOCKSTREAM-EXPANSION-EVAL.md` §1.4d.
+
 ## T2 — Connector residency (S)
 
 `Connector.init` materializes ALL weights fp32 (12.7 GB; the bf16→fp32 upcast is a **compute**
