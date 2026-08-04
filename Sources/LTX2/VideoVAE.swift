@@ -74,6 +74,71 @@ public struct VideoVAEDecoder {
         return x
     }
 
+    /// Spatial halo+crop tiling (BLOCKSTREAM-EXPANSION-EVAL §3 — the 4K decode gate; validated by
+    /// `RunLTX2 --vae-tile-gate`). The decoder is spatially LOCAL (channel-axis norms only, pure
+    /// pixel-shuffle upsampling — no attention), so a tile decoded with a real-neighbour halo and
+    /// hard-cropped matches the whole-frame decode inside the halo's reach: the vae22 method, no
+    /// blend, no accumulation buffer. Measured (RF probe, 40×40 latent, stock weights, fp32):
+    /// architectural spatial RF = 15.12 latent cells/side; halo 16 is BIT-EXACT (max|Δ|=0 — MLX
+    /// convs are shape-invariant across window widths here); influence decays fast, so small halos
+    /// are perceptually exact: halo 4 → 67.8 dB min seam PSNR, halo 5 → 74.0 dB (temporal chunking
+    /// shipped at 66.2 dB). Default halo 5. ⚠️ The lever is 4K-only by arithmetic: at 704×512 the
+    /// latent (22×16) is smaller than the bit-exact halo, and even at halo 5 tiling only pays once
+    /// window ≪ grid — 1080p is marginal, 4K (120×68) is the target. Crop math is pure (no
+    /// temporal analog of drop-first): latent window [w0, w0+win) → keep px [32·(a−w0), 32·(a−w0)
+    /// + 32·(b−a)).
+    ///
+    /// Windows are UNIFORM (the MiniMax-H3 idea): every window is exactly min(L, maxTile+2·halo)
+    /// cells, slid inward at the global edges with the crop offset absorbing the shift — one
+    /// compiled graph shape across all tile positions instead of a ragged edge shape. The first
+    /// window still starts at cell 0 (clamp), so global-edge zero-padding matches the whole-frame
+    /// decode exactly.
+    public func decodeSpatialTiled(_ latent: MLXArray, tilesH: Int, tilesW: Int, halo: Int) -> MLXArray {
+        let nh = max(1, tilesH), nw = max(1, tilesW), h = max(0, halo)
+        guard nh > 1 || nw > 1 else { return decode(latent) }
+        let H = latent.dim(3), W = latent.dim(4)
+        let rows = VideoVAEDecoder.tileBounds(H, nh), cols = VideoVAEDecoder.tileBounds(W, nw)
+        let winH = min(H, (rows.map { $0.1 - $0.0 }.max() ?? H) + 2 * h)
+        let winW = min(W, (cols.map { $0.1 - $0.0 }.max() ?? W) + 2 * h)
+        let prof = MLXProfiler.shared
+        var rowStrips: [MLXArray] = []
+        for (r0, r1) in rows {
+            var pieces: [MLXArray] = []
+            for (c0, c1) in cols {
+                let wr0 = max(0, min(r0 - h, H - winH))
+                let wc0 = max(0, min(c0 - h, W - winW))
+                let span = prof.begin("vae-decode", "tile[\(r0),\(r1))×[\(c0),\(c1))",
+                                      note: "window[\(wr0),\(wr0 + winH))×[\(wc0),\(wc0 + winW))")
+                var px = decode(latent[0..., 0..., 0..., wr0 ..< (wr0 + winH), wc0 ..< (wc0 + winW)])
+                let pr0 = 32 * (r0 - wr0), pc0 = 32 * (c0 - wc0)
+                px = px[0..., 0..., 0..., pr0 ..< (pr0 + 32 * (r1 - r0)), pc0 ..< (pc0 + 32 * (c1 - c0))]
+                eval(px)
+                prof.end(span)
+                pieces.append(px)
+                Memory.clearCache()   // keep the pool tile-bound (the decode's dominant allocation)
+            }
+            let strip = pieces.count == 1 ? pieces[0] : MLX.concatenated(pieces, axis: 4)
+            eval(strip)
+            rowStrips.append(strip)
+            Memory.clearCache()
+        }
+        return rowStrips.count == 1 ? rowStrips[0] : MLX.concatenated(rowStrips, axis: 3)
+    }
+
+    /// Near-equal contiguous partition of [0, size) into n tiles (drops empties) — the vae22
+    /// `tileBounds22` pattern. Public so gates/callers can recover the kept-tile seam positions.
+    public static func tileBounds(_ size: Int, _ n: Int) -> [(Int, Int)] {
+        let base = size / n, rem = size % n
+        var bounds: [(Int, Int)] = []
+        var s = 0
+        for i in 0 ..< n {
+            let e = s + base + (i < rem ? 1 : 0)
+            if e > s { bounds.append((s, e)) }
+            s = e
+        }
+        return bounds
+    }
+
     /// LOW-TIER-PLAN T1 seam (validated by `RunLTX2 --vae-chunk-gate`): decode the latent in
     /// TEMPORAL CHUNKS with a halo per side so the decode-stage peak is chunk-bound, not
     /// clip-length-bound. Frame math: F latent frames decode to `8F−7` pixel frames (three
@@ -85,10 +150,20 @@ public struct VideoVAEDecoder {
     /// The halo absorbs the non-causal receptive field (k=3 convs at 4 temporal scales); its exact
     /// safe minimum is derived empirically against the gate (start ≥1; T0 default 4). Each chunk is
     /// eval'd and the pool cleared, so peak ≈ one chunk's decode.
-    public func decodeChunked(_ latent: MLXArray, chunkFrames: Int, halo: Int) throws -> MLXArray {
+    ///
+    /// Composes with spatial tiling (outer temporal, inner spatial): each temporal window is decoded
+    /// via `decodeSpatialTiled`, which returns exactly the shape `decode` would, so the temporal
+    /// trim math is untouched, and every spatial window carries the full temporal halo so the two
+    /// axes' halos never interact. `spatialTiles* = 1` is the pre-existing behaviour.
+    public func decodeChunked(
+        _ latent: MLXArray, chunkFrames: Int, halo: Int,
+        spatialTilesH: Int = 1, spatialTilesW: Int = 1, spatialHalo: Int = 5
+    ) throws -> MLXArray {
         let F = latent.dim(2)
         let chunk = max(1, chunkFrames), h = max(1, halo)
-        guard F > chunk else { return decode(latent) }
+        guard F > chunk else {
+            return decodeSpatialTiled(latent, tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
+        }
         let prof = MLXProfiler.shared
         let totalChunks = (F + chunk - 1) / chunk
         var chunkIndex = 0
@@ -102,7 +177,8 @@ public struct VideoVAEDecoder {
             let ws = max(0, a - h), we = min(F, b + h)
             let hl = a - ws, hr = we - b
             let span = prof.begin("vae-decode", "chunk[\(a),\(b))", note: "window[\(ws),\(we)) halo(\(hl),\(hr))")
-            var px = decode(latent[0..., 0..., ws ..< we])          // (1,3,8W−7,H,W)
+            var px = decodeSpatialTiled(latent[0..., 0..., ws ..< we],           // (1,3,8W−7,H,W)
+                                        tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
             let startTrim = (a == 0) ? 0 : 8 * hl - 7
             let endTrim = (b == F) ? 0 : 8 * hr
             px = px[0..., 0..., startTrim ..< (px.dim(2) - endTrim)]

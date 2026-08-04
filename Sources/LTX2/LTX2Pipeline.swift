@@ -274,9 +274,21 @@ public final class LTX2Pipeline {
         let saved = Memory.cacheLimit
         if capGB >= 0 { Memory.cacheLimit = capGB * 1_000_000_000 }
         defer { if capGB >= 0 { Memory.cacheLimit = saved } }
+        // Spatial halo+crop tiling (BLOCKSTREAM-EXPANSION-EVAL §3, `--vae-tile-gate`): 4K-only by
+        // arithmetic — at ≤720p the tile windows span the whole grid, so default OFF; opt in via
+        // LTX_VAE_TILES ("2" → 2×2, "2x3" → tilesH×tilesW) + LTX_VAE_SHALO (spatial halo, default 5
+        // ≈ 74 dB seam; 16 = bit-exact). Composes inside each temporal chunk (outer temporal,
+        // inner spatial).
+        let tileSpec = (env["LTX_VAE_TILES"] ?? "1").split(separator: "x").compactMap { Int($0) }
+        let tilesH = tileSpec.first ?? 1
+        let tilesW = tileSpec.count > 1 ? tileSpec[1] : tilesH
+        let sHalo = env["LTX_VAE_SHALO"].flatMap { Int($0) } ?? 5
         let fLat = spatial.dim(2)
-        guard chunk > 0, fLat > chunk + 2 * halo else { return vae!.decode(spatial) }
-        return try vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo)
+        guard chunk > 0, fLat > chunk + 2 * halo else {
+            return vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo)
+        }
+        return try vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo,
+                                      spatialTilesH: tilesH, spatialTilesW: tilesW, spatialHalo: sHalo)
     }
 
     private func dropDecoder() {
