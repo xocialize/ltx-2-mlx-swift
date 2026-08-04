@@ -24,7 +24,11 @@ in the parent [`../CLAUDE.md`](../CLAUDE.md)** (auto-loads) — don't duplicate 
 `Sources/MLXLTX2/` — the engine wrapper: `MLXLTX2Package` (ModelPackage, `.textToVideo` incl. i2v
 via `initImage`), `LTX2Configuration` (+ `WeightPrewarming` conformance), `FrameCodec` (frames→H.264
 + AAC-muxed MP4), `ImageInput` (decode/preprocess the i2v init frame). `Sources/RunLTX2/` — the
-parity-gate CLI. `parity/` — Python golden dumpers + (gitignored) `goldens/`.
+parity-gate CLI, plus **`--bench-e2e`** (`BenchE2E.swift`) — the protocol A/B harness for any
+timing/memory lever claim: ABBA arm alternation, excluded warmups, prewarm, cooldowns, 25 ms phys
+sampling, MEASURABLE/NOISE verdicts, receipts → `probes/`. **Any "X is faster/lighter" claim about
+an e2e lever should cite one of its receipts — single-pair timings are how the ±15 s desktop drift
+manufactures findings (see `BENCH.md`).** `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 
 ## Conventions
 

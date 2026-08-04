@@ -1,0 +1,112 @@
+{
+  "blockRecords" : [
+    {
+      "arm" : "A",
+      "block" : 0,
+      "loadSeconds" : 1.421172022819519,
+      "postDropFloorGB" : 41.675551088,
+      "prewarmSeconds" : 17.928714990615845
+    },
+    {
+      "arm" : "B",
+      "block" : 0,
+      "loadSeconds" : 1.2122710943222046,
+      "postDropFloorGB" : 40.079766136,
+      "prewarmSeconds" : 18.201804995536804
+    }
+  ],
+  "blocks" : 1,
+  "cooldownS" : 0,
+  "geometry" : "704x512x9f fps=24 one-stage",
+  "git" : "7a37941+dirty",
+  "host" : "Mac17,7",
+  "label" : "null-i9wa",
+  "memGB" : 137,
+  "os" : "Version 27.0 (Build 26A5388g)",
+  "prompt" : "a cat playing piano",
+  "runs" : [
+    {
+      "arm" : "A",
+      "block" : 0,
+      "mlxActiveGB" : 38.019702616,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 54.688170624,
+      "run" : 0,
+      "thermalAfter" : "nominal",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 25.989796996116638
+    },
+    {
+      "arm" : "A",
+      "block" : 0,
+      "mlxActiveGB" : 38.019708048,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 54.62175032,
+      "run" : 1,
+      "thermalAfter" : "nominal",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 17.07002592086792
+    },
+    {
+      "arm" : "A",
+      "block" : 0,
+      "cosineVsArmFirst" : 1.0000001192092896,
+      "mlxActiveGB" : 38.058641864,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 54.688678912,
+      "run" : 2,
+      "thermalAfter" : "nominal",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 16.474611043930054
+    },
+    {
+      "arm" : "B",
+      "block" : 0,
+      "mlxActiveGB" : 38.058516224,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 54.97315428,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 32.59161603450775
+    },
+    {
+      "arm" : "B",
+      "block" : 0,
+      "mlxActiveGB" : 38.058521656,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 54.728033352,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 24.954704999923706
+    },
+    {
+      "arm" : "B",
+      "block" : 0,
+      "cosineVsArmFirst" : 1.0000001192092896,
+      "mlxActiveGB" : 38.097455472,
+      "mlxCacheGB" : 0.025908004,
+      "outputMean" : -0.6474638,
+      "outputStd" : 0.5232868,
+      "peakPhysGB" : 55.004235112,
+      "run" : 2,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 26.48081600666046
+    }
+  ],
+  "runsPerBlock" : 2,
+  "seed" : 42,
+  "stamp" : "20260804-000735"
+}

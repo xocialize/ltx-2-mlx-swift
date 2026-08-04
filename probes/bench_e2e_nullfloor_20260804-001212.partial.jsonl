@@ -1,0 +1,3 @@
+{"peakPhysGB":54.651814624,"mlxActiveGB":38.019653464,"block":0,"mlxCacheGB":0.025908004,"outputMean":-0.6474638,"run":0,"arm":"A","thermalAfter":"fair","outputStd":0.5232868,"wallSeconds":39.74633002281189,"thermalBefore":"fair"}
+{"peakPhysGB":54.721905808,"outputMean":-0.6474638,"thermalAfter":"fair","block":0,"mlxCacheGB":0.025908004,"mlxActiveGB":38.019658896,"thermalBefore":"fair","wallSeconds":26.289618015289307,"arm":"A","run":1,"outputStd":0.5232868}
+{"peakPhysGB":54.7966826,"outputMean":-0.6474638,"thermalAfter":"fair","block":0,"mlxCacheGB":0.025908004,"mlxActiveGB":38.058592712,"thermalBefore":"fair","wallSeconds":25.009364008903503,"cosineVsArmFirst":1.0000001192092896,"arm":"A","run":2,"outputStd":0.5232868}

@@ -138,7 +138,7 @@ int4→int8→bf16 with 5-min cooldowns). Verdict: int8 is ~1.3× faster than in
 |---|---|---|---|
 | int8 | **95.3 s / 98.6 s** (two rounds — reproducible) | 8.1 → 10.9 s | 36.8 GB |
 | int4 | **140.4 s** | 11.3 → 17.8 s | 27.5 GB |
-| bf16 | _no datum_ — bare-gate watchdog, twice (see below) | — | — |
+| bf16 | ~~_no datum_ — bare-gate watchdog, twice_~~ → **168.5 s** (2026-08-03, weights on PCI-E SSD; **uncooled**, 3rd bf16 run back-to-back — treat as an upper bound vs the cooled rows) | — | 66.2 GB |
 
 - **int8 > int4 for speed, consistently** (per-step median ≈ 9.9 s vs ≈ 12.9 s, both rounds
   agree). Combined with int8 being quality-transparent (vs int4's documented sample divergence):
@@ -152,12 +152,55 @@ int4→int8→bf16 with 5-min cooldowns). Verdict: int8 is ~1.3× faster than in
   DIFFERENT, ~2× worse regime; (c) every wall-clock claim in this doc must state thermal
   condition; (d) the M1 plan's 3×-drift leg is the highest-information speed measurement on the
   laptop — the desktop already degrades this much on a Studio-class chassis.
-- **Open bug (harness, reproducible 2×):** the bare `--speed-bench bf16` leg dies at its first
-  nv=5632 forward with the Metal watchdog (`kIOGPUCommandBufferCallbackErrorTimeout`) despite
-  file prewarm + nv=1 DiT warmup; the app/wrapper path runs bf16 at this shape fine. Gate gap
-  (first big-shape bf16 buffer = shape-specialization compile + heaviest compute in one go), not
-  a pipeline regression. Fix when a bf16 datum is actually needed: target-shape 1-step warmup
-  inside the gate; bf16 is the Unconstrained path, so it gates nothing tier-shaped today.
+- **~~Open bug (harness, reproducible 2×)~~ → CLOSED 2026-08-03 as ISSUES.md I9.** The bare
+  `--speed-bench bf16` leg died at its first nv=5632 forward with the Metal watchdog
+  (`kIOGPUCommandBufferCallbackErrorTimeout`) despite file prewarm + nv=1 DiT warmup, while the
+  app/wrapper path ran bf16 at this shape fine. **The diagnosis recorded here — "shape-
+  specialization compile + heaviest compute in one go" — was wrong: it is I/O, not compute.**
+  MLX safetensors arrays are lazy, so weight bytes are pulled *inside* the first generation's
+  command buffers; the weight tree sits on the **USB** `DEV_ARCHIVE` volume (~250–475 MB/s), and
+  bf16 is the only quant whose working set (66.2 GB at this shape) stops the OS from serving those
+  reads out of page cache. Restaging the tree on a PCI-E SSD makes the identical run pass 3/3 —
+  that is where the bf16 row above comes from. **The prewarm + nv=1 warmup were never the gap**,
+  and a target-shape warmup would not have fixed it. Full A/B and mechanism: ISSUES.md I9.
+  ⚠️ Corollary for every number in this section: **the int8/int4 rows above were also USB-bound**,
+  so their run-1 legs include weight page-in. State the storage volume on any re-measurement.
+
+**⟲ RE-MEASURED 2026-08-03 (late) — first protocol-grade ladder, from the Satechi store, via
+`--bench-e2e` (receipt `probes/bench_e2e_ladder-pruna-121f_20260804-012008.{md,json}`).** Four arms
+(bf16 · bf16+pruna · q8 · q4) × 2 ABBA blocks × (1 excluded warmup + 2 measured), 60 s cooldowns,
+704×512×121f one-stage, 32 generations, zero aborts. ⚠️ **This is the SUSTAINED regime** (3 gens
+per visit, 60 s cooldowns — between July's 5-min-cooled run-1 legs and its back-to-back run-2s),
+which the numbers reflect; the within-block heat ramp is visible in every arm (run 2 ≈ +10–15%
+over run 1; warmups — the coolest slot — often ran FASTER than the measured runs that followed).
+
+| arm | median (min–max) | peak phys | vs July's cooled leg |
+|---|---|---|---|
+| bf16 | **173.3 s** (148.1–185.4) | 67.76 GB | first protocol datum (chip's 168.5 s single-shot agrees) |
+| bf16+pruna | 160.3 s (148.7–168.5) | **60.63 GB** | — (see S8 answer below) |
+| q8 | 160.2 s (147.4–168.2) | 50.93 GB | July cooled 95.3/98.6 s · July sustained 226–233 s |
+| q4 | 149.5 s (139.6–158.3) | 41.88 GB | July cooled 140.4 s · July sustained 188–245 s |
+
+- 🔑 **The July "int8 is 1.3× faster than int4" ordering INVERTS under sustained load** — q4's
+  median beat q8's by 10.7 s here (⚠️ NOISE by the session's own spread rule, so direction only —
+  but July's own run-2 data agrees: int8 226–233 vs int4 188–245). Reading: int8's bandwidth
+  advantage is a **cooled-regime** property; under thermal cap the smaller checkpoint at least
+  ties. **The standard64 int8 recommendation stands for single-clip interactive UX and should NOT
+  be extrapolated to batch/queued generation without a cooled-regime A/B.**
+- 🚨 **Doctrine refinement — "q8 reproduces bf16" does NOT hold e2e at this geometry.** Same seed,
+  same binding, both arms bit-deterministic (see below), yet q8-vs-bf16 final pixels land at
+  **cos 0.878** (q4: 0.832; pruna-on-same-trajectory: 0.9989 — the sanity control). Per-forward
+  q8 ≈ bf16 (~0.9999) remains true; over an 8-step × 121f trajectory the divergence compounds into
+  a **different (equally valid) sample**. q8 = *closest* tier, not *reproducing* tier, at long
+  geometries. (The 9f behavior is unmeasured — geometry may matter.)
+- ✅ **I8 narrowed:** q8 AND q4 were bit-identical across all 4 measured runs *including a fresh
+  pipeline load in block 1* (`cos(first)=1.000000` throughout) — so the documented q8
+  nondeterminism is **cross-process only**, not cross-load-within-process, at e2e granularity.
+- ⚠️ **Open question — quant-arm peaks are +14 GB vs July** (q8 50.9 vs 36.8; q4 41.9 vs 27.5)
+  while bf16 matches its own recent single-shot (+1.6). Leading hypothesis: July's peaks were
+  cooled single-generation samples, vs this session's peak-across-3-generations with no
+  `clearCache` between measured runs (pool growth); testable with `--runs 1 --blocks 4`. Not
+  explained, not yet investigated — do not quote either peak set as "the" footprint without regime.
 
 ---
 
@@ -243,6 +286,37 @@ order (`MLX_PROFILE_DEEP=vae`):
 - **Decoder kernel stragglers:** hand-rolled conv/norm chains in the up-blocks (the fused-norms
   sweep covered pixelNorm; a deep profile will show what else repeats 45×).
 Quality gates: `--vae-decode-gate` + `--vae-chunk-gate` byte-level seam checks.
+
+**⟲ THE DESKTOP e2e QUESTION ANSWERED 2026-08-03 (the "±15 s swamps it" gap this section named —
+receipt `probes/bench_e2e_ladder-pruna-121f_20260804-012008`, protocol details under S6's
+re-measurement).** Stock vs Pruna decoder, same bf16 DiT, 704×512×121f one-stage unchunked,
+2 ABBA blocks × 2 measured runs:
+
+- **Time: Δmedian −13.0 s (173.3 → 160.3 s) — NOISE** against the session's 37.3 s spread. The
+  direction is right and the magnitude is plausibly real (the component A/B predicts ~5 s of it),
+  but under a sustained-load session it is **not separable from thermal drift** — which is the
+  receipt-grade version of what this section suspected: **on desktop, the e2e time win does not
+  clear the noise floor.** The time payoff remains a LOW-tier/chunked hypothesis (decode = 32% of
+  compact24), and its validation belongs to the target-hardware app campaign, not this box.
+- **Memory: peak phys 67.76 → 60.63 GB = −7.1 GB e2e, consistent in both blocks** (61.2/61.3 vs
+  68.6/68.7). Memory is far less drift-sensitive than time, so **this is the solid desktop
+  deliverable of the lever** — it matches the decode-activation drop measured at the component
+  level and is the number the footprint re-declaration item above should start from.
+- Sanity control: pruna-vs-stock final pixels at **cos 0.9989** (same DiT trajectory, decode-only
+  delta) against q8's 0.878 / q4's 0.832 sample divergence — the decoder swap changes rendering,
+  not the sample, exactly as designed. ⟲ **The perceptual A/B ran the same night and PASSED**
+  (Xcode agent, bridge mailbox 2026-08-03): bf16-DiT-isolated decoder A/B at compact24-chunked
+  512×288×121f, pruna engagement MD5-confirmed, frames perceptually identical, 8×-amplified diff
+  near-nil, **SSIM 0.976 / PSNR 34.6 dB avg** (conservative — over H.264 frames), audio track
+  bit-identical. Two perceptual caveats stay open before promotion: **playback-motion eyeball**
+  (shimmer isn't visible in stills) and a **face-containing prompt**. Clips:
+  `/tmp/ltx-ab/{stock,pruna}.mp4`.
+
+**Pruna lever status after tonight, in one place:** ported + numerically gated ✅ · perceptual
+A/B ✅ (2 caveats above) · desktop e2e memory **−7.1 GB** receipted ✅ · desktop e2e time = NOISE
+(as this section predicted) · **remaining before any default change: the 24 GB target's wall-clock
++ peak (bridge asks #2/#3, queued for the next M5 Pro session), the two perceptual caveats, and
+the footprint re-declaration.** Stock stays the default meanwhile.
 
 ## S9 — i2v wall-clock on target  (effort S to re-measure, then rides S4 · **data gap**)
 
