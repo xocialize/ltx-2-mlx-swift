@@ -1126,6 +1126,11 @@ func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     sampler.resetMax()
     let r0 = Date()
     let resp = try await pkg.run(request(frames)) as! T2VResponse
+    if let save = env["LTX_T2V_SAVE"], !save.isEmpty {
+        let url = URL(fileURLWithPath: (save as NSString).expandingTildeInPath)
+        try resp.video.data.write(to: url)
+        print("[t2v-spot] saved \(url.path) (\(String(format: "%.1f", Double(resp.video.data.count) / 1_000_000)) MB)")
+    }
     let peak = sampler.maxBytes(); sampler.stop()
     let activation = peak > floor ? peak - floor : 0
     print(String(format: "[t2v-spot] run %.1fs  mp4 %.1f MB", Date().timeIntervalSince(r0),
