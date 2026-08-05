@@ -53,6 +53,64 @@ twice per outer step). **Batch them on the batch axis instead** (B=2 for CFG). B
 latency, under block streaming it **halves granule I/O** — the streamer reads each block's weights
 once for B=2 rather than twice. Do not inherit the oracle's serial pass structure.
 
+### 🚨 …but the premise check kills the 1–2 week estimate: **CFG needs a checkpoint we do not have**
+
+Verified 2026-08-04, before writing any code:
+
+- **CFG is a *dev*-model feature.** The oracle's `--distilled` mode *"skips CFG entirely"*, and
+  `ti2vid_two_stages.py:92-99` is explicit: *"Stage 1: Dev model + CFG guidance… Requires
+  `dev_transformer` **and** `distilled_lora`."* The distilled path exists precisely because the
+  CFG behaviour is already baked into the weights — running CFG on top of it would double-apply
+  guidance.
+- **We hold the distilled variant only *locally*.** `/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx{,-q8,-q4}`
+  each contain exactly one transformer: `transformer-distilled.safetensors`. The shipped
+  `config.json` declares `"variants": {"distilled": …, "dev": …}`.
+- 🚨 **CORRECTION (same session, before acting on it): the dev weights DO exist, and they are a
+  DOWNLOAD, not a conversion project.** I first concluded "no MLX conversion of dev exists" — that
+  was **wrong**. `dgrauet/ltx-2.3-mlx-q8` contains **`transformer-dev.safetensors`**, plus
+  `ltx-2.3-22b-distilled-lora-384.safetensors` (+ a `-1.1`), `spatial_upscaler_x1_5_v1_0.safetensors`
+  and `temporal_upscaler_x2_v1_0.safetensors`. The repo is **~93 GB; we pulled ~47 GB of it.**
+  🔑 **The error: I listed the local store, searched HF for a repo whose *name* contained "dev",
+  found none, and concluded the artifact didn't exist — but dev is a FILE inside the repos we
+  already use, not a separate repo. A partial download is indistinguishable from an unavailable
+  artifact when you only look at the local filesystem.** This is PORT-QUEUE's availability lesson
+  inverted: that one says a ✅ licence check is not a downloadability check; this one says a local
+  `ls` is not an availability check. **Probe the remote file list, not the local directory.**
+- **So the real work order is much cheaper than stated above:** `hf` download the dev transformer
+  (+~20 GB at q8) → port guidance. No conversion, no re-hosting job. ⚠️ The weight-durability rule
+  still applies at ship time — a shipped `WeightSource` must point at a namespace we control, so
+  mirroring would be part of *productising* it, not of experimenting with it.
+- ✅ **Same correction unblocks the upsamplers cheaply:** the x1.5 spatial and x2 temporal
+  upsamplers the audit lists as "oracle can load 3, we have 1" are **also just files we never
+  downloaded**, not a porting gap in the weights.
+- 🚨 **And the runtime cost probably disqualifies it as a product tier anyway.** Dev + CFG is
+  **30 steps × 2 forwards = 60** against distilled's **8** — roughly **7.5× the compute**. Against
+  our own measured 121f @704×512 distilled median of **173 s** (`probes/bench_e2e_ladder-pruna-121f_…`),
+  that extrapolates to **~20+ minutes per clip**. For a macOS product that ships the fast path
+  first, that is not a v1 feature.
+
+🟡 **Verdict after the correction: CFG is DEFERRED on COST, not on availability.** The weights are
+one download away. What still argues against it, and is unaffected by the correction:
+
+- **~7.5× the compute** (60 forwards vs 8) ⇒ ~20+ min/clip extrapolated from our measured 173 s at
+  121f/704×512. For a product shipping the fast path first, that is not a v1 tier.
+- **+~20 GB resident per quant** for a second transformer, against tiers already tight on memory.
+- The distilled path we ship is *the* product path; CFG buys a quality tier nobody has asked for
+  yet.
+
+**Revisit when** a quality tier is explicitly wanted and ~20 min/clip is acceptable. ⚠️ **Do not
+"try CFG on the distilled checkpoint" as a shortcut** — the distilled weights already have the
+guidance behaviour baked in, so applying CFG on top double-applies it; if that experiment is ever
+run it needs a perceptual gate, not a cosine.
+
+✅ **Cheap, unblocked follow-on regardless:** download the x1.5 spatial + x2 temporal upsamplers and
+wire the config-driven variant selection (#5) — that is the audit's "oracle can load 3, we have 1"
+gap closed for the price of a download plus a config read.
+
+✅ **Consequence: modality tiling (#7) becomes the top capability item**, because it unlocks
+1080p 8s+ **on the distilled checkpoint we already hold** — no new weights, no new storage, and its
+memory premise is now measured-and-confirmed (`TILING-PLAN.md`, `--sdpa-mask-probe`).
+
 ---
 
 ## 3. Serial constructs — where we mirrored, and where we are WORSE
@@ -150,8 +208,8 @@ hot-swappable) is likewise arguably better than the oracle's fuse-into-weights.
 |---|---|---|---|
 | 1 | ✅ **DONE 2026-08-04 — `FrameCodec` on-device repack.** 121f @704×512 encode **3.5 s → 0.2 s (~15×)**, byte-identical (`--frame-codec-gate`, 1,441,792 bytes). See below. | biggest pure loss in the port, zero correctness risk, was scoped as S2 step 2 | ~2 h (est. 1–2 d) |
 | 2 | ⛔ **`asyncEval` in the denoise loop — ASSESSED AND DROPPED 2026-08-04.** The win is bounded by host graph-build time, which is milliseconds against a **~6.1 s** denoise step (SPEED-PLAN S1 at compact24) — call it ~0.1%, unmeasurable against this box's noise floor. It would also **break the profiler's per-step timing** (the span would close before the GPU finishes), and the oracle's `mx.async_eval` is there for *memory* ("force computation"), which our blocking `eval` already provides. Not a win; not doing it. | — |
-| 3 | **CFG + negative prompt** | unlocks six pipelines + the biggest quality lever; batch the passes (§2) | 1–2 w |
-| 4 | **Configurable steps + `ltx2_schedule`** | prerequisite for #3 (CFG needs 15–30 steps, not 8) | 2–3 d |
+| 3 | ⛔ **CFG + negative prompt — DEFERRED 2026-08-04 on a premise check.** Needs the **dev** checkpoint, which we do not have and which exists in no MLX conversion; acquiring it is a Tier-3 convert + re-host + ~38 GB/quant, and dev+CFG runs ~7.5× our distilled compute (~20+ min/clip). See §2. | — |
+| 4 | **Configurable steps + `ltx2_schedule`** | ⬇️ demoted with #3 (its main driver was CFG's 15–30 steps). Still worth having on its own — the distilled path has **two hardcoded sigma tables** and no step knob at all, so there is no quality/speed dial anywhere in the port | 2–3 d |
 | 5 | **Read hyperparams from checkpoint config** | closes the silent-breakage class that bit the oracle twice; also the cheap route to the other two upsamplers | 2–4 d |
 | 6 | **Attention-mask system** | blocking prerequisite for keyframe, retake, IC strength, and STG | 1 w |
 | 7 | **Modality tiling** (`TILING-PLAN.md`) | the DiT attention wall; unlocks 1080p 8s+ which we cannot do at all | 1–2 w |
