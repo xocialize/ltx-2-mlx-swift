@@ -288,6 +288,31 @@ cooled box) with `env.LTX_CACHE_LIMIT_GB` as the arm.
    ⚠️ Scope: 9f one-stage bf16 on a 128 GB host. **A default change hinges on 121f** (the pool
    serves per-step denoise transients; a 2 GB cap could thrash where 8 steps × nv=5632 reuse
    buffers) — that arm is next, then the QuantFootprint re-measure per note 3.
+
+   ✅ **121f arm RUN same morning (`probes/bench_e2e_cachecap121_20260805-134617`) — the cap is at
+   worst free and plausibly ~5% FASTER, and it saves 10.88 GB:** base median **157.1 s / 66.75 GB**
+   vs cap2 **149.4 s / 55.87 GB** → Δmed **−7.7 s > 7.0 s spread = MEASURABLE** (same sign in both
+   blocks; treat the speed claim as directional — the margin is one spread-width), outputs again
+   **bit-identical**. The cap's benefit *grows* with geometry (−4.05 GB @9f → −10.88 GB @121f)
+   because the uncapped pool accumulates per-step transients across the denoise loop.
+   ⚠️ Ratchet-detector observation: block floors climbed 2.12 → 3.70 → 5.29 GB across the 121f
+   session (flat 0.68–0.99 at 9f) — a mild per-process residency ratchet at big geometry that
+   `clearCache` doesn't fully return; resets on process exit; worth a look if CLI sessions ever
+   chain many big generations.
+
+   🔑 **RESOLUTION — no default change is needed, because the ENGINE already ships this exact cap.**
+   `MLXServeEngine`'s `GPUCacheConfiguration.automatic` resolves to **`min(2 GB, 5% of budget)`**
+   (`mlx-engine-swift/Sources/MLXServeCore/GPUCachePolicy.swift:78`) and is applied at engine init
+   (ENGINE-NEEDS N5, engine ≥0.21.0). The shipping app path has had the 2 GB cap all along; these
+   receipts **validate the engine's default with model-specific evidence** (free at 9f, ≥free at
+   121f, output-invisible, −4 to −11 GB).
+   🚨 **The real consequence is a measurement-basis correction: the bare CLI lane (RunLTX2
+   speed-bench/mem-bench/bench-e2e) is the ONLY uncapped path**, so CLI-measured peaks at big
+   geometry OVERSTATE the shipping path by up to ~11 GB — e.g. the ladder's bf16@121f "67.76 GB"
+   is a CLI-uncapped figure; the app-path equivalent is ~55.9 GB. **From now on: bench arms that
+   claim shipping-path relevance should set `env.LTX_CACHE_LIMIT_GB=2` (and receipts print arm env,
+   so the basis is visible); uncapped arms remain valid for comparing against historical
+   receipts.** QuantFootprints were measured through the engine path and are unaffected.
 2. **Quantify (a) properly**: what is the encode peak with the DiT *not* resident? Expected ~14.5 GB,
    which would move the run peak to denoise/decode (~42 GB) — **a ~10 GB reduction, larger than
    anything modality tiling achieved.** Measure before building.
