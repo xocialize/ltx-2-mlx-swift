@@ -313,7 +313,34 @@ public final class LTX2Pipeline {
     /// `LTX_VAE_CHUNK` env still overrides for experiments.
     public var vaeChunkFrames = 8
 
+    /// GAP-ANALYSIS #8 — the streamed decode→mux handoff. When passed to `t2v`/`t2vTwoStage`:
+    /// audio is decoded FIRST and delivered via `onAudioReady` (so an MP4 writer can finish its
+    /// audio track before any frame — the interleave-deadlock ordering), then video pixels stream
+    /// to `onVideoChunk` per decode chunk as channels-first `(1, 3, f, H, W)`, and the WHOLE pixel
+    /// volume never materializes. `Output.video` is then an EMPTY placeholder (`dim(2) == 0`) —
+    /// callers that stream must not read it.
+    public struct StreamingSinks {
+        public let onAudioReady: (MLXArray?) throws -> Void
+        public let onVideoChunk: (MLXArray) throws -> Void
+        public init(onAudioReady: @escaping (MLXArray?) throws -> Void,
+                    onVideoChunk: @escaping (MLXArray) throws -> Void) {
+            self.onAudioReady = onAudioReady
+            self.onVideoChunk = onVideoChunk
+        }
+    }
+
+    /// Whether this pipeline decodes an audio track (audio_vae + vocoder present) — the wrapper
+    /// needs it BEFORE running, to declare the writer's audio input up front.
+    public var audioEnabled: Bool { hasAudio }
+
     private func decodePixels(_ spatial: MLXArray) throws -> MLXArray {
+        var parts: [MLXArray] = []
+        try decodePixels(spatial) { parts.append($0) }
+        return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
+    }
+
+    /// Sink form — one chunk-policy code path for both lanes (the VideoVAE pattern).
+    private func decodePixels(_ spatial: MLXArray, sink: (MLXArray) throws -> Void) throws {
         // Whole-clip decode reports once here; the chunked path refines with per-chunk
         // step/totalSteps from inside `decodeChunked`.
         LTX2Progress.report(.decode)
@@ -339,10 +366,13 @@ public final class LTX2Pipeline {
         let sHalo = env["LTX_VAE_SHALO"].flatMap { Int($0) } ?? 5
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else {
-            return vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo)
+            let px = vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo)
+            try sink(px)
+            return
         }
-        return try vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo,
-                                      spatialTilesH: tilesH, spatialTilesW: tilesW, spatialHalo: sHalo)
+        try vae!.decodeChunked(spatial, chunkFrames: chunk, halo: halo,
+                               spatialTilesH: tilesH, spatialTilesW: tilesW, spatialHalo: sHalo,
+                               sink: sink)
     }
 
     private func dropDecoder() {
@@ -373,6 +403,10 @@ public final class LTX2Pipeline {
     public struct Output {
         public let video: MLXArray
         public let audio: MLXArray?
+        public init(video: MLXArray, audio: MLXArray?) {
+            self.video = video
+            self.audio = audio
+        }
     }
 
     /// Load the pipeline. Eagerly loads ONLY the persistent DiT backbone (the resident floor + LoRA
@@ -470,7 +504,8 @@ public final class LTX2Pipeline {
     /// and optional 48kHz stereo audio.
     public func t2v(
         prompt: String, height: Int = 256, width: Int = 256, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
+        fps: Double = 24, seed: UInt64? = nil, streaming: StreamingSinks? = nil,
+        isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
         // 2. Latent geometry
         let fLat = (numFrames + 7) / 8, hLat = height / 32, wLat = width / 32
@@ -506,11 +541,20 @@ public final class LTX2Pipeline {
         // 5. Video: unpatchify → (1, 128, F, H, W) → VAE decode → pixels (decoder loaded now).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
-        let pixels = try decodePixels(vspatial)
-        // 6. Audio: decode the jointly-denoised audio latent (if audio components loaded)
+        // 6→5 REORDER (behavior-preserving: the two decodes are independent): audio first, so the
+        // streamed lane can finish the writer's audio track before the first video frame.
         let waveform = decodeAudio(afinal)
-        eval(pixels); if let waveform { eval(waveform) }
+        if let waveform { eval(waveform) }
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
+        let pixels: MLXArray
+        if let streaming {
+            try streaming.onAudioReady(waveform)
+            try decodePixels(vspatial, sink: streaming.onVideoChunk)
+            pixels = MLXArray.zeros([1, 3, 0, height, width])   // placeholder — documented on StreamingSinks
+        } else {
+            pixels = try decodePixels(vspatial)
+            eval(pixels)
+        }
         MLXProfiler.shared.end(decSpan)
         dropDecoder()
         MLXProfiler.shared.endRun()
@@ -690,10 +734,12 @@ public final class LTX2Pipeline {
     /// re-patchify → stage-2 refine at full resolution. Requires `supportsTwoStage`.
     public func t2vTwoStage(
         prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil, isolation: isolated (any Actor)? = #isolation
+        fps: Double = 24, seed: UInt64? = nil, streaming: StreamingSinks? = nil,
+        isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
         guard hasEncoder, hasUpsampler else {
-            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed)
+            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed,
+                                 streaming: streaming)
         }
 
         let fLat = (numFrames + 7) / 8
@@ -753,14 +799,23 @@ public final class LTX2Pipeline {
 
         let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
-        let pixels = try decodePixels(vspatial)
-        eval(pixels)
-        MLXProfiler.shared.end(decSpan)
+        // Audio FIRST (see t2v — the streamed lane needs the writer's audio track closed
+        // before the first video frame; the two decodes are independent).
         let audSpan = MLXProfiler.shared.begin("audio-decode", "audioVAE+vocoder")
         let waveform = decodeAudio(a2f)
         if let waveform { eval(waveform) }
         MLXProfiler.shared.end(audSpan)
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
+        let pixels: MLXArray
+        if let streaming {
+            try streaming.onAudioReady(waveform)
+            try decodePixels(vspatial, sink: streaming.onVideoChunk)
+            pixels = MLXArray.zeros([1, 3, 0, height, width])
+        } else {
+            pixels = try decodePixels(vspatial)
+            eval(pixels)
+        }
+        MLXProfiler.shared.end(decSpan)
         dropDecoder()
         MLXProfiler.shared.endRun()
         return Output(video: pixels, audio: waveform)

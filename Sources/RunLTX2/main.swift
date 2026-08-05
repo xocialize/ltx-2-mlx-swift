@@ -1074,6 +1074,65 @@ func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async t
 // the MP4 encode are all inside the sampled window) with a synthetic init frame at the max128
 // envelope, and reports the SPLIT line (floor / peak / activation) the hint is recalibrated from.
 @InferenceActor
+/// GAP-ANALYSIS #8 receipt vehicle: wrapper-level plain t2v (the STREAMED mux lane) with the
+/// floor/peak/activation split. A/B vs the materialized lane via `LTX_STREAM_MUX=0` — identical
+/// code path otherwise. Peaks are the datum; single-run wall-clock is not (BENCH.md).
+func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
+    let env = ProcessInfo.processInfo.environment
+    let base = "/Volumes/Satechi/Models/dgrauet"
+    let cfg = LTX2Configuration(
+        quant: .bf16,
+        ltxDirectory: URL(fileURLWithPath: "\(base)/ltx-2.3-mlx"),
+        transformerPath: nil,
+        gemmaDirectory: URL(fileURLWithPath: defaultGemma),
+        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+        profile: nil)
+    let lane = env["LTX_STREAM_MUX"] == "0" ? "MATERIALIZED" : "STREAMED"
+    print("[t2v-spot] request \(width)×\(height)×\(frames)f bf16 · mux lane: \(lane)")
+
+    let p0 = Date()
+    var warm: [URL] = []
+    for p in cfg.prewarmPaths {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: p.path, isDirectory: &isDir), isDir.boolValue {
+            warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(
+                at: p, includingPropertiesForKeys: nil)) ?? [])
+                .filter { $0.pathExtension == "safetensors" })
+        } else {
+            warm.append(p)
+        }
+    }
+    prewarmFiles(warm)
+    print(String(format: "[t2v-spot] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
+
+    let sampler = PhysSampler(); sampler.start()
+    let pkg = MLXLTX2Package(configuration: cfg)
+    try await pkg.load()
+    Memory.clearCache()
+
+    func request(_ nf: Int) -> T2VRequest {
+        T2VRequest(prompt: "a fox running down a beach at sunset, waves rolling in",
+                   numFrames: nf, fps: 24, width: width, height: height, seed: 42)
+    }
+    // Warmup at 9f (kernel compile + decode/encode stacks) — excluded from the measured peak.
+    _ = try await pkg.run(request(9))
+    Memory.clearCache()
+    let floor = physFootprintBytes()
+    print(String(format: "[t2v-spot] resident floor (post-warmup + clearCache): %.2f GB", gbOf(floor)))
+
+    sampler.resetMax()
+    let r0 = Date()
+    let resp = try await pkg.run(request(frames)) as! T2VResponse
+    let peak = sampler.maxBytes(); sampler.stop()
+    let activation = peak > floor ? peak - floor : 0
+    print(String(format: "[t2v-spot] run %.1fs  mp4 %.1f MB", Date().timeIntervalSince(r0),
+                 Double(resp.video.data.count) / 1_000_000))
+    print(String(format: "[t2v-spot] SPLIT lane=%@ floor=%.2f GB peak=%.2f GB activation=%.2f GB",
+                 lane as NSString, gbOf(floor), gbOf(peak), gbOf(activation)))
+    print(String(format: "[t2v-spot] SUMMARY lane=%@ shape=%dx%dx%d peak=%.2f act=%.2f",
+                 lane as NSString, width, height, frames, gbOf(peak), gbOf(activation)))
+}
+
 func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     // Tier + quant via env (BRIDGE-LTX-012 low-tier measurement): `LTX_TIER=<rawValue>` selects
     // the profile (default max128, preserving the BRIDGE-LTX-005 shape); the quant follows the
@@ -1432,6 +1491,11 @@ if args.contains("--connector-gate") {
     try await benchE2E()
 } else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") {
     try await tileGatesMain(args: args, positional: Array(positional))  // TileGates.swift (spatial tiling)
+} else if args.contains("--t2v-spot") {
+    let ints = positional.compactMap { Int($0) }
+    try await t2vSpotGate(width: ints.count > 0 ? ints[0] : 704,
+                          height: ints.count > 1 ? ints[1] : 512,
+                          frames: ints.count > 2 ? ints[2] : 121)
 } else if args.contains("--i2v-spot") {
     let ints = positional.compactMap { Int($0) }
     try await i2vSpotGate(width: ints.count > 0 ? ints[0] : 704,

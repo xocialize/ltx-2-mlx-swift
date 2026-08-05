@@ -106,121 +106,179 @@ public func frameCodecRepackSelfTest(height: Int = 512, width: Int = 704, seed: 
     return (true, "\(old.count) bytes byte-identical (\(h)×\(w) BGRA)")
 }
 
-/// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`,
-/// optionally muxing a stereo audio track [1, 2, T_audio] in [-1, 1] at `audioSampleRate`.
-/// Encode frames [1,T,H,W,3] in [-1,1] → MP4 Data.
+/// Incremental MP4 writer — the GAP-ANALYSIS #8 seam on the encoder side.
 ///
-/// **Defaults to the HARDWARE VideoToolbox H.264 encoder** (SPEED-PLAN S2 step 1). The former
-/// software default was a misdiagnosis artifact: the post-generation "encoder stall" was never the
-/// media engine — it was the AVAssetWriter two-track INTERLEAVE deadlock (the video input parks
-/// waiting for the still-empty audio track), fixed by appending + finishing the audio track BEFORE
-/// the video frame loop (see PROFILING.md). Both encoders are validated at 113 frames + audio via
-/// `RunLTX2 --encode-stress N --audio [--software]`; hardware is faster (~1.2 s vs ~3 s) and draws
-/// far less CPU power during the encode tail on laptops. `software: true` or `LTX_ENCODE=software`
-/// opts back into the software-only encoder.
+/// Lifecycle: `init` (declares whether an audio track exists — AVAssetWriter inputs must all be
+/// added before `startWriting`) → `attachAudio` (appends + finishes the WHOLE audio track before
+/// any video frame — the two-track interleave-deadlock fix, PROFILING.md §2: with
+/// `expectsMediaDataInRealTime = false` the writer parks the video input once it runs ~43 frames
+/// ahead of an empty audio track) → any number of `appendSync(framesChunk:)` calls with
+/// channels-last chunks `[1, t, H, W, 3]` in [-1, 1] → `finish()` returns the MP4 bytes.
+///
+/// `appendSync` is deliberately SYNCHRONOUS: the pipeline's decode loop is synchronous GPU work on
+/// one actor (per-chunk `eval` + `clearCache`), and threading an async sink through it fights
+/// Swift 6 region isolation for no benefit. Encoder back-pressure at chunk cadence is effectively
+/// never hit (hardware H.264 drains 121f in ~0.2 s); when it is, a bounded 2 ms usleep poll with
+/// the same 90 s loud-error guard applies.
+///
+/// `encodeMP4(frames:)` below is exactly init → attachAudio → one appendSync → finish, so the
+/// materialized and streamed paths share one code path and one validation surface
+/// (`--encode-stress`, `--frame-codec-gate`).
+///
+/// Concurrency: a plain class, NOT actor-bound — the pipeline drives it from ONE isolation context
+/// through synchronous sink closures (`LTX2Pipeline.StreamingSinks`), and binding it to an actor
+/// would make those closures uncallable. `@unchecked Sendable` per the fleet idiom for
+/// single-context GPU/AV-state classes; do not share an instance across concurrent contexts.
+public final class MP4StreamWriter: @unchecked Sendable {
+    private let url: URL
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let adaptor: AVAssetWriterInputPixelBufferAdaptor
+    private let audioInput: AVAssetWriterInput?
+    private let audioSampleRate: Double
+    private let frameDuration: CMTime
+    private var frameIndex = 0
+    private var audioAttached = false
+    private var finished = false
+
+    /// **Defaults to the HARDWARE VideoToolbox H.264 encoder** (SPEED-PLAN S2 step 1); the former
+    /// software default was a misdiagnosis artifact of the interleave deadlock. `software: true`
+    /// or `LTX_ENCODE=software` opts back into the software-only encoder.
+    public init(width: Int, height: Int, fps: Double,
+                expectAudio: Bool, audioSampleRate: Double = 48000,
+                software: Bool = false) throws {
+        url = FileManager.default.temporaryDirectory.appending(path: "ltx2-\(UUID().uuidString).mp4")
+        self.audioSampleRate = audioSampleRate
+
+        // env overrides the param: LTX_ENCODE = "hardware" | "software" | (unset → the `software` arg).
+        let env = ProcessInfo.processInfo.environment["LTX_ENCODE"]
+        let forceSoftware = env == "software" || (env != "hardware" && software)
+        var videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+        ]
+        if forceSoftware {
+            videoSettings[AVVideoEncoderSpecificationKey] = [
+                "EnableHardwareAcceleratedVideoEncoder": false,
+                "RequireSoftwareOnlyVideoEncoder": true,
+            ] as [String: Any]
+            MLXProfiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (LTX_ENCODE=software or caller opt-out)")
+        } else {
+            MLXProfiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (default; audio-first interleave fix in place)")
+        }
+        writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        input.expectsMediaDataInRealTime = false
+        adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+        ])
+        guard writer.canAdd(input) else { throw FrameCodecError.writerSetup("cannot add input") }
+        writer.add(input)
+
+        if expectAudio {
+            let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: audioSampleRate,
+                AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000,
+            ])
+            ai.expectsMediaDataInRealTime = false
+            if writer.canAdd(ai) { writer.add(ai); audioInput = ai } else { audioInput = nil }
+        } else {
+            audioInput = nil
+        }
+
+        guard writer.startWriting() else {
+            throw FrameCodecError.writerSetup(writer.error?.localizedDescription ?? "startWriting")
+        }
+        writer.startSession(atSourceTime: .zero)
+        frameDuration = CMTime(value: CMTimeValue((600.0 / fps).rounded()), timescale: 600)
+    }
+
+    /// AUDIO FIRST — the load-bearing ordering (see the class doc). Must be called before the
+    /// first `appendSync` whenever the writer was created with `expectAudio: true`; passing `nil`
+    /// (e.g. the pipeline produced no waveform) closes the track empty so the interleaver never
+    /// waits on it.
+    public func attachAudio(_ waveform: MLXArray?) throws {
+        guard !audioAttached else { return }
+        audioAttached = true
+        guard let audioInput else { return }
+        if let waveform {
+            let buffer = try audioSampleBuffer(waveform, sampleRate: audioSampleRate)
+            var waited = 0.0
+            while !audioInput.isReadyForMoreMediaData {
+                usleep(2000); waited += 0.002
+                if waited > 90 { throw FrameCodecError.appendFailed("audio input not ready for 90s") }
+            }
+            guard audioInput.append(buffer) else {
+                throw FrameCodecError.appendFailed("audio err=\(String(describing: writer.error))")
+            }
+        }
+        audioInput.markAsFinished()
+    }
+
+    /// Append a channels-last chunk `[1, t, H, W, 3]` in [-1, 1]. Frame timestamps continue from
+    /// the running total, so chunk boundaries are invisible in the output timeline.
+    public func appendSync(framesChunk frames: MLXArray, totalFrames: Int? = nil) throws {
+        guard !finished else { throw FrameCodecError.appendFailed("append after finish") }
+        guard audioInput == nil || audioAttached else {
+            throw FrameCodecError.appendFailed("attachAudio must precede the first video frame (interleave deadlock)")
+        }
+        guard frames.ndim == 5, frames.dim(1) > 0 else {
+            throw FrameCodecError.badFrames("expected [1,t,H,W,3], got \(frames.shape)")
+        }
+        let t = frames.dim(1)
+        let total = totalFrames ?? (frameIndex + t)
+        for i in 0 ..< t {
+            let (bytes, fw, fh) = bgraBytes(frames[0, i, 0..., 0..., 0...])
+            guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
+            let buffer = try pixelBuffer(bgra: bytes, width: fw, height: fh, pool: pool)
+            // Bounded wait: a stall here must be a loud, localized error, never a silent forever-spin.
+            var waited = 0.0
+            while !input.isReadyForMoreMediaData {
+                if writer.status == .failed {
+                    throw FrameCodecError.appendFailed("writer FAILED at frame \(frameIndex)/\(total): \(String(describing: writer.error))")
+                }
+                usleep(2000); waited += 0.002
+                if waited > 90 {
+                    throw FrameCodecError.appendFailed("encoder stalled at frame \(frameIndex)/\(total): isReadyForMoreMediaData=false for 90s (writer.status=\(writer.status.rawValue)). If audio is present this smells like the AVAssetWriter interleave deadlock — audio must be appended BEFORE the video frames.")
+                }
+            }
+            guard adaptor.append(buffer, withPresentationTime: CMTimeMultiply(frameDuration, multiplier: Int32(frameIndex))) else {
+                throw FrameCodecError.appendFailed("frame \(frameIndex)/\(total) err=\(String(describing: writer.error))")
+            }
+            if frameIndex % 8 == 0 { MLXProfiler.shared.note("encode-mp4 frame \(frameIndex)/\(total)") }
+            frameIndex += 1
+        }
+    }
+
+    /// Close the video track, finalize the container, return the bytes, delete the temp file.
+    public func finish() async throws -> Data {
+        guard !finished else { throw FrameCodecError.appendFailed("finish called twice") }
+        finished = true
+        defer { try? FileManager.default.removeItem(at: url) }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed, FileManager.default.fileExists(atPath: url.path) else {
+            throw FrameCodecError.writeIncomplete("status=\(writer.status.rawValue) err=\(String(describing: writer.error))")
+        }
+        return try Data(contentsOf: url)
+    }
+}
+
+/// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`, optionally
+/// muxing a stereo audio track [1, 2, T_audio] in [-1, 1] at `audioSampleRate`. Composed over
+/// `MP4StreamWriter` — one code path for the materialized and streamed lanes.
 @InferenceActor
 public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, audioSampleRate: Double = 48000,
                       software: Bool = false) async throws -> Data {
     guard frames.ndim == 5, frames.dim(1) > 0 else {
         throw FrameCodecError.badFrames("expected [1,T,H,W,3], got \(frames.shape)")
     }
-    let t = frames.dim(1), h = frames.dim(2), w = frames.dim(3)
-    let url = FileManager.default.temporaryDirectory.appending(path: "ltx2-\(UUID().uuidString).mp4")
-    defer { try? FileManager.default.removeItem(at: url) }
-
-    // env overrides the param: LTX_ENCODE = "hardware" | "software" | (unset → the `software` arg).
-    let env = ProcessInfo.processInfo.environment["LTX_ENCODE"]
-    let forceSoftware = env == "software" || (env != "hardware" && software)
-    var videoSettings: [String: Any] = [
-        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: w, AVVideoHeightKey: h,
-    ]
-    if forceSoftware {
-        // VideoToolbox encoder-specification keys (string form → no VideoToolbox import needed):
-        // require a software-only encoder so the hardware media engine is not used.
-        videoSettings[AVVideoEncoderSpecificationKey] = [
-            "EnableHardwareAcceleratedVideoEncoder": false,
-            "RequireSoftwareOnlyVideoEncoder": true,
-        ] as [String: Any]
-        MLXProfiler.shared.note("encode-mp4 using SOFTWARE H.264 encoder (LTX_ENCODE=software or caller opt-out)")
-    } else {
-        MLXProfiler.shared.note("encode-mp4 using HARDWARE H.264 encoder (default; audio-first interleave fix in place)")
-    }
-    let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
-    let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-    input.expectsMediaDataInRealTime = false
-    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h,
-    ])
-    guard writer.canAdd(input) else { throw FrameCodecError.writerSetup("cannot add input") }
-    writer.add(input)
-
-    var audioInput: AVAssetWriterInput?
-    if audio != nil {
-        let ai = AVAssetWriterInput(mediaType: .audio, outputSettings: [
-            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: audioSampleRate,
-            AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 192_000,
-        ])
-        ai.expectsMediaDataInRealTime = false
-        if writer.canAdd(ai) { writer.add(ai); audioInput = ai }
-    }
-
-    guard writer.startWriting() else {
-        throw FrameCodecError.writerSetup(writer.error?.localizedDescription ?? "startWriting")
-    }
-    writer.startSession(atSourceTime: .zero)
-
-    // AUDIO FIRST — the load-bearing ordering. With two inputs and
-    // `expectsMediaDataInRealTime = false`, AVAssetWriter INTERLEAVES tracks: once the video track
-    // gets ~1.8 s (43 frames @24 fps) ahead of an empty audio track, it parks the video input's
-    // `isReadyForMoreMediaData` until audio catches up — appending audio only after the frames
-    // therefore DEADLOCKS on clips ≳43 frames (reproduced with `RunLTX2 --encode-stress 113 --audio`:
-    // stalls at exactly frame 43 with NO model resident and NO GPU work; 113 frames without audio
-    // pass in ~3 s). Appending the whole waveform and finishing the track up front means the writer
-    // never waits on audio. (This deadlock — not GPU/VideoToolbox contention — was the real cause of
-    // the historical "stalled at frame 32/41 after generation" hang.)
-    if let audioInput, let audio {
-        let buffer = try audioSampleBuffer(audio, sampleRate: audioSampleRate)
-        while !audioInput.isReadyForMoreMediaData { try await Task.sleep(for: .milliseconds(5)) }
-        guard audioInput.append(buffer) else {
-            throw FrameCodecError.appendFailed("audio err=\(String(describing: writer.error))")
-        }
-        audioInput.markAsFinished()
-    }
-
-    let frameDuration = CMTime(value: CMTimeValue((600.0 / fps).rounded()), timescale: 600)
-    for i in 0 ..< t {
-        let (bytes, fw, fh) = bgraBytes(frames[0, i, 0..., 0..., 0...])
-        guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
-        let buffer = try pixelBuffer(bgra: bytes, width: fw, height: fh, pool: pool)
-        // Bounded wait: a stall here must be a loud, localized error, never a silent forever-spin.
-        // With the audio-first fix the interleave deadlock is gone; a genuine encoder failure now
-        // surfaces via writer.status below instead of masquerading as "not ready".
-        var waited = 0.0
-        while !input.isReadyForMoreMediaData {
-            if writer.status == .failed {
-                throw FrameCodecError.appendFailed("writer FAILED at frame \(i)/\(t): \(String(describing: writer.error))")
-            }
-            try await Task.sleep(for: .milliseconds(5)); waited += 0.005
-            if waited.rounded() != (waited - 0.005).rounded(), Int(waited) % 5 == 0 {
-                MLXProfiler.shared.note("encode-mp4 ⚠ waiting on encoder at frame \(i)/\(t) — \(Int(waited))s (isReadyForMoreMediaData=false)")
-            }
-            if waited > 90 {
-                throw FrameCodecError.appendFailed("encoder stalled at frame \(i)/\(t): isReadyForMoreMediaData=false for 90s (writer.status=\(writer.status.rawValue)). If audio is present this smells like the AVAssetWriter interleave deadlock — audio must be appended BEFORE the video frames.")
-            }
-        }
-        guard adaptor.append(buffer, withPresentationTime: CMTimeMultiply(frameDuration, multiplier: Int32(i))) else {
-            throw FrameCodecError.appendFailed("frame \(i)/\(t) err=\(String(describing: writer.error))")
-        }
-        if i % 8 == 0 { MLXProfiler.shared.note("encode-mp4 frame \(i)/\(t)") }
-    }
-    input.markAsFinished()
-
-    await writer.finishWriting()
-    guard writer.status == .completed, FileManager.default.fileExists(atPath: url.path) else {
-        throw FrameCodecError.writeIncomplete("status=\(writer.status.rawValue) err=\(String(describing: writer.error))")
-    }
-    return try Data(contentsOf: url)
+    let writer = try MP4StreamWriter(width: frames.dim(3), height: frames.dim(2), fps: fps,
+                                     expectAudio: audio != nil, audioSampleRate: audioSampleRate,
+                                     software: software)
+    try writer.attachAudio(audio)
+    try writer.appendSync(framesChunk: frames, totalFrames: frames.dim(1))
+    return try await writer.finish()
 }
 
 /// Build an LPCM CMSampleBuffer from a stereo waveform [1, 2, T] in [-1, 1] (interleaved 16-bit).

@@ -159,15 +159,36 @@ public struct VideoVAEDecoder {
         _ latent: MLXArray, chunkFrames: Int, halo: Int,
         spatialTilesH: Int = 1, spatialTilesW: Int = 1, spatialHalo: Int = 5
     ) throws -> MLXArray {
+        var parts: [MLXArray] = []
+        try decodeChunked(latent, chunkFrames: chunkFrames, halo: halo,
+                                spatialTilesH: spatialTilesH, spatialTilesW: spatialTilesW,
+                                spatialHalo: spatialHalo) { parts.append($0) }
+        return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
+    }
+
+    /// Sink form of `decodeChunked` — the GAP-ANALYSIS #8 seam. Identical chunk policy, halo and
+    /// trim math; each trimmed pixel chunk `(1, 3, f, H, W)` is handed to `sink` in order instead
+    /// of being accumulated, so the caller can stream frames to an encoder and the WHOLE pixel
+    /// volume never materializes (the oracle's `decode_and_stream` shape). The array form above is
+    /// this plus a collecting sink — one code path, so parity of one is parity of both.
+    /// ⚠️ The chunk handed to `sink` is already eval'd; the pool is cleared AFTER the sink returns,
+    /// so a sink may hold host copies but should not retain the MLXArray past its return.
+    public func decodeChunked(
+        _ latent: MLXArray, chunkFrames: Int, halo: Int,
+        spatialTilesH: Int = 1, spatialTilesW: Int = 1, spatialHalo: Int = 5,
+        sink: (MLXArray) throws -> Void
+    ) throws {
         let F = latent.dim(2)
         let chunk = max(1, chunkFrames), h = max(1, halo)
         guard F > chunk else {
-            return decodeSpatialTiled(latent, tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
+            let px = decodeSpatialTiled(latent, tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
+            eval(px)
+            try sink(px)
+            return
         }
         let prof = MLXProfiler.shared
         let totalChunks = (F + chunk - 1) / chunk
         var chunkIndex = 0
-        var parts: [MLXArray] = []
         var a = 0
         while a < F {
             try Task.checkCancellation()   // MVP-READINESS M3: per-chunk cancel point
@@ -184,11 +205,10 @@ public struct VideoVAEDecoder {
             px = px[0..., 0..., startTrim ..< (px.dim(2) - endTrim)]
             eval(px)
             prof.end(span)
-            parts.append(px)
+            try sink(px)
             Memory.clearCache()   // keep the pool chunk-bound
             a = b
         }
-        return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
     }
 
     // MARK: - blocks

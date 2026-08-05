@@ -232,8 +232,8 @@ public final class MLXLTX2Package: ModelPackage {
                                step: e.step, totalSteps: e.totalSteps,
                                stage: e.stage, totalStages: e.totalStages)
         }
-        let (out, muxAudioURL) = try await LTX2Progress.$sink.withValue(forward) {
-            () async throws -> (LTX2Pipeline.Output, URL?) in
+        let (out, muxAudioURL, streamedWriter) = try await LTX2Progress.$sink.withValue(forward) {
+            () async throws -> (LTX2Pipeline.Output, URL?, MP4StreamWriter?) in
 
             // IC reference ingest (IC-LORA-PLAN P2/P3): the reference image rides metaData as a
             // file path (interim until the ConditioningInput contract lands, P5). Built at the
@@ -287,6 +287,34 @@ public final class MLXLTX2Package: ModelPackage {
                 }
             }
 
+            // GAP-ANALYSIS #8 — plain t2v/two-stage runs STREAM decode chunks straight into the
+            // MP4 writer: the whole pixel volume (plus its channels-last transpose twin) never
+            // materializes. The IC/i2v branches keep the materialized path this slice (their
+            // mux-audio substitution reads the file AFTER the run; follow-up in GAP-ANALYSIS #8).
+            // OPT-IN (`LTX_STREAM_MUX=1`): measured 2026-08-05 at 704×512×121f, the streamed lane
+            // does NOT move the run peak (54.82 vs 54.88 GB — denoise sets the peak, and the pixel
+            // volume it eliminates sits in a phase below it), and its wall-clock reads NOISE by the
+            // sign-flip rule (whichever lane runs second is slower — session ramp, not the lane).
+            // Default stays materialized until a receipt at a geometry where assembly IS the peak
+            // (4K-class decode, low-tier evicted-DiT flows). probes/20260805_streammux_*.out.
+            if references.isEmpty, audioReferences.isEmpty, t2v.initImage == nil, muxAudioURL == nil,
+               ProcessInfo.processInfo.environment["LTX_STREAM_MUX"] == "1" {
+                let writer = try MP4StreamWriter(width: wd, height: h, fps: fps,
+                                                 expectAudio: pipeline.audioEnabled, audioSampleRate: 48000)
+                let sinks = LTX2Pipeline.StreamingSinks(
+                    onAudioReady: { wf in try writer.attachAudio(wf) },
+                    onVideoChunk: { chunk in
+                        // decoder chunk is channels-first (1,3,f,H,W); the codec wants channels-last.
+                        try writer.appendSync(framesChunk: chunk.transposed(0, 2, 3, 4, 1))
+                    })
+                let streamed = (pipeline.supportsTwoStage && !oneStage)
+                    ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd,
+                                                     numFrames: nf, fps: fps, seed: t2v.seed, streaming: sinks)
+                    : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd,
+                                             numFrames: nf, fps: fps, seed: t2v.seed, streaming: sinks)
+                return (streamed, nil, writer)
+            }
+
             let out: LTX2Pipeline.Output
             if !references.isEmpty || !audioReferences.isEmpty {
                 // IC path: ONE stage at target resolution (`stage2: skip` — the community-blessed
@@ -307,9 +335,22 @@ public final class MLXLTX2Package: ModelPackage {
                     ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
                     : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
             }
-            return (out, muxAudioURL)
+            return (out, muxAudioURL, nil)
         }
         try Task.checkCancellation()
+        // Streamed lane (GAP-#8): frames were muxed DURING decode; only container finalization
+        // remains. `out.video` is the documented empty placeholder — never read it here.
+        if let writer = streamedWriter {
+            RunProgress.report(.postprocess)
+            Memory.clearCache()
+            let pixelFrames = 8 * ((nf + 7) / 8) - 7
+            let mp4Span = MLXProfiler.shared.begin("encode-mp4", "h264+aac", note: "\(pixelFrames) frames (streamed)")
+            let mp4 = try await writer.finish()
+            MLXProfiler.shared.end(mp4Span)
+            return T2VResponse(video: Video(
+                format: .mp4, data: mp4,
+                durationSeconds: Double(pixelFrames) / fps, frameRate: fps))
+        }
         // Everything from here (pixel materialize → H.264/AAC mux) is output assembly.
         RunProgress.report(.postprocess)
         // LTX decoder is channels-first (1,3,F,H,W); the codec wants channels-last (1,F,H,W,3).

@@ -1,0 +1,5 @@
+[t2v-spot] run 133.1s  mp4 1.7 MB
+[t2v-spot] SUMMARY lane=STREAMED shape=704x512x121 peak=54.82 act=16.03
+[t2v-spot] run 172.2s  mp4 1.7 MB
+[t2v-spot] SUMMARY lane=MATERIALIZED shape=704x512x121 peak=55.93 act=17.49
+done
