@@ -217,6 +217,76 @@ hot-swappable) is likewise arguably better than the oracle's fuse-into-weights.
 
 ---
 
+## 8. 🔍 The run peak at shipping geometries is GEMMA's encode, not the DiT (2026-08-04)
+
+Found while measuring modality tiling. Profiler, untiled 704×512×9f, **worst phys by phase**:
+
+| phase | worst phys |
+|---|---|
+| **encode (Gemma + connector)** | **52.5 GB** ← the run peak |
+| denoise | 41.8 GB |
+| vae-decode | 42.0 GB |
+
+Only past ~65f does denoise take the peak. **Every DiT-side memory lever we have — block streaming,
+modality tiling — is therefore incapable of moving the run peak at the geometries we actually ship.**
+
+### Where the 52.5 GB goes
+
+```
+DiT.load done (lazy)      phys= 0.10 GB     ← lazy safetensors, nothing faulted
+DiT kernel warmup         phys=40.58 GB     ← warmup faults in all 38 GB of bf16 weights
+encode/gemma    act=45.6  phys=48.3 GB      ← DiT (38) + Gemma-3-12B-4bit (7.6) CO-RESIDENT
+encode/connector act=42.0 cache=10.1 phys=52.5 GB   ← the peak: 42 active + 10.1 GB of MLX CACHE
+```
+
+Two independent terms, and neither is the DiT's own working set:
+
+**(a) The DiT is resident throughout text encode — ~38 GB of it — for no reason other than load
+order.** `load()` warms the DiT (faulting every page), then `t2v()` encodes the prompt. The oracle
+hit exactly this and fixed it by moving the text-encoder lifecycle out of `load()` entirely
+(its `1a30f74`; documented in its CLAUDE.md as *the* fix that unblocked production quality).
+⚠️ Our situation differs in one way that matters: our DiT is the deliberate **persistent resident
+floor** across requests, so "encode before load" only helps the first request; helping later ones
+means evict → encode → reload, paying the warmup each time. That is the existing
+`dropDiTIfSequential()` pattern applied to a second seam, and it is a **tier decision, not a free
+win** — worth it where 10 GB decides admission, not otherwise.
+
+**(b) 10.1 GB of the peak is reclaimable MLX buffer cache**, not live data — and the existing
+`LTX_CACHE_LIMIT_GB` lever already reaches it.
+
+### Cache-cap sweep — memory measured, timing REFUSED
+
+704×512×9f, run peak by cap (each an independent process):
+
+| cap | peak phys |
+|---|---|
+| uncapped | 52.49 / 52.55 GB |
+| 8 GB | 52.55 GB (no effect) |
+| 4 GB | 49.04 GB |
+| **2 GB** | **48.47 / 48.02 GB** |
+| 1 GB | 48.14 GB |
+
+**Capping at ≤2 GB reliably removes ~4.0–4.5 GB from the run peak.** Reproducible (2 GB measured
+twice, 0.45 GB apart); the knee is between 4 and 8 GB.
+
+🚨 **The wall-clock effect is UNMEASURED and this data cannot answer it.** The identical 2 GB config
+came out **17.0 s** in one sweep and **30.8 s** in the next — an **81% swing** on the same binary and
+config, after hours of continuous heavy jobs. That is thermal drift, the exact failure the
+noise-floor receipt documents (`BENCH.md`: this box swings ±23% at 704×512×9f, worse when saturated).
+**Do not read a speed verdict out of the tables above.** Owed: a `--bench-e2e` run (ABBA, cooldowns,
+cooled box) with `env.LTX_CACHE_LIMIT_GB` as the arm.
+
+### Owed / next
+
+1. **The `--bench-e2e` cache-cap arm** above — cheap, and decides whether a 2 GB default is free.
+2. **Quantify (a) properly**: what is the encode peak with the DiT *not* resident? Expected ~14.5 GB,
+   which would move the run peak to denoise/decode (~42 GB) — **a ~10 GB reduction, larger than
+   anything modality tiling achieved.** Measure before building.
+3. ⚠️ **Any change here invalidates the declared `QuantFootprint`** — those are *measured* values
+   (`MLXLTX2Package`), so re-measure before touching the manifest.
+
+---
+
 ## 7. ✅ Closed: #1 `FrameCodec` on-device repack (2026-08-04)
 
 **The change.** RGB→BGR channel reverse + opaque alpha now run **on-device** (`MLX.take` +
