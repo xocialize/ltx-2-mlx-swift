@@ -191,7 +191,17 @@ func benchE2E() async throws {
     let armSpecs = values("--arm")
     let arms = try (armSpecs.isEmpty ? ["A:quant=bf16", "B:quant=bf16"] : armSpecs).map(BenchArm.parse)
     // Default arms A/B identical = a NULL RUN: measures the noise floor of the whole protocol.
-    let blocks = value("--blocks").flatMap(Int.init) ?? 2
+    // A session that STARTS `nominal` will likely step to `fair` partway through — the
+    // one-way step that manufactured the nullfloor-ssd false positive. More blocks =
+    // finer arm interleaving across the step, so the default rises to 4 unless the
+    // caller pinned --blocks explicitly. (BENCH.md noise-floor section.)
+    let blocksExplicit = value("--blocks").flatMap(Int.init)
+    let startedNominal = thermalString() == "nominal"
+    let blocks = blocksExplicit ?? (startedNominal ? 4 : 2)
+    if blocksExplicit == nil && startedNominal {
+        print("[bench-e2e] session starts thermal=nominal → defaulting --blocks to 4 (a mid-session")
+        print("[bench-e2e]    nominal→fair step aliases into arm deltas at coarse interleaving)")
+    }
     let runs = value("--runs").flatMap(Int.init) ?? 2
     let cooldown = value("--cooldown").flatMap(Double.init) ?? 45
     let frames = value("--frames").flatMap(Int.init) ?? 24

@@ -139,8 +139,9 @@ trusting any verdict at that geometry, and re-run it when the toolchain or OS ch
   collapse to NOISE via the adjusted Δ, a clean ABBA difference must stay unannotated
   MEASURABLE, and the v1 sign-flip must stay hard NOISE. Receipts additionally gain a
   "Session drift & thermal strata" section (slope, per-arm block medians, per-stratum Δ).
-  Still open from this run's motivation list: defaulting `--blocks` to 4 when a session
-  starts `nominal` (protocol change, not verdict logic).
+  ✅ And the protocol item landed with it: when a session STARTS `nominal` and `--blocks`
+  was not pinned, the default rises to 4 (finer arm interleaving across the likely
+  mid-session `nominal→fair` step; the harness prints why).
 
 **Long-geometry addendum (from the 121f ladder session, `bench_e2e_ladder-pruna-121f_20260804-012008`):**
 at sustained-load geometries the dominant confound moves **inside the block** — every arm showed
