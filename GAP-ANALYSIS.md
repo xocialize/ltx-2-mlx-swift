@@ -25,7 +25,7 @@ Companion docs: `TILING-PLAN.md` (modality tiling, the DiT attention wall) · `S
 | HDR IC-LoRA / LogC3 | ✅ | ❌ | needs CFG two-stage first |
 | LipDub | ✅ 🔴exp | ⚠️ ingest primitives only | both independently concluded: mux the real dub |
 | Training (`ltx-trainer`, 4,238 LoC) | ✅ | ❌ | out of scope for an inference port |
-| Upsamplers | **3** (x2, x1.5 rational, temporal x2) | **1** (x2, hardcoded filename) | oracle *can load* all three; we cannot |
+| Upsamplers | **3** (x2, x1.5 rational, temporal x2) | ✅ **3** (2026-08-05: sidecar-config-driven `Upsampler.load`, weight-key fallback; `--upsampler-variants-gate` cosine 1.000000 both) | row CLOSED — was a download + a config read, exactly as the correction predicted |
 | Guidance (CFG/STG/modality/rescale) | ✅ whole subsystem | ❌ **none** | see §2 |
 | Attention masks (`mask_utils`) | ✅ | ❌ `mask: .none` hardcoded | blocks 4 features |
 | Step count / sigma schedule | configurable + `ltx2_schedule` token-adaptive | **2 hardcoded tables** | 8 steps / 3 steps |

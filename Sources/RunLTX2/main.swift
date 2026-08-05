@@ -573,6 +573,38 @@ func upsamplerGate() throws {
     if !pass { exit(1) }
 }
 
+/// x1.5-spatial + x2-temporal upsampler variants vs oracle goldens (GAP-ANALYSIS #5).
+/// Loads each checkpoint through `Upsampler.load(path:)`, so the sidecar-config variant
+/// resolution — the actual production path — is what gets exercised, not a hand-picked enum.
+func upsamplerVariantsGate() throws {
+    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let cases: [(name: String, file: String, goldens: String, expect: Upsampler.Variant)] = [
+        ("x1.5 spatial (rational 3/2)", "spatial_upscaler_x1_5_v1_0.safetensors", "upsampler_x1_5", .spatialX1_5),
+        ("x2 temporal (drop frame 0)", "temporal_upscaler_x2_v1_0.safetensors", "upsampler_temporal", .temporalX2),
+    ]
+    var allPass = true
+    for c in cases {
+        let up = try Upsampler.load(path: URL(fileURLWithPath: "\(base)/\(c.file)"))
+        let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(goldensBase)/\(c.goldens)/io.safetensors"))
+        guard up.variant == c.expect else {
+            print("[upsampler-variants-gate] \(c.name): sidecar resolved \(up.variant) ≠ \(c.expect) ❌")
+            allPass = false
+            continue
+        }
+        let out = up(io["latent"]!)
+        eval(out)
+        let cos = cosine(out, io["out"]!), m = maxAbs(out, io["out"]!)
+        let shapeOK = out.shape == io["out"]!.shape
+        let pass = cos >= 0.999 && shapeOK
+        allPass = allPass && pass
+        print(String(format: "[upsampler-variants-gate] %@: cosine=%.6f maxAbs=%.5f  shape %@ vs %@ %@",
+                     c.name as NSString, cos, m, "\(out.shape)" as NSString,
+                     "\(io["out"]!.shape)" as NSString, pass ? "✅" : "❌"))
+    }
+    print(allPass ? "[upsampler-variants-gate] PASS ✅" : "[upsampler-variants-gate] FAIL ❌")
+    if !allPass { exit(1) }
+}
+
 /// Two-stage upscale-step parity: half-res latent → denorm → upsample → renorm vs oracle.
 func upscaleStepGate() throws {
     let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
@@ -1322,6 +1354,8 @@ if args.contains("--connector-gate") {
     try audioDecodeGate()
 } else if args.contains("--upsampler-gate") {
     try upsamplerGate()
+} else if args.contains("--upsampler-variants-gate") {
+    try upsamplerVariantsGate()
 } else if args.contains("--upscale-step-gate") {
     try upscaleStepGate()
 } else if args.contains("--denoise-gate") {
