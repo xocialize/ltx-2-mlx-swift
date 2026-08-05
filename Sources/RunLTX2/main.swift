@@ -1349,6 +1349,8 @@ if args.contains("--connector-gate") {
                             directory: positional.dropFirst().first)
 } else if args.contains("--sdpa-probe") {
     sdpaProbeGate()
+} else if args.contains("--modality-tile-gate") {
+    try await modalityTileGatesMain(args: args, positional: Array(positional))  // ModalityTileGates.swift
 } else if args.contains("--sdpa-mask-probe") {
     sdpaMaskProbeGate()   // TILING-PLAN prerequisite: does a mask force the materialized fallback?
 } else if args.contains("--speed-bench") {
