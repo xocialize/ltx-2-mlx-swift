@@ -90,6 +90,78 @@ meaningful, not redundant. ⚠️ **Do not "optimize" this away without understa
 semantics**; note it, measure its share, and revisit only with a parity gate in hand. Flagged
 because for an audio+video model at high tile counts it is a real and growing cost.
 
+## ✅ Port surface — mapped and verified 2026-08-04
+
+**The seam is a single call.** `DenoiseLoop.x0` (`DenoiseLoop.swift:38–42`) is the **only** production
+DiT invocation; `run` and `runConditioned` both funnel through it, and `Sources/MLXLTX2/` never
+touches the DiT directly. `TiledDiT` intercepts exactly there.
+
+`DiT` is a **`public struct`** whose forward is `callAsFunction(videoLatent:audioLatent:sigma:
+videoText:audioText:videoPositions:audioPositions:videoTimesteps:audioTimesteps:) -> (video:, audio:)`
+(`DiT.swift:141–146`). Weights hang off a reference (`DiTWeightStore`), so a wrapper holding it by
+value shares weights and LoRA with no copy.
+
+**Token geometry is confirmed compatible.** `patchify` is a pure transpose+reshape
+(`LTX2Pipeline.swift:399–402`), so the token grid **is** the latent grid at patch size 1, flat index
+`f·(H·W) + h·W + w`. `Positions.video` builds `(1, F·H·W, 3)` with the **same F-major/W-minor
+flattening** (`Positions.swift:30–43`) — so slicing positions by the same flat indices as the latent
+is valid, which the whole tiler depends on.
+
+**Type plumbing (the only edit to existing `Sources/LTX2/` files):** `DenoiseLoop` takes
+`dit: DiT` concretely at `:34`, `:67`, `:106`. Introduce `protocol LTXDenoiser` with the identical
+signature, conform both `DiT` and `TiledDiT`, and widen those three to `any LTXDenoiser`. ⚠️ Prefer
+this over storing an optional tiler *inside* `DiT` — that would entangle tiling with the streaming
+branch at `DiT.swift:183` and lose the compose-in-either-order property.
+
+### 🚨 Three hazards found before writing any code
+
+**1. `armStreamingGate` is a bug-in-waiting under tiling — and tiling makes streaming HARDER.**
+`LTX2Pipeline.armStreamingGate` (`:58–60`, called at `:441`, `:504`, `:666`) sets
+`gateEvaluationThresholdTokens` from the **untiled** `nv + audioT`. But the count the kit actually
+measures comes from `beginForward` inside the DiT (`DiT.swift:194–195`) and would be the **per-tile**
+count. The kit only evaluates when `forwardTokens >= gateEvaluationThresholdTokens`
+(`BlockStreamKit/BlockStreamer.swift:732–734`), so **no forward would ever reach the threshold, the
+verdict would stay `.undecided` forever, and the run would stream unconditionally no matter how bad
+the arithmetic.** Fix: arm with the **largest tile's** token count (`maxTileGen + audioT +
+maxKeptCond`). 🔑 And note the deeper coupling — the gate's `N_min ≈ N·C/S` is computed from that
+same N, so **tiling genuinely makes the streaming gate harder to clear**. Two memory levers that
+each look free in isolation partly cancel; TILING-PLAN's earlier "composes with block streaming"
+line was too optimistic. ⚠️ Separately: `icT2V` **never arms the gate at all** — a pre-existing gap,
+worth fixing in the same change.
+
+**2. Our video IC-reference tokens have STRICTLY POSITIVE time, so the oracle's "keep in every tile"
+branch is dead code on our video path.** `Positions.video` clamps time at 0 (`Positions.swift:32–33`)
+and `ReferenceConditioning.scaledPositions` multiplies by `[1, downscale, downscale]` — the temporal
+axis is never scaled and never negative (`ReferenceConditioning.swift:46–50`). So the oracle's
+`has_negative_time` escape (`modality_tiling.py:178–180`) never fires for us; IC refs fall through to
+the point-in-range test and get distributed across tiles with `1/count` blending. The **only**
+negative-time producer in the port is `Positions.patchifyLipdubAudioReference`
+(`Positions.swift:61–72`), which is on the **audio** stream — and audio is passed whole to every tile
+and averaged, so the video tiler never sees it. **Port the branch for fidelity, but do not assume it
+keeps IC refs intact.**
+
+**3. ✅ Timesteps: `nil` must stay `nil` to the model — verified, and it contradicts a plausible
+misreading.** The oracle *does* broadcast scalar sigma to per-token timesteps
+(`modality_tiling.py:393–397`), but **only into its internal `Modality` so the tiler can slice them
+alongside the latent**. At the forward it re-checks `if "video_timesteps" in kwargs and … is not
+None` (`:359–360`), so a t2v caller still gets `video_timesteps=None` and the **scalar AdaLN path is
+preserved**. 🚨 Broadcasting all the way through to the model would silently move our *shipping* t2v
+path from scalar to per-token AdaLN — a real numerical divergence, and a consistent one that a
+tiled-vs-untiled gate might not flag as a *tiling* bug. Slice internally; forward `nil` as `nil`.
+
+### Two smaller confirmations
+
+- **No attention-mask parameter exists on our DiT** (`DiT.swift:141–146`; it hardcodes `mask: .none`
+  at `:290`). The oracle's `attention_mask` slicing has no counterpart — **drop it, don't invent one.**
+- **Do NOT extract a shared tile primitive with the VAE tiler.** They differ on every axis: 5-D
+  latent grid vs flat token sequence; disjoint `tileBounds` + halo + **crop** vs overlapping
+  **trapezoidal-weighted accumulate**; exactness-by-locality vs blend-because-attention-is-global.
+  The only shared idea is "n near-equal parts", and the modality version needs the *overlap-aware*
+  formula. Write a fresh `TokenTileGeometry`; leave `VideoVAEDecoder.tileBounds` alone. ✅ Two things
+  from the VAE work that DO transfer as doctrine: uniform window shapes (one compiled graph shape
+  across tiles) and the per-tile `eval` + `Memory.clearCache()` cadence that keeps the pool
+  tile-bound.
+
 ## Port plan
 
 1. **Read the primitives** the tiler stands on — `create_tiles`, `split_by_count`,
