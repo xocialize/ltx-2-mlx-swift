@@ -278,7 +278,16 @@ cooled box) with `env.LTX_CACHE_LIMIT_GB` as the arm.
 
 ### Owed / next
 
-1. **The `--bench-e2e` cache-cap arm** above — cheap, and decides whether a 2 GB default is free.
+1. ✅ **RUN 2026-08-05 on the rested box (`probes/bench_e2e_cachecap_20260805-133154`) — the cap is
+   FREE at this geometry.** blocks=4/runs=1 ABBA, 60 s cooldowns, every run `nominal→nominal`:
+   base median **15.4 s** (15.2–15.5) / **52.85 GB** vs cap2 median **15.5 s** (15.4–15.5) /
+   **48.80 GB** → **Δmed +0.0 s ≤ 0.3 s spread = NOISE; −4.05 GB peak; outputs bit-identical**
+   (cos 1.000000 / maxAbs 0 — the cap is output-invisible, receipted). Note the protocol datum:
+   a rested box + one-run-per-block measured a **0.3 s (2%) spread** where the saturated box
+   swung 81% — the noise floor is a property of protocol × thermal state, not of the machine.
+   ⚠️ Scope: 9f one-stage bf16 on a 128 GB host. **A default change hinges on 121f** (the pool
+   serves per-step denoise transients; a 2 GB cap could thrash where 8 steps × nv=5632 reuse
+   buffers) — that arm is next, then the QuantFootprint re-measure per note 3.
 2. **Quantify (a) properly**: what is the encode peak with the DiT *not* resident? Expected ~14.5 GB,
    which would move the run peak to denoise/decode (~42 GB) — **a ~10 GB reduction, larger than
    anything modality tiling achieved.** Measure before building.
