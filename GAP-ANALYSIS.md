@@ -149,7 +149,7 @@ hot-swappable) is likewise arguably better than the oracle's fuse-into-weights.
 | # | Item | Why | Effort |
 |---|---|---|---|
 | 1 | ✅ **DONE 2026-08-04 — `FrameCodec` on-device repack.** 121f @704×512 encode **3.5 s → 0.2 s (~15×)**, byte-identical (`--frame-codec-gate`, 1,441,792 bytes). See below. | biggest pure loss in the port, zero correctness risk, was scoped as S2 step 2 | ~2 h (est. 1–2 d) |
-| 2 | **`asyncEval` in the denoise loop** | two lines; restores host/GPU overlap on every step | ~1 h |
+| 2 | ⛔ **`asyncEval` in the denoise loop — ASSESSED AND DROPPED 2026-08-04.** The win is bounded by host graph-build time, which is milliseconds against a **~6.1 s** denoise step (SPEED-PLAN S1 at compact24) — call it ~0.1%, unmeasurable against this box's noise floor. It would also **break the profiler's per-step timing** (the span would close before the GPU finishes), and the oracle's `mx.async_eval` is there for *memory* ("force computation"), which our blocking `eval` already provides. Not a win; not doing it. | — |
 | 3 | **CFG + negative prompt** | unlocks six pipelines + the biggest quality lever; batch the passes (§2) | 1–2 w |
 | 4 | **Configurable steps + `ltx2_schedule`** | prerequisite for #3 (CFG needs 15–30 steps, not 8) | 2–3 d |
 | 5 | **Read hyperparams from checkpoint config** | closes the silent-breakage class that bit the oracle twice; also the cheap route to the other two upsamplers | 2–4 d |

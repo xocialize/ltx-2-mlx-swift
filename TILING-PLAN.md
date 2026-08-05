@@ -116,11 +116,39 @@ because for an audio+video model at high tile counts it is a real and growing co
 
 - Does `--tile-spatial` compose with our **spatial VAE tiling** cleanly? They are independent
   (DiT tokens vs decode activations) but both cost wall-clock; the 4K path would use both.
-- Our DiT passes `mask: .none` to `MLXFast.scaledDotProductAttention` (fused path). Tiling
-  introduces per-tile attention masks — ⚠️ **an additive mask can drop SDPA off the fused kernel
-  onto the materialized `[B,H,Tq,Tk]` path** (`mlx-porting`, framework constraints), which would
-  *recreate* the very O(N²) tensor tiling exists to avoid. **Verify the fused path still fires
-  with the tiled mask before trusting the memory math.** This is the single highest-risk unknown
-  in the port.
+- ~~Does a mask drop SDPA off the fused kernel onto the materialized `[B,H,Tq,Tk]` path?~~
+  ✅ **ANSWERED 2026-08-04 by measurement — `RunLTX2 --sdpa-mask-probe`, 3/3 reproducible.**
+  **It does NOT. Masks stay fused.** At the production shape N=5632 (704×512×121f), H=32, D=128,
+  bf16, a materialized fallback would allocate **2.03 GB**; measured call-attributed peak:
+
+  | mask | peak attributable to the call | time | vs `.none` |
+  |---|---|---|---|
+  | `.none` | 0.280 GB | 10.9–11.2 ms | — |
+  | `.array` additive bf16 | **0.326 GB** | 19.0–19.7 ms | **1.74–1.77×** |
+  | `.array` bool | **0.372 GB** | 19.7–20.0 ms | **1.76–1.83×** |
+
+  The mask arms add only **+0.046 / +0.092 GB** over `.none` — i.e. ≈ the mask tensor itself
+  (0.063 GB), nowhere near 2.03 GB. Memory figures were byte-identical across all three runs.
+  Correctness bonus: an all-zero additive mask and an all-true bool mask are semantic no-ops and
+  both returned **cos = 1.000000** vs `.none`, confirming float⇒additive / bool⇒keep semantics.
+  **So the memory math behind tiling holds.**
+
+  🔑 **But masks cost ~1.75× in attention TIME** (stable to ±0.03× across runs at N=5632). That
+  is a real tax to carry in any cost model. ⚠️ N=2112 timings are NOT trustworthy — 2.5–4.8 ms
+  baselines with ratios swinging 0.97–1.40× across runs, i.e. small-N measurement noise; only the
+  N=5632 column should be quoted.
+
+  ⚠️ **Scope correction while establishing this:** modality tiling **does not itself require
+  attention masks.** The tiler *slices* an optional `attention_mask` when one is present, but our
+  port passes `.none` and has no mask system at all — masks arrive with the **conditioning** work
+  (`GAP-ANALYSIS` #6, `mask_utils`). So this finding de-risks two items at once: tiling can proceed
+  with `.none` and no attention-memory surprise, and when the mask system lands it stays fused but
+  pays the ~1.75× attention tax.
+
+  ⚠️ **Measurement trap banked (v1 of this probe was wrong).** The first version reset the
+  peak-memory high-water *before* the warmup call, so the warmup's own peak swallowed the measured
+  call and **every arm — including `.none` — read a confident `peak+0.000 GB`**. `GPU.resetPeakMemory()`
+  must come *after* warmup and after `Memory.clearCache()`, immediately before the measured call.
+  A peak-delta of exactly zero for an arm that provably allocates a 46 MB output is the tell.
 - Upstream wires `ic-lora` on the same primitive but the oracle "isn't yet" — check whether our
   IC path would want it.

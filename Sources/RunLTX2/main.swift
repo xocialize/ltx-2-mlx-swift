@@ -904,6 +904,77 @@ func sdpaProbeGate() {
     print("[sdpa-probe] ratio ≈ 1× ⇒ silent fallback (S4 SDPA lever live); ratio ≫ 1× ⇒ fused path hit")
 }
 
+// MARK: - TILING-PLAN prerequisite — does an attention MASK keep SDPA on the fused kernel?
+//
+// Modality tiling (GAP-ANALYSIS #7) introduces per-tile attention masks. The whole point of
+// tiling is to avoid materializing the O(N²) scores tensor — so if passing a mask silently drops
+// `scaledDotProductAttention` off the fused (flash, non-materializing) kernel onto the
+// `softmax(QKᵀ)@V` fallback, tiling would RECREATE the exact tensor it exists to avoid and the
+// memory math evaporates. `mlx-porting` (framework constraints) warns the fused path is
+// conditionally gated, with mask dtype handling named as one of the gates. This settles it by
+// measurement rather than by reading kernel source.
+//
+// Discriminator = PEAK MEMORY attributable to the call. A materialized fallback must allocate
+// [B, H, N, N]; the mask itself is only [N, N]. At H=32 those differ by 32×, which is unmissable.
+// Timing is reported alongside as a cross-check (the S4 probe's "ratio ≈ 1× ⇒ fallback" heuristic).
+func sdpaMaskProbeGate() {
+    let H = 32, D = 128
+    let scale = 1.0 / Float(D).squareRoot()
+    print("[sdpa-mask-probe] B=1 H=\(H) D=\(D) bf16 — .none vs .array(additive bf16) vs .array(bool)")
+    print("[sdpa-mask-probe] fused ⇒ call-attributed peak ≈ output only; materialized ⇒ ≈ [1,H,N,N]")
+
+    for n in [2112, 5632] {
+        let q = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        let k = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        let v = MLXRandom.normal([1, H, n, D]).asType(.bfloat16)
+        // Additive all-zero mask = a semantic NO-OP, so outputs must match the .none arm. That
+        // doubles as a correctness check that the mask is applied additively, not as a multiplier.
+        let addMask = MLXArray.zeros([n, n]).asType(.bfloat16)
+        let boolMask = MLXArray.ones([n, n]).asType(.bool)          // keep-all
+        eval(q, k, v, addMask, boolMask)
+
+        let scoresGB = Double(H * n * n * 2) / 1e9
+        let maskGB = Double(n * n * 2) / 1e9
+
+        func arm(_ mode: MLXFast.ScaledDotProductAttentionMaskMode) -> (Double, Double, MLXArray) {
+            // Warm the kernel first — compile is not the datum.
+            eval(MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: mode))
+            Memory.clearCache()
+            // ⚠️ Reset the high-water AFTER the warmup and the cache drain, or the warmup's own
+            // peak swallows the measured call and every arm reads 0 (v1 of this probe did exactly
+            // that and produced a confident, meaningless "peak+0.000 GB" for `.none` too).
+            GPU.resetPeakMemory()
+            let base = Memory.peakMemory
+            let t0 = Date()
+            let out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: mode)
+            eval(out)
+            let dt = Date().timeIntervalSince(t0) * 1000
+            let attributed = Double(Memory.peakMemory > base ? Memory.peakMemory - base : 0) / 1e9
+            return (attributed, dt, out)
+        }
+
+        let (memNone, tNone, outNone) = arm(.none)
+        let (memAdd, tAdd, outAdd) = arm(.array(addMask))
+        let (memBool, tBool, outBool) = arm(.array(boolMask))
+        let outGB = Double(H * n * D * 2) / 1e9
+
+        print(String(format: "[sdpa-mask-probe] N=%5d  |  materialized [1,H,N,N] = %.2f GB · mask %.3f GB · output %.3f GB",
+                     n, scoresGB, maskGB, outGB))
+        print(String(format: "[sdpa-mask-probe]   .none      peak+%.3f GB  %7.1f ms", memNone, tNone))
+        print(String(format: "[sdpa-mask-probe]   .array add peak+%.3f GB  %7.1f ms  (%.2f× time vs none)",
+                     memAdd, tAdd, tAdd / max(tNone, 1e-9)))
+        print(String(format: "[sdpa-mask-probe]   .array bool peak+%.3f GB  %7.1f ms  (%.2f× time vs none)",
+                     memBool, tBool, tBool / max(tNone, 1e-9)))
+        // No-op mask ⇒ identical result. If these diverge the mask semantics are not what we assume.
+        print(String(format: "[sdpa-mask-probe]   cos(add, none)=%.6f   cos(bool, none)=%.6f",
+                     cosine(outAdd, outNone), cosine(outBool, outNone)))
+        let verdict = memAdd > scoresGB * 0.5 ? "MATERIALIZED ❌ (tiling math would break)"
+                                              : "fused ✅ (mask does not force materialization)"
+        print("[sdpa-mask-probe]   verdict(additive): \(verdict)")
+        Memory.clearCache()
+    }
+}
+
 // MARK: - SPEED-PLAN S6 — quant speed ladder at a fixed production shape
 //
 // int4 exists for MEMORY; on M-series, int8/int4 quantizedMatmul can also be FASTER than bf16 at
@@ -1278,6 +1349,8 @@ if args.contains("--connector-gate") {
                             directory: positional.dropFirst().first)
 } else if args.contains("--sdpa-probe") {
     sdpaProbeGate()
+} else if args.contains("--sdpa-mask-probe") {
+    sdpaMaskProbeGate()   // TILING-PLAN prerequisite: does a mask force the materialized fallback?
 } else if args.contains("--speed-bench") {
     let quant = positional.first(where: { Int($0) == nil }) ?? "bf16"
     let ints = positional.compactMap { Int($0) }
