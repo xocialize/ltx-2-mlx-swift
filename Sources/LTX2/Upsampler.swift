@@ -57,20 +57,41 @@ public struct Upsampler {
     /// Load a checkpoint, resolving the variant from its sidecar `<stem>_config.json` when
     /// present (the oracle's `from_config` contract), else from the weight keys.
     public static func load(path: URL) throws -> Upsampler {
-        var variant: Variant?
+        Upsampler(weights: try MLX.loadArrays(url: path), variant: sidecarVariant(path: path))
+    }
+
+    /// Variant from the sidecar `<stem>_config.json` alone — nil when absent/unparsable.
+    private static func sidecarVariant(path: URL) -> Variant? {
         let stem = path.deletingPathExtension().lastPathComponent
         let sidecar = path.deletingLastPathComponent().appendingPathComponent(stem + "_config.json")
-        if let data = try? Data(contentsOf: sidecar),
-           let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let cfg = root["config"] as? [String: Any] {
-            let spatial = cfg["spatial_upsample"] as? Bool ?? true
-            let temporal = cfg["temporal_upsample"] as? Bool ?? false
-            let scale = (cfg["spatial_scale"] as? Double) ?? 2.0
-            if temporal { variant = .temporalX2 }
-            else if spatial && abs(scale - 1.5) < 0.01 { variant = .spatialX1_5 }
-            else if spatial { variant = .spatialX2 }
+        guard let data = try? Data(contentsOf: sidecar),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cfg = root["config"] as? [String: Any] else { return nil }
+        let spatial = cfg["spatial_upsample"] as? Bool ?? true
+        let temporal = cfg["temporal_upsample"] as? Bool ?? false
+        let scale = (cfg["spatial_scale"] as? Double) ?? 2.0
+        if temporal { return .temporalX2 }
+        if spatial && abs(scale - 1.5) < 0.01 { return .spatialX1_5 }
+        if spatial { return .spatialX2 }
+        return nil
+    }
+
+    /// Resolve a checkpoint's variant WITHOUT materializing weights — sidecar first, else
+    /// lazy header keys (MLX arrays stay unevaluated). The two-stage pipeline needs the
+    /// variant BEFORE stage 1 to derive stage-1 geometry, while the weights themselves
+    /// stay load→use→evict around the upscale step only.
+    public static func peekVariant(path: URL) throws -> Variant {
+        if let v = sidecarVariant(path: path) { return v }
+        let raw = try MLX.loadArrays(url: path)   // lazy: shapes are header metadata, no eval
+        if raw.keys.contains(where: { $0.hasSuffix("upsampler.blur_down.kernel") || $0.hasSuffix("upsampler.conv.weight") }) {
+            return .spatialX1_5
         }
-        return Upsampler(weights: try MLX.loadArrays(url: path), variant: variant)
+        // temporal (5-D conv3d) and x2 (4-D conv2d) share the `upsampler.0.weight` key —
+        // disambiguate on rank, matching the init's key-inference fallback.
+        if let w = raw.first(where: { $0.key.hasSuffix("upsampler.0.weight") })?.value {
+            return w.ndim == 5 ? .temporalX2 : .spatialX2
+        }
+        return .spatialX2
     }
 
     /// latent (B, C, F, H, W) → upsampled latent (channels-first); output geometry per `variant`.

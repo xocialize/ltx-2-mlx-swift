@@ -1110,8 +1110,11 @@ func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     try await pkg.load()
     Memory.clearCache()
 
+    // LTX_T2V_PROMPT/LTX_T2V_SAVE: perceptual A/B hooks (e.g. the Pruna face-prompt caveat —
+    // decoder swapped via LTX_VAE_DECODER, trajectory bit-identical, so saved MP4s differ by
+    // decode only). No timing claims ride on this gate, so thermal state is irrelevant here.
     func request(_ nf: Int) -> T2VRequest {
-        T2VRequest(prompt: "a fox running down a beach at sunset, waves rolling in",
+        T2VRequest(prompt: env["LTX_T2V_PROMPT"] ?? "a fox running down a beach at sunset, waves rolling in",
                    numFrames: nf, fps: 24, width: width, height: height, seed: 42)
     }
     // Warmup at 9f (kernel compile + decode/encode stacks) — excluded from the measured peak.
@@ -1415,6 +1418,9 @@ if args.contains("--connector-gate") {
     try upsamplerGate()
 } else if args.contains("--upsampler-variants-gate") {
     try upsamplerVariantsGate()
+} else if let i = args.firstIndex(of: "--two-stage-variants-gate") {
+    let which = (i + 1 < args.count && !args[i + 1].hasPrefix("--")) ? args[i + 1] : "all"
+    try await twoStageVariantsGate(which: which)
 } else if args.contains("--upscale-step-gate") {
     try upscaleStepGate()
 } else if args.contains("--denoise-gate") {

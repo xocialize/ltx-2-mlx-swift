@@ -190,7 +190,7 @@ public final class LTX2Pipeline {
     private var audioVAE: AudioVAEDecoder?
     private var vocoder: Vocoder?
     private var vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats + i2v encode
-    private var upsampler: Upsampler?          // spatial_x2
+    private var upsampler: Upsampler?          // any variant; selected via `upsamplerFile`
 
     // File availability, probed once at load — drives `supportsTwoStage` / audio presence
     // WITHOUT holding the components resident (they were `!= nil` checks before).
@@ -386,9 +386,39 @@ public final class LTX2Pipeline {
         if vaeEncoder == nil { vaeEncoder = try VideoVAEEncoder.load(path: ltxDir.appending(path: "vae_encoder.safetensors")) }
     }
 
-    /// Page in the spatial 2× upsampler (two-stage only).
+    /// Two-stage upsampler checkpoint: a file name inside `ltxDir` or an absolute path.
+    /// Default = the x2 checkpoint every upstream two-stage pipeline hardcodes; the x1.5 and
+    /// temporal variants are OUR two-stage composition (neither the oracle nor upstream
+    /// `ltx-pipelines` ships a consumer for them — verified 2026-08-05 against both repos),
+    /// built on the three individually-gated checkpoints (`--upsampler-variants-gate`,
+    /// cosine 1.000000). `LTX_UPSAMPLER=<name|abs path>` overrides for CLI A/Bs, mirroring
+    /// the `LTX_VAE_DECODER` idiom.
+    public var upsamplerFile: String = LTX2Pipeline.defaultUpsamplerFile()
+    private var loadedUpsamplerFile: String?
+
+    static func defaultUpsamplerFile() -> String {
+        let raw = (ProcessInfo.processInfo.environment["LTX_UPSAMPLER"] ?? "")
+            .trimmingCharacters(in: .whitespaces)
+        return raw.isEmpty ? "spatial_upscaler_x2_v1_1.safetensors" : raw
+    }
+
+    /// The selected upsampler checkpoint as a concrete URL.
+    private var upsamplerURL: URL {
+        upsamplerFile.contains("/")
+            ? URL(fileURLWithPath: (upsamplerFile as NSString).expandingTildeInPath)
+            : ltxDir.appending(path: upsamplerFile)
+    }
+
+    /// Page in the selected latent upsampler (two-stage only). Reloads when the selection
+    /// changed since the last load (keepStagesResident would otherwise pin the old variant).
     private func ensureUpsampler() throws {
-        if upsampler == nil { upsampler = try Upsampler.load(path: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors")) }
+        if upsampler == nil || loadedUpsamplerFile != upsamplerFile {
+            guard FileManager.default.fileExists(atPath: upsamplerURL.path) else {
+                throw TwoStageError.upsamplerMissing(upsamplerURL.path)
+            }
+            upsampler = try Upsampler.load(path: upsamplerURL)
+            loadedUpsamplerFile = upsamplerFile
+        }
     }
 
     /// Evict the two-stage encoder + upsampler after the upscale step (before the stage-2 denoise
@@ -448,7 +478,11 @@ public final class LTX2Pipeline {
         let hasAudio = fm.fileExists(atPath: ltxDir.appending(path: "audio_vae.safetensors").path)
                     && fm.fileExists(atPath: ltxDir.appending(path: "vocoder.safetensors").path)
         let hasEncoder = fm.fileExists(atPath: ltxDir.appending(path: "vae_encoder.safetensors").path)
-        let hasUpsampler = fm.fileExists(atPath: ltxDir.appending(path: "spatial_upscaler_x2_v1_1.safetensors").path)
+        let upsamplerSel = defaultUpsamplerFile()
+        let upsamplerProbe = upsamplerSel.contains("/")
+            ? URL(fileURLWithPath: (upsamplerSel as NSString).expandingTildeInPath)
+            : ltxDir.appending(path: upsamplerSel)
+        let hasUpsampler = fm.fileExists(atPath: upsamplerProbe.path)
         return LTX2Pipeline(dit: dit, ditPath: ditPath, ltxDir: ltxDir, gemmaDir: gemmaDir,
                             hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler,
                             vaeDecoderPath: vaePath)
@@ -742,23 +776,62 @@ public final class LTX2Pipeline {
                                  streaming: streaming)
         }
 
-        let fLat = (numFrames + 7) / 8
+        // --- Variant-derived geometry (validated BEFORE any heavy phase) ---
+        // The upsampler variant fixes the stage-1 ↔ stage-2 latent relation:
+        //   x2:       (F, H/2, W/2) → (F, H, W)      target pixels ÷64
+        //   x1.5:     (F, 2H/3, 2W/3) → (F, H, W)    target pixels ÷96 (stage-1 latents
+        //             land even automatically, which the blur-downsample needs exact)
+        //   temporal: ((F+1)/2, H, W) → (F, H, W)    target latent frames ODD (the module
+        //             drops doubled frame 0), i.e. pixel frames ≡ 1 (mod 16); stage 1 runs
+        //             at fps/2 so both stages span the same seconds.
+        // x2 is upstream's composition; x1.5/temporal two-stage is OURS (no oracle or
+        // upstream consumer exists — see `upsamplerFile`).
+        guard FileManager.default.fileExists(atPath: upsamplerURL.path) else {
+            throw TwoStageError.upsamplerMissing(upsamplerURL.path)
+        }
+        let variant = try Upsampler.peekVariant(path: upsamplerURL)
+        let fLat2 = (numFrames + 7) / 8
+        let latH2 = height / 32, latW2 = width / 32
+        guard height % 32 == 0, width % 32 == 0 else {
+            throw TwoStageError.badGeometry("target \(width)x\(height) must be divisible by 32")
+        }
+        let fLat1: Int, hLat1: Int, wLat1: Int, fps1: Double
+        switch variant {
+        case .spatialX2:
+            guard latH2 % 2 == 0, latW2 % 2 == 0 else {
+                throw TwoStageError.badGeometry(
+                    "x2 two-stage needs target pixels divisible by 64, got \(width)x\(height)")
+            }
+            (fLat1, hLat1, wLat1, fps1) = (fLat2, latH2 / 2, latW2 / 2, fps)
+        case .spatialX1_5:
+            guard latH2 % 3 == 0, latW2 % 3 == 0 else {
+                throw TwoStageError.badGeometry(
+                    "x1.5 two-stage needs target pixels divisible by 96, got \(width)x\(height)")
+            }
+            (fLat1, hLat1, wLat1, fps1) = (fLat2, latH2 * 2 / 3, latW2 * 2 / 3, fps)
+        case .temporalX2:
+            guard fLat2 % 2 == 1 else {
+                throw TwoStageError.badGeometry(
+                    "temporal two-stage needs pixel frames ≡ 1 (mod 16) so target latent frames "
+                    + "are odd (the upsampler drops doubled frame 0), got \(numFrames)f "
+                    + "(latent \(fLat2))")
+            }
+            (fLat1, hLat1, wLat1, fps1) = ((fLat2 + 1) / 2, latH2, latW2, fps / 2)
+        }
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
         let s2 = Positions.stage2Sigmas
         let sigma0 = s2[0]
-        let nv2 = fLat * (height / 32) * (width / 32)          // stage-2 (full-res) video token count
-        let nv1p = fLat * (height / 2 / 32) * (width / 2 / 32) // stage-1 (half-res) token count
+        let nv2 = fLat2 * latH2 * latW2        // stage-2 (target-res) video token count
+        let nv1 = fLat1 * hLat1 * wLat1        // stage-1 token count
         MLXProfiler.shared.beginRun(String(format:
-            "t2vTwoStage %dx%d %df fps=%.0f | fLat=%d nv1=%d nv2=%d audioT=%d | steps s1=%d s2=%d",
-            width, height, numFrames, fps, fLat, nv1p, nv2, audioT,
+            "t2vTwoStage %dx%d %df fps=%.0f | %@ | fLat=%d→%d nv1=%d nv2=%d audioT=%d | steps s1=%d s2=%d",
+            width, height, numFrames, fps, variant.rawValue, fLat1, fLat2, nv1, nv2, audioT,
             Positions.distilledSigmas.count - 1, s2.count - 1))
 
         // 1. Text encode — sequential Gemma → connector (never co-resident), self-evicting.
         let (videoEmbeds, audioEmbeds) = try await encodePrompt(prompt)
 
-        // --- Stage 1: half resolution (denoise peak #1, DiT only resident) ---
-        let hHalf = height / 2, wHalf = width / 2
-        let hLat1 = hHalf / 32, wLat1 = wHalf / 32, nv1 = fLat * hLat1 * wLat1
+        // --- Stage 1 (denoise peak #1, DiT only resident) ---
         let v1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, nv1, 128]), sigma: 1.0, shape: [1, nv1, 128], seed: seed)
         let a1 = LTX2Pipeline.noiseInit(clean: MLXArray.zeros([1, audioT, 128]), sigma: 1.0, shape: [1, audioT, 128], seed: seed.map { $0 &+ 1 })
         _ = try ensureDiT()
@@ -769,21 +842,30 @@ public final class LTX2Pipeline {
         let (v1f, a1f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: fLat, H: hLat1, W: wLat1, fps: Float(fps)),
+            videoPositions: Positions.video(F: fLat1, H: hLat1, W: wLat1, fps: Float(fps1)),
             audioPositions: Positions.audio(tokens: audioT), label: "s1-", stage: 1, totalStages: 2)
         eval(v1f, a1f)
 
-        // --- Upscale 2× in un-normalized latent space (encoder+upsampler loaded only here) ---
+        // --- Upscale in un-normalized latent space (encoder+upsampler loaded only here) ---
         LTX2Progress.report(.upsample)
-        let upSpan = MLXProfiler.shared.begin("upscale", "vae-enc+upsampler", note: "half→full latent")
+        let upSpan = MLXProfiler.shared.begin("upscale", "vae-enc+upsampler",
+                                              note: "\(variant.rawValue) stage1→stage2 latent")
         try ensureVAEEncoder(); try ensureUpsampler()
-        let v1spatial = v1f.reshaped(1, fLat, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F,h1,w1)
-        let upscaled = vaeEncoder!.normalizeLatent(upsampler!(vaeEncoder!.denormalizeLatent(v1spatial)))  // (1,128,F,2h1,2w1)
+        let v1spatial = v1f.reshaped(1, fLat1, hLat1, wLat1, 128).transposed(0, 4, 1, 2, 3)  // (1,128,F1,h1,w1)
+        let upscaled = vaeEncoder!.normalizeLatent(upsampler!(vaeEncoder!.denormalizeLatent(v1spatial)))
         eval(upscaled)
         MLXProfiler.shared.end(upSpan)
         dropUpscaler()                                          // evict before the stage-2 denoise peak
-        let hLat2 = hLat1 * 2, wLat2 = wLat1 * 2
-        let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F*2h1*2w1, 128)
+        // Geometry contract: the module's actual output must land exactly on the target
+        // latent grid — a mismatch here means the variant math above is wrong, and stage 2
+        // would silently denoise at the wrong resolution.
+        guard upscaled.dim(2) == fLat2, upscaled.dim(3) == latH2, upscaled.dim(4) == latW2 else {
+            throw TwoStageError.badGeometry(
+                "upsampler(\(variant.rawValue)) produced latent \(upscaled.shape), expected "
+                + "(1, 128, \(fLat2), \(latH2), \(latW2)) for target \(width)x\(height)x\(numFrames)f")
+        }
+        let hLat2 = latH2, wLat2 = latW2
+        let v2tokens = LTX2Pipeline.patchify(upscaled)  // (1, F2*h2*w2, 128)
 
         // --- Stage 2: full resolution refine (init = noise·σ₀ + upscaled·(1-σ₀)) ---
         let v2init = LTX2Pipeline.noiseInit(clean: v2tokens, sigma: sigma0, shape: v2tokens.shape, seed: seed.map { $0 &+ 2 })
@@ -791,13 +873,13 @@ public final class LTX2Pipeline {
         let (v2f, a2f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: fLat, H: hLat2, W: wLat2, fps: Float(fps)),
+            videoPositions: Positions.video(F: fLat2, H: hLat2, W: wLat2, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT), label: "s2-", stage: 2, totalStages: 2)
         eval(v2f, a2f)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
-        let vspatial = v2f.reshaped(1, fLat, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
+        let vspatial = v2f.reshaped(1, fLat2, hLat2, wLat2, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
         // Audio FIRST (see t2v — the streamed lane needs the writer's audio track closed
         // before the first video frame; the two decodes are independent).
@@ -805,7 +887,7 @@ public final class LTX2Pipeline {
         let waveform = decodeAudio(a2f)
         if let waveform { eval(waveform) }
         MLXProfiler.shared.end(audSpan)
-        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat*8-7)f full-res")
+        let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(fLat2*8-7)f full-res")
         let pixels: MLXArray
         if let streaming {
             try streaming.onAudioReady(waveform)
@@ -819,5 +901,18 @@ public final class LTX2Pipeline {
         dropDecoder()
         MLXProfiler.shared.endRun()
         return Output(video: pixels, audio: waveform)
+    }
+}
+
+/// Two-stage wiring failures — all thrown BEFORE any heavy phase (encode/denoise), so a
+/// mis-sized request costs milliseconds, not a stage-1 denoise.
+public enum TwoStageError: Error, CustomStringConvertible {
+    case upsamplerMissing(String)
+    case badGeometry(String)
+    public var description: String {
+        switch self {
+        case .upsamplerMissing(let p): return "two-stage upsampler checkpoint not found: \(p)"
+        case .badGeometry(let m): return "two-stage geometry: \(m)"
+        }
     }
 }
