@@ -18,10 +18,12 @@
 // Weights live on Satechi (PCI-E) — NEVER point these at /Volumes/DEV_ARCHIVE
 // (deleted; ISSUES.md I9).
 
+import CryptoKit
 import Foundation
 import MLX
 import MLXRandom
 import LTX2
+import MLXLTX2
 
 let vaeModelsDir = ProcessInfo.processInfo.environment["LTX_MODELS_DIR"]
     ?? "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
@@ -50,7 +52,98 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
                          chunk: args.contains("--chunk") ? 8 : 0,
                          untiled: !args.contains("--no-untiled"),
                          pruna: pruna)
+    } else if args.contains("--vae-mux-bench") {
+        // ONE lane per process (the §1.4d ④ fresh-process discipline):
+        //   RunLTX2 --vae-mux-bench <mat|stream> [wPx hPx fLat chunk] [tilesHxW]
+        let lane = positional.contains("stream") ? "stream" : "mat"
+        let (th, tw) = tileSpec(positional.first { $0.contains("x") } ?? "4x4")
+        try await vaeMuxBench(lane: lane,
+                              widthPx: ints.count > 0 ? ints[0] : 3840,
+                              heightPx: ints.count > 1 ? ints[1] : 2176,
+                              fLat: ints.count > 2 ? ints[2] : 15,
+                              chunk: ints.count > 3 ? ints[3] : 8,
+                              tilesH: th, tilesW: tw, halo: 5, pruna: pruna)
     }
+}
+
+// MARK: - --vae-mux-bench
+
+/// The DECODE+ASSEMBLY+MUX phase receipt for the streamed decode→mux seam (GAP #8) at the
+/// geometry it was built for: composed 4K decode, where §1.4d ④b measured 99.78 GB with
+/// ~18 GB of "parts/assembly" overhead above the tile-window arithmetic. Full-4K DENOISE
+/// cannot run on this box (~122k tokens), so any real 4K pipeline is decode-phase-bound —
+/// a phase-level A/B here IS the composed-run answer (phase-bound-lever rule, pitfall #56).
+///
+/// `mat`    = decodeChunked (array) → full pixel volume → encodeMP4 (the default lane)
+/// `stream` = decodeChunked(sink:) → MP4StreamWriter.appendSync per chunk (LTX_STREAM_MUX=1 lane)
+/// Same decode math, same writer, same H.264 settings → the ENCODER INPUT is bit-identical
+/// across lanes (LTX_MUX_PIXHASH=1 digests per-frame floats in append order — measured equal),
+/// but the MP4s are NOT comparable byte- or pixel-wise (all measured at 1024×576 fLat5 noise):
+///   · whole-file md5 differs even between identical runs of the SAME lane (container
+///     creation timestamps);
+///   · each lane is decoded-bit-deterministic run-to-run (mat↔mat and stream↔stream both
+///     max|Δ|=0), yet mat↔stream decoded diverges (SSIM 0.96 on noise content) — VideoToolbox
+///     rate control responds deterministically to append BATCHING (one big appendSync vs
+///     per-chunk appends with decode gaps). Same pixels in, different QP schedule out.
+/// So the lane-equivalence gate is the PIXHASH, never the MP4. Wall is informational; the
+/// deliverable is peakΔ (run peak measurements with pixhash OFF — per-frame host copies
+/// would pollute the footprint). Never under MLX_PROFILE.
+func vaeMuxBench(lane: String, widthPx: Int, heightPx: Int, fLat: Int, chunk: Int,
+                 tilesH: Int, tilesW: Int, halo: Int, pruna: Bool) async throws {
+    let dec = try loadDecoder(pruna: pruna)
+    let hLat = heightPx / 32, wLat = widthPx / 32
+    let frames = 8 * fLat - 7
+    MLXRandom.seed(7)
+    let latent = MLXRandom.normal([1, 128, fLat, hLat, wLat]).asType(.float32)
+    eval(latent)
+    print("[vae-mux-bench] lane=\(lane) \(wLat * 32)×\(hLat * 32) fLat=\(fLat) (→\(frames)f) tiles=\(tilesH)×\(tilesW) halo=\(halo) chunk=\(chunk) decoder=\(pruna ? "pruna" : "stock")")
+    Memory.clearCache()
+    let base = physFootprintBytes()
+    let sampler = PhysSampler(); sampler.start(); sampler.resetMax()
+    let t = Date()
+    // LTX_MUX_PIXHASH=1: per-frame digest of the float pixels entering the writer, in append
+    // order — identical digests across lanes proves the encoder INPUT matches and any MP4
+    // divergence is encoder-side (rate control vs append batching).
+    let pixhash = ProcessInfo.processInfo.environment["LTX_MUX_PIXHASH"] == "1"
+    var hasher = Insecure.MD5()
+    func hashFrames(_ cl: MLXArray) {   // (1, f, H, W, 3) channels-last
+        guard pixhash else { return }
+        for i in 0 ..< cl.dim(1) {
+            let vals: [Float] = cl[0, i, 0..., 0..., 0...].asArray(Float.self)
+            vals.withUnsafeBytes { hasher.update(bufferPointer: $0) }
+        }
+    }
+    let mp4: Data
+    if lane == "stream" {
+        let writer = try MP4StreamWriter(width: widthPx, height: heightPx, fps: 24, expectAudio: false)
+        try dec.decodeChunked(latent, chunkFrames: chunk, halo: 5,
+                              spatialTilesH: tilesH, spatialTilesW: tilesW, spatialHalo: halo) { px in
+            let cl = px.transposed(0, 2, 3, 4, 1)
+            hashFrames(cl)
+            try writer.appendSync(framesChunk: cl, totalFrames: frames)
+        }
+        mp4 = try await writer.finish()
+    } else {
+        let px = try dec.decodeChunked(latent, chunkFrames: chunk, halo: 5,
+                                       spatialTilesH: tilesH, spatialTilesW: tilesW, spatialHalo: halo)
+        eval(px)
+        let cl = px.transposed(0, 2, 3, 4, 1)
+        hashFrames(cl)
+        mp4 = try await encodeMP4(frames: cl, fps: 24)
+    }
+    if pixhash {
+        let d = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        print("[vae-mux-bench] pixhash=\(d)")
+    }
+    let wall = Date().timeIntervalSince(t)
+    let peak = sampler.maxBytes(); sampler.stop()
+    let md5 = Insecure.MD5.hash(data: mp4).map { String(format: "%02x", $0) }.joined()
+    if let save = ProcessInfo.processInfo.environment["LTX_MUX_SAVE"], !save.isEmpty {
+        try mp4.write(to: URL(fileURLWithPath: save))
+    }
+    print(String(format: "[vae-mux-bench] SUMMARY lane=%@ wall=%.1fs peakΔ=%.2f GB base=%.2f GB mp4=%.1f MB md5=%@",
+                 lane as NSString, wall, gbOf(peak > base ? peak - base : 0), gbOf(base),
+                 Double(mp4.count) / 1e6, md5 as NSString))
 }
 
 /// Min per-line PSNR in ±`band` px around each seam. `d` = |tiled − whole| (1,3,F,Hpx,Wpx) fp32.
