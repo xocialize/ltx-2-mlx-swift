@@ -184,6 +184,63 @@ tiled-vs-untiled gate might not flag as a *tiling* bug. Slice internally; forwar
 5. **Receipt** — `--bench-e2e` arms at a geometry that today OOMs or is infeasible: peak phys,
    wall, and output cosine vs untiled where untiled can still run.
 
+---
+
+## 🚨 MEASURED 2026-08-04 — the lever works, but **its stated premise does not hold on our path**
+
+The tiler is built, gated and wired (`--modality-tile-gate` 9/9 exact; `LTX_TILE_SPATIAL` /
+`LTX_TILE_FRAMES` / `LTX_TILE_OVERLAP`). First end-to-end numbers, 704×512 bf16, `--speed-bench`:
+
+| geometry | arm | run2 | peak phys |
+|---|---|---|---|
+| 9f (nv=704) | untiled | **20.6 s** | 52.49 GB |
+| 9f | tiled 1×2×2 ov2 (4 tiles, 216 tok) | 38.6 s | 52.50 GB |
+| 121f (nv=5632) | untiled | **173.3 s** (ladder median) | 67.76 GB |
+| 121f | tiled 1×2×2 ov2 | 200.0 s | **66.11 GB** |
+
+**At 121f tiling buys 1.65 GB (2.4%) for +15% wall.** At 9f it buys nothing for +87%.
+
+### Why — and this is the finding that matters
+
+🔑 **The DiT's activation grows LINEARLY with token count on our path, not quadratically — so the
+O(N²) attention wall the oracle built this lever to break does not exist here.** Evidence:
+
+- **Profiler, denoise phase, nv=704:** `act=38.0 cache=3.4 phys=41.8 GB` — i.e. ~3.8 GB of
+  activation above the 38 GB of bf16 weights.
+- **Whole-run peak at nv=5632 is 67.76 GB**, i.e. ~30 GB of activation. That is **8× the tokens for
+  8× the activation — linear.** Quadratic would predict 3.8 × 64 ≈ **243 GB**.
+- **Directly corroborated by `--sdpa-mask-probe`:** at N=5632 the call-attributed peak is
+  **0.280 GB**, against **2.03 GB** if `[1,H,N,N]` were materialized. MLX's fused SDPA is genuine
+  flash attention — it never forms the scores tensor.
+
+The oracle's own justification (*"per-layer attention scores… ~10 GB/layer at 720×1280×97; 1080p 8s+
+doesn't fit any current Apple Silicon"*) is **computed from `B·H·N²·2` bytes, i.e. it assumes a
+materialized scores tensor.** On MLX with the fused kernel that tensor is never allocated. Tiling
+still cuts the *per-token* activations (hidden states across 48 blocks, residuals) — but by **k**,
+not **k²**, and that term was never the wall.
+
+⚠️ **And the run peak is often not the DiT at all.** At 9f the profiler's worst-phys by phase is
+**encode 52.5 GB** (Gemma) · denoise 41.8 · vae-decode 42.0 — so tiling the DiT cannot move the run
+peak by construction at that size. Only past ~65f does denoise become the peak phase.
+
+### Disposition
+
+🟡 **Keep it, default OFF, and stop advertising it as the 1080p-8s+ unlock until that claim is
+re-measured on our stack.** It is correct, cheap when unused (`isIdentity` ⇒ the plain path, byte
+for byte), and it is the only lever that reduces DiT-phase activation at all. But:
+
+- **Do NOT repeat the oracle's k² framing in any of our docs.** Ours is a ~k reduction of a linear
+  term, measured at 2.4% of run peak at 121f.
+- **The honest use case is narrower than advertised:** geometries where (a) denoise is the peak
+  phase — past ~65f at 704×512 — and (b) the 15%+ wall-clock is acceptable to fit a budget that
+  would otherwise OOM. That is a *tier-fitting* tool, not a speed or general-memory tool.
+- ⚠️ **`BLOCKSTREAM-EXPANSION-EVAL` §2's open row ("per-block attention transients at big N, Q/KV
+  ~12–16 GB at 500k tokens") should be re-derived**, since it rests on the same materialized-scores
+  arithmetic. The 20s-4K attention wall may be a *compute* wall (O(N²) time, which is real and
+  unchanged) rather than a *memory* wall.
+- **The next real question is Gemma**, not the DiT: it sets the run peak at small geometries
+  (52.5 GB at 9f) and nothing in this plan touches it.
+
 ## Open questions
 
 - Does `--tile-spatial` compose with our **spatial VAE tiling** cleanly? They are independent

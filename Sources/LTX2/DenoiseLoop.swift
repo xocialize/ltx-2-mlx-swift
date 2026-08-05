@@ -31,7 +31,7 @@ public enum DenoiseLoop {
     /// `videoTimesteps`/`audioTimesteps` (B,N) are given, σ is per-token (B,N,1) and they also
     /// drive the DiT's per-token AdaLN path.
     static func x0(
-        _ dit: DiT, videoLatent: MLXArray, audioLatent: MLXArray, sigma: Float,
+        _ dit: any LTXDenoiser, videoLatent: MLXArray, audioLatent: MLXArray, sigma: Float,
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil
     ) -> (MLXArray, MLXArray) {
@@ -64,7 +64,7 @@ public enum DenoiseLoop {
     /// Reports each step to `LTX2Progress` (V2 run-phase plane); `stage`/`totalStages` tag the
     /// two-stage passes (s1 = 1/2, s2 = 2/2) so a consumer can render "pass 2/2 · step 3/8".
     public static func run(
-        dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
+        dit: any LTXDenoiser, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         label: String = "", stage: Int? = nil, totalStages: Int? = nil
     ) throws -> (video: MLXArray, audio: MLXArray) {
@@ -103,7 +103,7 @@ public enum DenoiseLoop {
     /// stay exactly clean. Pass a mask ONLY when non-uniform (oracle `_is_uniform_mask`); nil ⇒
     /// that modality follows the scalar t2v path. Audio is usually unconditioned (nil) for i2v.
     public static func runConditioned(
-        dit: DiT, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
+        dit: any LTXDenoiser, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         videoCleanLatent: MLXArray? = nil, videoDenoiseMask: MLXArray? = nil,
         audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,

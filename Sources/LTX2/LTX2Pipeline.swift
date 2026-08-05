@@ -55,8 +55,62 @@ public final class LTX2Pipeline {
     }
 
     /// Arm the streamer's gate threshold for the request being run (no-op when resident).
+    ///
+    /// 🚨 Under modality tiling this MUST be the largest **per-forward** count, not the untiled
+    /// total. The kit measures tokens inside `beginForward` and only evaluates the gate when
+    /// `forwardTokens >= gateEvaluationThresholdTokens`; with tiling every forward carries
+    /// ~N/k tokens, so arming with the untiled N means the threshold is never reached, the verdict
+    /// stays `.undecided` forever, and the run streams unconditionally however bad the arithmetic.
+    /// Callers pass the tiler's `largestTileTokenCount` when a tiler is installed.
+    /// ⚠️ Note the real coupling this exposes: the gate's own `N_min ≈ N·C/S` is derived from the
+    /// same N, so **tiling genuinely makes the streaming gate harder to clear** — the two memory
+    /// levers partly cancel rather than compose freely (TILING-PLAN hazard 1).
     private func armStreamingGate(largestStageTokens: Int) {
         ditStorage?.blockStreamer?.gateEvaluationThresholdTokens = largestStageTokens
+    }
+
+    /// Token-grid tiling for the DiT forward. `nil`/identity ⇒ the plain resident path, byte for
+    /// byte. Env overrides mirror the oracle's CLI: `LTX_TILE_FRAMES` (`--tile-frames`),
+    /// `LTX_TILE_SPATIAL` (`--tile-spatial`), `LTX_TILE_OVERLAP` (`--tile-overlap`, default 2).
+    public var modalityTiling: TileCountConfig?
+
+    private var effectiveModalityTiling: TileCountConfig? {
+        let env = ProcessInfo.processInfo.environment
+        let f = env["LTX_TILE_FRAMES"].flatMap { Int($0) }
+        let s = env["LTX_TILE_SPATIAL"].flatMap { Int($0) }
+        if f != nil || s != nil {
+            let ov = env["LTX_TILE_OVERLAP"].flatMap { Int($0) } ?? 2
+            let cfg = TileCountConfig(tileFrames: f ?? 1, tileSpatial: s ?? 1, overlap: ov)
+            return cfg.isIdentity ? nil : cfg
+        }
+        guard let cfg = modalityTiling, !cfg.isIdentity else { return nil }
+        return cfg
+    }
+
+    /// Wrap `dit` in a tiler when tiling is configured, and re-arm the streaming gate with the
+    /// per-forward token count. Returns the plain DiT (and arms with `untiledTokens`) otherwise.
+    private func denoiser(_ dit: DiT, F: Int, H: Int, W: Int,
+                          positions: MLXArray, untiledTokens: Int, audioTokens: Int) -> any LTXDenoiser {
+        guard let cfg = effectiveModalityTiling else {
+            armStreamingGate(largestStageTokens: untiledTokens)
+            return dit
+        }
+        do {
+            let tiler = try VideoModalityTiler(tiling: cfg, latentShape: (F: F, H: H, W: W),
+                                               positions: positions)
+            armStreamingGate(largestStageTokens: tiler.largestTileTokenCount + audioTokens)
+            MLXProfiler.shared.note(
+                "modality tiling \(cfg.frames.numTiles)×\(cfg.height.numTiles)×\(cfg.width.numTiles)"
+                + " overlap=\(cfg.frames.overlap) → \(tiler.tiles.count) tiles,"
+                + " largest \(tiler.largestTileTokenCount) video tokens (untiled \(untiledTokens - audioTokens))")
+            return TiledDiT(inner: dit, tiler: tiler)
+        } catch {
+            // A tiling config the grid cannot honour must not silently change the output —
+            // fall back to the untiled path loudly, exactly as the streaming gate does.
+            MLXProfiler.shared.note("modality tiling DISABLED (\(error)) — running untiled")
+            armStreamingGate(largestStageTokens: untiledTokens)
+            return dit
+        }
     }
 
     /// Stop the refill thread between the denoise and decode phases (slots and bindings
@@ -438,9 +492,11 @@ public final class LTX2Pipeline {
 
         // 4. Distilled Euler denoise (joint video + audio) — the memory peak (DiT only resident).
         let dit = try ensureDiT()
-        armStreamingGate(largestStageTokens: nv + audioT)  // one-stage: this IS the largest
+        // one-stage: this IS the largest stage. `denoiser` arms the gate (tiled or not).
+        let engine = denoiser(dit, F: fLat, H: hLat, W: wLat, positions: videoPositions,
+                              untiledTokens: nv + audioT, audioTokens: audioT)
         let (vfinal, afinal) = try DenoiseLoop.run(
-            dit: dit, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
+            dit: engine, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions, label: "")
         eval(vfinal, afinal)
