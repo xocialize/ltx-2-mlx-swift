@@ -1,0 +1,6 @@
+[t2v-spot] request 1280×704×241f bf16 · mux lane: STREAMED
+[t2v-spot] prewarm 4.6s (12 files)
+[t2v-spot] resident floor (post-warmup + clearCache): 38.57 GB
+[t2v-spot] run 962.5s  mp4 5.3 MB
+[t2v-spot] SPLIT lane=STREAMED floor=38.57 GB peak=80.36 GB activation=41.79 GB
+[t2v-spot] SUMMARY lane=STREAMED shape=1280x704x241 peak=80.36 act=41.79
