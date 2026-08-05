@@ -313,9 +313,26 @@ cooled box) with `env.LTX_CACHE_LIMIT_GB` as the arm.
    claim shipping-path relevance should set `env.LTX_CACHE_LIMIT_GB=2` (and receipts print arm env,
    so the basis is visible); uncapped arms remain valid for comparing against historical
    receipts.** QuantFootprints were measured through the engine path and are unaffected.
-2. **Quantify (a) properly**: what is the encode peak with the DiT *not* resident? Expected ~14.5 GB,
-   which would move the run peak to denoise/decode (~42 GB) — **a ~10 GB reduction, larger than
-   anything modality tiling achieved.** Measure before building.
+2. ✅ **MEASURED 2026-08-05, and CLOSED — the encode stack without the DiT is 13.3 GB, and the
+   architecture already does the right thing on both tiers.** `--text-encode-gate` (production-shaped
+   sequential Gemma→connector, DiT never loaded) peaks at **13,312 MB phys** (external `footprint`
+   sampler, gate PASS at production cosines). So the 48.8 GB (capped) encode-phase peak decomposes
+   as ~13.3 GB text stack + ~35 GB resident DiT. **But nothing needs building:**
+   - **Sequential/low tiers already encode without the DiT.** `dropDiTIfSequential`'s own docstring:
+     it fires *"before the connector loads (encode is the T3b-measured peak: connector int8 quantize
+     scratch + a warmed-resident DiT ≈ 26 GB co-resident) AND after the last denoise step"* — T3b
+     found and solved this exact co-residency where memory is scarce. Every entry point encodes
+     before `ensureDiT()`, so a dropped DiT stays dropped through encode and reloads in seconds.
+   - **Resident tiers keep the DiT through encode BY DESIGN** — it is the persistent floor across
+     requests on 64–128 GB hosts. The desktop's 48.8 GB is the cost of that choice, not a bug.
+   **Gemma-quant note (asked 2026-08-05): quantization is not a lever here and is already pulled.**
+   Gemma is `mlx-community/gemma-3-12b-it-4bit` (7.5 GB on disk) in both the wrapper default and the
+   CLI; the connector int8-quantizes at load (T3b). The whole text stack is 13.3 GB against an
+   encode peak set by the 38 GB DiT — even deleting Gemma entirely would move it by at most a third
+   of the co-residency term. Going below 4-bit (~1.5–2 GB at best) would put quantization noise
+   directly into the **49-hidden-state conditioning stream** the DiT was trained against — quality
+   risk for near-zero structural gain. And a smaller Gemma is off the table: the connector is
+   trained against Gemma-3-**12B**'s 3840-dim states specifically.
 3. ⚠️ **Any change here invalidates the declared `QuantFootprint`** — those are *measured* values
    (`MLXLTX2Package`), so re-measure before touching the manifest.
 
