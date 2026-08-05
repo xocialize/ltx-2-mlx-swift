@@ -1,0 +1,132 @@
+[speed-bench] quant=bf16  shape=704×512×9f  path=one-stage
+[speed-bench] prewarm 9.2s (8 files)
+[MLXPROF] DiT.load done (lazy) · phys=0.10 GB
+[MLXPROF] DiT kernel warmup: 1.3s · phys=40.58 GB · pool=2.34 GB
+[speed-bench] load 1.4s
+[MLXPROF] ===== t2v(one-stage) 704x512 9f fps=24 | fLat=2 nv=704 audioT=9 | steps=8 =====
+[MLXPROF] workingSet(recommended)=115.4 GB  cacheLimit=130.6 GB  (phys past workingSet ⇒ paging)
+[MLXPROF] encode/gemma   3155.2ms  act=45.6 cache=2.5 phys=48.4/115 GB  gemma-3-12b 4-bit
+[MLXPROF] encode/connector    738.6ms  act=42.0 cache=10.1 phys=52.5/115 GB  
+[MLXPROF] modality tiling 1×2×2 overlap=2 → 4 tiles, largest 216 video tokens (untiled 704)
+[MLXPROF] denoise/tile0    915.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    893.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    891.6ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    901.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step0   3770.1ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=1.000
+[MLXPROF] denoise/tile0    916.4ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    955.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    991.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    980.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step1   3853.5ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.994
+[MLXPROF] denoise/tile0    969.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    972.3ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    975.3ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    984.2ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step2   3911.3ms  act=38.0 cache=0.0 phys=40.8/115 GB  vN=704 aN=9 σ=0.988
+[MLXPROF] denoise/tile0    975.2ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    979.3ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    989.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    990.4ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step3   3943.9ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.981
+[MLXPROF] denoise/tile0    984.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    991.5ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    993.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    994.2ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step4   3973.7ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.975
+[MLXPROF] denoise/tile0    991.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    995.1ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    993.3ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    995.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step5   3983.8ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.909
+[MLXPROF] denoise/tile0    991.2ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    996.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    990.1ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    991.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step6   3978.7ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.725
+[MLXPROF] denoise/tile0    986.4ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    988.3ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    999.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1004.8ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step7   3988.8ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.422
+[MLXPROF] vae-decode/up0     31.6ms  act=38.5 cache=0.0 phys=39.0/115 GB  in=[1, 2, 16, 22, 1024]
+[MLXPROF] vae-decode/up1     43.9ms  act=38.9 cache=0.0 phys=39.6/115 GB  in=[1, 2, 16, 22, 1024]
+[MLXPROF] vae-decode/up2     27.3ms  act=39.1 cache=0.0 phys=39.7/115 GB  in=[1, 3, 32, 44, 512]
+[MLXPROF] vae-decode/up3     58.0ms  act=39.3 cache=0.0 phys=39.9/115 GB  in=[1, 3, 32, 44, 512]
+[MLXPROF] vae-decode/up4    334.9ms  act=39.7 cache=0.0 phys=41.2/115 GB  in=[1, 5, 64, 88, 512]
+[MLXPROF] vae-decode/up5     54.1ms  act=39.6 cache=0.0 phys=40.1/115 GB  in=[1, 5, 64, 88, 512]
+[MLXPROF] vae-decode/up6    251.5ms  act=39.8 cache=0.0 phys=40.5/115 GB  in=[1, 9, 64, 88, 256]
+[MLXPROF] vae-decode/up7     57.4ms  act=39.8 cache=0.0 phys=40.4/115 GB  in=[1, 9, 64, 88, 256]
+[MLXPROF] vae-decode/up8    171.9ms  act=39.7 cache=0.0 phys=41.6/115 GB  in=[1, 9, 128, 176, 128]
+[MLXPROF] vae-decode/out+unpatchify     24.4ms  act=39.7 cache=0.0 phys=40.4/115 GB  
+[MLXPROF] vae-decode/video   1241.6ms  act=40.3 cache=0.5 phys=41.2/115 GB  9f
+[MLXPROF] ---------- summary (ms per group) ----------
+[MLXPROF]   encode    3893.8ms  (  2 region(s),  5.7%)  worstPhys=52.5 GB
+[MLXPROF]   denoise   62573.0ms  ( 40 region(s), 91.0%)  worstPhys=41.1 GB
+[MLXPROF]   vae-decode    2296.5ms  ( 11 region(s),  3.3%)  worstPhys=41.6 GB
+[MLXPROF]   TOTAL   68763.3ms  (68.8s total)
+[speed-bench] run1 (kernel compile + generate) 36.7s
+[MLXPROF] ===== t2v(one-stage) 704x512 9f fps=24 | fLat=2 nv=704 audioT=9 | steps=8 =====
+[MLXPROF] workingSet(recommended)=115.4 GB  cacheLimit=130.6 GB  (phys past workingSet ⇒ paging)
+[MLXPROF] encode/gemma   3422.4ms  act=45.6 cache=0.2 phys=46.0/115 GB  gemma-3-12b 4-bit
+[MLXPROF] encode/connector    615.1ms  act=42.0 cache=10.1 phys=52.5/115 GB  
+[MLXPROF] modality tiling 1×2×2 overlap=2 → 4 tiles, largest 216 video tokens (untiled 704)
+[MLXPROF] denoise/tile0    913.6ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    887.0ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2    888.9ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3    888.0ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step0   3585.2ms  act=38.0 cache=0.0 phys=40.8/115 GB  vN=704 aN=9 σ=1.000
+[MLXPROF] denoise/tile0    893.7ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1    939.8ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1127.6ms  act=38.0 cache=0.0 phys=39.7/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1303.8ms  act=38.0 cache=0.0 phys=39.7/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step1   4271.3ms  act=38.0 cache=0.0 phys=39.7/115 GB  vN=704 aN=9 σ=0.994
+[MLXPROF] denoise/tile0   1129.0ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1068.8ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1075.0ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1053.5ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step2   4335.7ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.988
+[MLXPROF] denoise/tile0   1045.5ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1045.1ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1048.5ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1045.9ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step3   4194.6ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.981
+[MLXPROF] denoise/tile0   1029.9ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1026.2ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1030.2ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1029.4ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step4   4125.2ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.975
+[MLXPROF] denoise/tile0   1008.6ms  act=38.0 cache=0.0 phys=41.1/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1025.2ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1022.3ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1043.7ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step5   4109.4ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.909
+[MLXPROF] denoise/tile0   1050.1ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1045.2ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1061.2ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1067.1ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step6   4233.1ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.725
+[MLXPROF] denoise/tile0   1055.0ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile1   1060.5ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile2   1070.9ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/tile3   1074.3ms  act=38.0 cache=0.0 phys=41.0/115 GB  tok=216 gen=216 cond=0
+[MLXPROF] denoise/step7   4270.8ms  act=38.0 cache=0.0 phys=40.7/115 GB  vN=704 aN=9 σ=0.422
+[MLXPROF] vae-decode/up0     30.5ms  act=38.5 cache=0.0 phys=38.9/115 GB  in=[1, 2, 16, 22, 1024]
+[MLXPROF] vae-decode/up1     49.8ms  act=38.9 cache=0.0 phys=39.6/115 GB  in=[1, 2, 16, 22, 1024]
+[MLXPROF] vae-decode/up2     30.4ms  act=39.1 cache=0.0 phys=39.7/115 GB  in=[1, 3, 32, 44, 512]
+[MLXPROF] vae-decode/up3     63.3ms  act=39.3 cache=0.0 phys=39.8/115 GB  in=[1, 3, 32, 44, 512]
+[MLXPROF] vae-decode/up4    373.8ms  act=39.7 cache=0.0 phys=40.8/115 GB  in=[1, 5, 64, 88, 512]
+[MLXPROF] vae-decode/up5     74.2ms  act=39.7 cache=0.0 phys=40.1/115 GB  in=[1, 5, 64, 88, 512]
+[MLXPROF] vae-decode/up6    283.1ms  act=39.8 cache=0.0 phys=40.8/115 GB  in=[1, 9, 64, 88, 256]
+[MLXPROF] vae-decode/up7     51.5ms  act=39.7 cache=0.0 phys=40.4/115 GB  in=[1, 9, 64, 88, 256]
+[MLXPROF] vae-decode/up8    188.5ms  act=39.7 cache=0.0 phys=41.5/115 GB  in=[1, 9, 128, 176, 128]
+[MLXPROF] vae-decode/out+unpatchify     25.7ms  act=39.8 cache=0.0 phys=40.3/115 GB  
+[MLXPROF] vae-decode/video   1353.2ms  act=40.3 cache=0.6 phys=41.3/115 GB  9f
+[MLXPROF] ---------- summary (ms per group) ----------
+[MLXPROF]   encode    4037.5ms  (  2 region(s),  5.6%)  worstPhys=52.5 GB
+[MLXPROF]   denoise   66178.8ms  ( 40 region(s), 91.0%)  worstPhys=41.1 GB
+[MLXPROF]   vae-decode    2523.9ms  ( 11 region(s),  3.5%)  worstPhys=41.5 GB
+[MLXPROF]   TOTAL   72740.1ms  (72.7s total)
+[speed-bench] run2 (measured) 38.6s → 103.0 s per output-second (0.38s clip)
+[speed-bench] peak phys_footprint 52.50 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x9 run2_s=38.6 spos=103.04
+exit=0

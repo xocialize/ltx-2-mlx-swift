@@ -1,0 +1,5 @@
+[speed-bench] peak phys_footprint 52.55 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x33 run2_s=46.6 spos=33.90
+[speed-bench] peak phys_footprint 57.12 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x65 run2_s=103.2 spos=38.09
+done

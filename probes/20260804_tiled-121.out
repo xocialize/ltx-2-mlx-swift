@@ -1,0 +1,8 @@
+[speed-bench] quant=bf16  shape=704×512×121f  path=one-stage
+[speed-bench] prewarm 2.8s (8 files)
+[speed-bench] load 1.7s
+[speed-bench] run1 (kernel compile + generate) 193.7s
+[speed-bench] run2 (measured) 200.0s → 39.7 s per output-second (5.04s clip)
+[speed-bench] peak phys_footprint 66.11 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x121 run2_s=200.0 spos=39.66
+exit=0

@@ -1,0 +1,10 @@
+--- cacheLimit 1GB ---
+[speed-bench] peak phys_footprint 48.14 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x9 run2_s=27.9 spos=74.35
+--- cacheLimit 4GB ---
+[speed-bench] peak phys_footprint 49.04 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x9 run2_s=30.2 spos=80.45
+--- cacheLimit 2GB ---
+[speed-bench] peak phys_footprint 48.02 GB
+[speed-bench] SUMMARY quant=bf16 shape=704x512x9 run2_s=30.8 spos=82.24
+done
