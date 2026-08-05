@@ -1,0 +1,3 @@
+[tile] decoder=stock  weights=/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors
+[vae-mux-bench] lane=mat 3840×2176 fLat=15 (→113f) tiles=4×4 halo=5 chunk=8 decoder=stock
+[vae-mux-bench] SUMMARY lane=mat wall=1089.3s peakΔ=99.78 GB base=0.27 GB mp4=33.8 MB md5=3246b7ca172416b1ec84f90709de865b

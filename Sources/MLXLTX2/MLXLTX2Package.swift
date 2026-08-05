@@ -291,12 +291,17 @@ public final class MLXLTX2Package: ModelPackage {
             // MP4 writer: the whole pixel volume (plus its channels-last transpose twin) never
             // materializes. The IC/i2v branches keep the materialized path this slice (their
             // mux-audio substitution reads the file AFTER the run; follow-up in GAP-ANALYSIS #8).
-            // OPT-IN (`LTX_STREAM_MUX=1`): measured 2026-08-05 at 704×512×121f, the streamed lane
-            // does NOT move the run peak (54.82 vs 54.88 GB — denoise sets the peak, and the pixel
-            // volume it eliminates sits in a phase below it), and its wall-clock reads NOISE by the
-            // sign-flip rule (whichever lane runs second is slower — session ramp, not the lane).
-            // Default stays materialized until a receipt at a geometry where assembly IS the peak
-            // (4K-class decode, low-tier evicted-DiT flows). probes/20260805_streammux_*.out.
+            // OPT-IN (`LTX_STREAM_MUX=1`) — receipted at BOTH candidate geometries, stays opt-in:
+            // · 704×512×121f (probes/20260805_streammux_*.out): peak unmoved (54.82 vs 54.88 GB —
+            //   denoise sets it), wall NOISE by the sign-flip rule.
+            // · composed-4K decode+mux, 3840×2176×113f chunk8 4×4 (probes/20260805_mux4k_*.out,
+            //   --vae-mux-bench, fresh processes): 99.78 → 96.65 GB, i.e. −3.1 GB (−3.1%) — the
+            //   4K peak-setter is the temporal-halo WINDOW working set (§1.4d ④b), which the seam
+            //   cannot touch; it only sheds the accumulated-parts term, and writer-side buffering
+            //   eats part of that. Encode-after-decode adds ZERO peak in the materialized lane
+            //   (99.78 reproduces the decode-only ④b figure to the hundredth).
+            // The seam would matter only after the ④b follow-ups shrink the window floor
+            // (pixel-space halo pre-trim, 6×6–8×8 tiles) — revisit alongside those, not before.
             if references.isEmpty, audioReferences.isEmpty, t2v.initImage == nil, muxAudioURL == nil,
                ProcessInfo.processInfo.environment["LTX_STREAM_MUX"] == "1" {
                 let writer = try MP4StreamWriter(width: wd, height: h, fps: fps,
