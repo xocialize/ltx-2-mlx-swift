@@ -10,6 +10,7 @@ import Foundation
 import LTX2
 import MLX
 import MLXProfiling
+import MLXRandom
 import MLXToolKit
 
 enum FrameCodecError: Error {
@@ -20,16 +21,27 @@ enum FrameCodecError: Error {
     case writeIncomplete(String)
 }
 
-/// One channels-last frame [H, W, 3] in [-1, 1] → interleaved RGB bytes.
-private func rgbBytes(_ frame: MLXArray) -> (bytes: [UInt8], width: Int, height: Int) {
+/// One channels-last frame [H, W, 3] in [-1, 1] → interleaved **BGRA** bytes.
+///
+/// The channel reverse (RGB→BGR) and the opaque alpha plane are done **on-device**, so the host
+/// receives bytes already in the pixel buffer's layout and only has to bulk-copy them. The former
+/// version returned RGB and repacked to BGRA with a per-pixel scalar loop on the CPU — ~43.6 M
+/// iterations at 704×512×121f, for work the GPU does in one kernel. See `GAP-ANALYSIS.md` §3c
+/// (this loop was a Swift-only regression: the Python oracle does a single bulk `memoryview`
+/// copy) and `SPEED-PLAN.md` S2 step 2.
+private func bgraBytes(_ frame: MLXArray) -> (bytes: [UInt8], width: Int, height: Int) {
     let h = frame.dim(0), w = frame.dim(1)
-    let scaled = (frame.asType(.float32) + 1) * Float(127.5)
-    let rgb = clip(scaled, min: 0, max: 255).asType(.uint8)
-    eval(rgb)
-    return (rgb.asArray(UInt8.self), w, h)
+    let scaled = clip((frame.asType(.float32) + 1) * Float(127.5), min: 0, max: 255)
+    let bgr = MLX.take(scaled, MLXArray([2, 1, 0] as [Int32]), axis: -1)   // RGB → BGR
+    let alpha = MLXArray.ones([h, w, 1]) * Float(255)
+    let bgra = MLX.concatenated([bgr, alpha], axis: -1).asType(.uint8)     // [H, W, 4]
+    eval(bgra)
+    return (bgra.asArray(UInt8.self), w, h)
 }
 
-private func pixelBuffer(rgb: [UInt8], width: Int, height: Int, pool: CVPixelBufferPool) throws -> CVPixelBuffer {
+/// Copy already-BGRA bytes into a pooled pixel buffer — one `memcpy` per row (or one for the
+/// whole plane when the pool hands back a tightly-packed buffer).
+private func pixelBuffer(bgra: [UInt8], width: Int, height: Int, pool: CVPixelBufferPool) throws -> CVPixelBuffer {
     var out: CVPixelBuffer?
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &out)
     guard let buffer = out else { throw FrameCodecError.pixelBufferAllocation }
@@ -37,16 +49,61 @@ private func pixelBuffer(rgb: [UInt8], width: Int, height: Int, pool: CVPixelBuf
     defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
     let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
     let stride = CVPixelBufferGetBytesPerRow(buffer)
-    for y in 0 ..< height {
-        for x in 0 ..< width {
-            let src = (y * width + x) * 3, dst = y * stride + x * 4
-            base[dst + 0] = rgb[src + 2]  // B
-            base[dst + 1] = rgb[src + 1]  // G
-            base[dst + 2] = rgb[src + 0]  // R
-            base[dst + 3] = 255
+    let rowBytes = width * 4
+    bgra.withUnsafeBufferPointer { src in
+        guard let s = src.baseAddress else { return }
+        if stride == rowBytes {
+            memcpy(base, s, height * rowBytes)
+        } else {
+            for y in 0 ..< height {
+                memcpy(base + y * stride, s + y * rowBytes, rowBytes)
+            }
         }
     }
     return buffer
+}
+
+/// Validation entry point for the on-device BGRA repack (`RunLTX2 --frame-codec-gate`).
+///
+/// Recomputes the OLD host-side per-pixel repack for the same input and asserts the on-device
+/// path is **byte-identical**. That is the right gate for this change: the optimization must be a
+/// pure refactor — the encoder has to see exactly the bytes it saw before — and byte-identity
+/// proves it without needing to decode an H.264 round trip (which is lossy and would prove less).
+/// Random input is deliberate: values well outside [-1, 1] exercise the clip path at both ends.
+public func frameCodecRepackSelfTest(height: Int = 512, width: Int = 704, seed: UInt64 = 42)
+    -> (ok: Bool, detail: String)
+{
+    MLXRandom.seed(seed)
+    let frame = MLXRandom.normal([height, width, 3]).asType(.float32)
+    eval(frame)
+
+    let (newBytes, w, h) = bgraBytes(frame)
+
+    // The pre-2026-08-04 path, reconstructed verbatim.
+    let scaled = (frame.asType(.float32) + 1) * Float(127.5)
+    let rgb = clip(scaled, min: 0, max: 255).asType(.uint8)
+    eval(rgb)
+    let src = rgb.asArray(UInt8.self)
+    var old = [UInt8](repeating: 0, count: h * w * 4)
+    for y in 0 ..< h {
+        for x in 0 ..< w {
+            let s = (y * w + x) * 3, d = (y * w + x) * 4
+            old[d + 0] = src[s + 2]  // B
+            old[d + 1] = src[s + 1]  // G
+            old[d + 2] = src[s + 0]  // R
+            old[d + 3] = 255
+        }
+    }
+
+    guard newBytes.count == old.count else {
+        return (false, "byte count \(newBytes.count) != expected \(old.count)")
+    }
+    for i in 0 ..< old.count where newBytes[i] != old[i] {
+        let px = i / 4, chan = i % 4
+        return (false, "first mismatch at byte \(i) (pixel \(px), channel \(chan)): "
+            + "on-device \(newBytes[i]) vs host \(old[i])")
+    }
+    return (true, "\(old.count) bytes byte-identical (\(h)×\(w) BGRA)")
 }
 
 /// Encode channels-last frames [1, T, H, W, 3] in [-1, 1] as an H.264 MP4 at `fps`,
@@ -133,9 +190,9 @@ public func encodeMP4(frames: MLXArray, fps: Double, audio: MLXArray? = nil, aud
 
     let frameDuration = CMTime(value: CMTimeValue((600.0 / fps).rounded()), timescale: 600)
     for i in 0 ..< t {
-        let (bytes, fw, fh) = rgbBytes(frames[0, i, 0..., 0..., 0...])
+        let (bytes, fw, fh) = bgraBytes(frames[0, i, 0..., 0..., 0...])
         guard let pool = adaptor.pixelBufferPool else { throw FrameCodecError.writerSetup("no pool") }
-        let buffer = try pixelBuffer(rgb: bytes, width: fw, height: fh, pool: pool)
+        let buffer = try pixelBuffer(bgra: bytes, width: fw, height: fh, pool: pool)
         // Bounded wait: a stall here must be a loud, localized error, never a silent forever-spin.
         // With the audio-first fix the interleave deadlock is gone; a genuine encoder failure now
         // surfaces via writer.status below instead of masquerading as "not ready".

@@ -58,9 +58,19 @@ audio-first fix made hardware safe again — both validated). Two steps:
    **PASS 0.4 s** / software **PASS 0.7 s**. Remaining nicety: an SSIMULACRA2 A/B vs software on
    one real clip — ride it along the next real generation (bitstreams differ in rate control;
    hardware leg came out smaller on the synthetic clip, which is expected).
-2. **Zero-copy handoff:** replace per-frame GPU→CPU `asArray` + Swift pixel copy with
-   `VTCompressionSession` fed by IOSurface-backed pixel buffers (the `h00mankind/MetalVideoEngine`
-   pattern, already noted in the skill). Removes the last CPU copy of every frame.
+2. ✅ **LARGELY DONE (2026-08-04) by a much cheaper route than the planned one — 3.5 s → 0.2 s
+   (~15×) on 121f @704×512.** The plan here was IOSurface-backed `VTCompressionSession`
+   (days of work). **Measuring first showed the cost was not the copy at all — it was the
+   *per-pixel scalar CPU loop* repacking RGB→BGRA one pixel at a time** (`FrameCodec.swift`,
+   ~43.6 M iterations at 121f). Doing the channel reverse + alpha **on-device** and bulk-`memcpy`ing
+   the result took ~2 h and moved per-frame cost 29 ms → 1.7 ms. Byte-identical to the old path
+   (`--frame-codec-gate`: 1,441,792 bytes, zero mismatches); both encoders re-validated with audio.
+   🔑 **The loop was NOT inherited from the oracle** (it does one bulk `memoryview` copy) — it was
+   platform-mismatched Swift we wrote ourselves. Full write-up + the remaining-headroom analysis:
+   `GAP-ANALYSIS.md` §7.
+   ⬜ **Still open (the original item):** the 121 per-frame device→host copies themselves. Worth
+   ~1.7 ms/frame at most, holds 174 MB (704×512×121) / 3.8 GB (4K×113) if batched — so fold it into
+   the streaming decode→muxer handoff (`GAP-ANALYSIS.md` #8) rather than doing it standalone.
 Quality gate: bitstream sanity + SSIMULACRA2 vs software encode on one clip.
 
 ## S3 — Step-output caching in the distilled denoise  ❌ KILLED (2026-07-04, measured ceiling ≈ 0)

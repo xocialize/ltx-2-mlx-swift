@@ -1311,6 +1311,14 @@ if args.contains("--connector-gate") {
         quant: quant, videoN: ints.count > 0 ? ints[0] : 5632,
         budgetGB: ints.count > 1 ? Double(ints[1]) : 12.0,
         steps: ints.count > 2 ? ints[2] : 4)
+} else if args.contains("--frame-codec-gate") {
+    // GAP-ANALYSIS #1 / SPEED-PLAN S2 step 2: the on-device BGRA repack must be a PURE refactor.
+    let ints = positional.compactMap { Int($0) }
+    let r = frameCodecRepackSelfTest(height: ints.count > 0 ? ints[0] : 512,
+                                     width: ints.count > 1 ? ints[1] : 704)
+    print("[frame-codec-gate] \(r.detail)")
+    print(r.ok ? "[frame-codec-gate] PASS ✅" : "[frame-codec-gate] FAIL ❌")
+    if !r.ok { exit(1) }
 } else if args.contains("--bench-e2e") {
     try await benchE2E()
 } else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") {
