@@ -1487,6 +1487,8 @@ if args.contains("--connector-gate") {
     print("[frame-codec-gate] \(r.detail)")
     print(r.ok ? "[frame-codec-gate] PASS ✅" : "[frame-codec-gate] FAIL ❌")
     if !r.ok { exit(1) }
+} else if args.contains("--bench-verdict-selftest") {
+    benchVerdictSelfTest()   // BenchAnalysis.swift: v2 verdict logic vs the harness's past failures
 } else if args.contains("--bench-e2e") {
     try await benchE2E()
 } else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") {

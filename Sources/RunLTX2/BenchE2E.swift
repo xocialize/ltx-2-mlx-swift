@@ -375,32 +375,11 @@ func benchE2E() async throws {
         }
     }
 
-    // ---- Stats + verdicts
-    struct ArmStats { let name: String; let med: Double; let min: Double; let max: Double
-                      let byBlock: [Int: Double]; let peakMed: Double }
-    var stats: [ArmStats] = []
-    for arm in arms {
-        let measured = runRecords.filter { $0.arm == arm.name && $0.run > 0 }
-        let walls = measured.map(\.wallSeconds)
-        var byBlock: [Int: Double] = [:]
-        for b in 0..<blocks { byBlock[b] = median(measured.filter { $0.block == b }.map(\.wallSeconds)) }
-        stats.append(ArmStats(name: arm.name, med: median(walls),
-                              min: walls.min() ?? 0, max: walls.max() ?? 0,
-                              byBlock: byBlock, peakMed: median(measured.map(\.peakPhysGB))))
-    }
-
-    func verdict(_ ref: ArmStats, _ arm: ArmStats) -> String {
-        let d = arm.med - ref.med
-        let spread = max(ref.max - ref.min, arm.max - arm.min)
-        // Sign consistency across block sets (the compounding rule: sign-flip = noise).
-        let signs = (0..<blocks).compactMap { b -> Double? in
-            guard let r = ref.byBlock[b], let a = arm.byBlock[b], r > 0, a > 0 else { return nil }
-            return a - r
-        }
-        let signFlip = signs.count > 1 && Set(signs.map { $0 > 0 }).count > 1
-        if signFlip { return String(format: "Δmed %+.1fs — NOISE (sign flips between block sets)", d) }
-        if abs(d) <= spread { return String(format: "Δmed %+.1fs ≤ spread %.1fs — NOISE", d, spread) }
-        return String(format: "Δmed %+.1fs > spread %.1fs — MEASURABLE", d, spread)
+    // ---- Stats + verdicts (v2 — BENCH.md "v2 verdict-logic items", implemented 2026-08-05)
+    let analysis = BenchAnalysis(runRecords: runRecords, armNames: arms.map(\.name), blocks: blocks)
+    let stats = analysis.stats
+    func verdict(_ ref: BenchAnalysis.ArmStats, _ arm: BenchAnalysis.ArmStats) -> String {
+        analysis.verdict(ref: ref, arm: arm)
     }
 
     // ---- Receipts
@@ -436,6 +415,7 @@ func benchE2E() async throws {
     for s in stats {
         md += String(format: "| %@ | %.1f | %.1f–%.1f | %.2f |\n", s.name, s.med, s.min, s.max, s.peakMed)
     }
+    md += analysis.driftMarkdown()
     if stats.count > 1 {
         md += "\n## Verdicts (vs `\(stats[0].name)`)\n\n"
         for s in stats.dropFirst() { md += "- `\(s.name)`: \(verdict(stats[0], s))\n" }

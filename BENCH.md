@@ -89,7 +89,11 @@ by the final receipts).
 
 For each arm vs the first arm: `Δmedian` of measured walls, against `spread = max(range_A, range_B)`,
 plus per-block sign consistency. **NOISE** if the sign flips between block sets or `|Δmed| ≤ spread`;
-**MEASURABLE** otherwise. A **null run** (`--arm A:quant=bf16 --arm B:quant=bf16`, the default when
+**MEASURABLE** otherwise. Since v2 (`BenchAnalysis.swift`, 2026-08-05) the verdict additionally
+runs a session-drift regression (deciding on drift-adjusted Δ when the common trend rivals the
+arm delta), annotates within-arm nonstationarity, and stratifies Δ by thermal state — details
+under the noise-floor section below; `--bench-verdict-selftest` regression-locks the logic.
+A **null run** (`--arm A:quant=bf16 --arm B:quant=bf16`, the default when
 no arms are given) measures the protocol's own noise floor — run it once per machine/geometry before
 trusting any verdict at that geometry, and re-run it when the toolchain or OS changes.
 
@@ -104,19 +108,39 @@ trusting any verdict at that geometry, and re-run it when the toolchain or OS ch
   16.6–17.8 s; everything after sat 22–31 s, recovering monotonically). ABBA cancels *symmetric*
   drift; a **one-way thermal step early in the session aliases into the arm delta**, and the
   sign-flip check is blind to it (both blocks land the same sign).
-- **Operative rule until the verdict logic grows a drift detector: at this geometry on this box,
+- **Operative rule (still holds even with the v2 detector below): at this geometry on this box,
   treat any Δmedian ≤ ~8.5 s (and any spread ≤ ~6 s) as NOISE regardless of the printed verdict** —
   that is precisely what the null run is for. Levers claiming less than that need more blocks
-  (4+), longer cooldowns, or a thermally-quiet box.
+  (4+), longer cooldowns, or a thermally-quiet box. The v2 checks make this class of confound
+  *visible in the receipt*; they do not make small deltas trustworthy.
 - Everything else validated clean: **12/12 bf16 generations from the SSD store, zero watchdog
   aborts** (the I9 fix end-to-end); intra-arm `cos(first)=1.000000` on all 8 measured runs and
   cross-arm `cos=1.000000 / maxAbs=0` (bf16 bit-determinism reconfirmed through 4 separate
   pipeline loads); block floors 0.68–0.94 GB (no residency ratchet); prewarm from the store
   **10.0 s cold → 2.2–3.7 s warm** (vs 203 s first-touch on the old USB volume); peak
   52.5–52.9 GB, matching the I9 working-set analysis.
-- v2 verdict-logic items this run motivates: a monotone-**drift detector** (regress wall on global
-  run index; flag when |slope·session| ≳ Δmed), **thermal-state stratification** (compare only
-  matching states), and defaulting `--blocks` to 4 when a session starts `nominal`.
+- ✅ **v2 verdict logic IMPLEMENTED (2026-08-05, `BenchAnalysis.swift`)** — extracted from
+  `BenchE2E.swift` into a pure, GPU-free unit so it can be regression-tested. Three checks on top
+  of v1's sign-flip rule, each traceable to a receipt:
+  1. **Session-drift regression** (this run + the streamed-mux A/B): pooled OLS of wall on global
+     run index (arm-mean-centered so a real arm delta doesn't masquerade as slope). When
+     |slope·session span| ≥ 0.75×|Δmed|, the verdict is decided on the **drift-adjusted** Δ/range
+     (residuals after removing the common trend) and says so.
+  2. **Within-arm nonstationarity annotation**: if an arm's own per-block medians span
+     ≥ 0.5×|decision Δ|, the verdict carries a ⚠ — the arms were not measured in one regime.
+     This is the check that catches THIS null run (one-way `nominal→fair` step): re-fed the
+     exact 8 walls above, the verdict now reads MEASURABLE ⚠ with both the nonstationarity and
+     the single-arm-stratum annotations attached instead of a clean +8.5 s.
+  3. **Thermal-state stratification**: Δ recomputed inside matching `thermalBefore` states;
+     annotations when strata disagree in sign or when a state was visited by only one arm
+     (the smoking gun here — `nominal` contained only arm-A runs).
+  `--bench-verdict-selftest` (no GPU, ~instant) locks all four behaviors as regressions:
+  this null's sequence must annotate, a pure linear drift under unbalanced ordering must
+  collapse to NOISE via the adjusted Δ, a clean ABBA difference must stay unannotated
+  MEASURABLE, and the v1 sign-flip must stay hard NOISE. Receipts additionally gain a
+  "Session drift & thermal strata" section (slope, per-arm block medians, per-stratum Δ).
+  Still open from this run's motivation list: defaulting `--blocks` to 4 when a session
+  starts `nominal` (protocol change, not verdict logic).
 
 **Long-geometry addendum (from the 121f ladder session, `bench_e2e_ladder-pruna-121f_20260804-012008`):**
 at sustained-load geometries the dominant confound moves **inside the block** — every arm showed
