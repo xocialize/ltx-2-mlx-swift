@@ -1,0 +1,152 @@
+{
+  "blockRecords" : [
+    {
+      "arm" : "bf16",
+      "block" : 0,
+      "loadSeconds" : 1.2975690364837646,
+      "postDropFloorGB" : 4.469196744,
+      "prewarmSeconds" : 9.185595989227295
+    },
+    {
+      "arm" : "q4",
+      "block" : 0,
+      "loadSeconds" : 0.5357550382614136,
+      "postDropFloorGB" : 6.758058624,
+      "prewarmSeconds" : 2.512573003768921
+    },
+    {
+      "arm" : "q4",
+      "block" : 1,
+      "loadSeconds" : 0.5436979532241821,
+      "postDropFloorGB" : 6.778211184,
+      "prewarmSeconds" : 4.4477540254592896
+    },
+    {
+      "arm" : "bf16",
+      "block" : 1,
+      "loadSeconds" : 1.2311420440673828,
+      "postDropFloorGB" : 6.787172968,
+      "prewarmSeconds" : 7.082311034202576
+    }
+  ],
+  "blocks" : 2,
+  "cooldownS" : 60,
+  "geometry" : "704x512x481f fps=24 one-stage",
+  "git" : "0ad2efb+dirty",
+  "host" : "Mac17,7",
+  "label" : "q4abba-481f",
+  "memGB" : 137,
+  "os" : "Version 27.0 (Build 26A5388g)",
+  "prompt" : "a cat playing piano",
+  "runs" : [
+    {
+      "arm" : "bf16",
+      "block" : 0,
+      "mlxActiveGB" : 40.068800344,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.18090582,
+      "outputStd" : 0.51998866,
+      "peakPhysGB" : 58.504016048,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 728.1753400564194
+    },
+    {
+      "arm" : "bf16",
+      "block" : 0,
+      "mlxActiveGB" : 40.068805776,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.18090582,
+      "outputStd" : 0.51998866,
+      "peakPhysGB" : 59.02048888,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 933.6310839653015
+    },
+    {
+      "arm" : "q4",
+      "block" : 0,
+      "mlxActiveGB" : 15.484243056,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.24555254,
+      "outputStd" : 0.46793503,
+      "peakPhysGB" : 34.35666804,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 911.3942309617996
+    },
+    {
+      "arm" : "q4",
+      "block" : 0,
+      "mlxActiveGB" : 15.484248488,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.24555254,
+      "outputStd" : 0.46793503,
+      "peakPhysGB" : 34.092541576,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 984.0841619968414
+    },
+    {
+      "arm" : "q4",
+      "block" : 1,
+      "mlxActiveGB" : 17.564890848,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.24555254,
+      "outputStd" : 0.46793503,
+      "peakPhysGB" : 36.462798448,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 934.2864149808884
+    },
+    {
+      "arm" : "q4",
+      "block" : 1,
+      "cosineVsArmFirst" : 1,
+      "mlxActiveGB" : 17.56489628,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.24555254,
+      "outputStd" : 0.46793503,
+      "peakPhysGB" : 36.666156656,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 1016.3356070518494
+    },
+    {
+      "arm" : "bf16",
+      "block" : 1,
+      "mlxActiveGB" : 44.229861032,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.18090582,
+      "outputStd" : 0.51998866,
+      "peakPhysGB" : 63.38326996,
+      "run" : 0,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 941.9312210083008
+    },
+    {
+      "arm" : "bf16",
+      "block" : 1,
+      "cosineVsArmFirst" : 1,
+      "mlxActiveGB" : 44.229866464,
+      "mlxCacheGB" : 0.047941588,
+      "outputMean" : -0.18090582,
+      "outputStd" : 0.51998866,
+      "peakPhysGB" : 63.265960544,
+      "run" : 1,
+      "thermalAfter" : "fair",
+      "thermalBefore" : "fair",
+      "wallSeconds" : 1012.7926980257034
+    }
+  ],
+  "runsPerBlock" : 1,
+  "seed" : 42,
+  "stamp" : "20260806-132717"
+}

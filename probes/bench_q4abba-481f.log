@@ -1,0 +1,38 @@
+[bench-e2e] arms=bf16,q4 blocks=2 runs=1/block cooldown=60s
+[bench-e2e] geometry=704x512x481f fps=24 one-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5388g) | 0ad2efb+dirty
+
+[bench-e2e] ═══ block 0 · arm bf16 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 9.2s · load 1.3s
+[bench-e2e] bf16 · warmup (excluded): 728.2s · peak 58.50 GB · thermal nominal→fair
+[bench-e2e] bf16 · run 1: 933.6s · peak 59.02 GB · thermal fair→fair
+[bench-e2e] block floor after drop+clearCache: 4.47 GB
+[bench-e2e] cooldown 60s…
+
+[bench-e2e] ═══ block 0 · arm q4 (quant=q4 decoder=stock) ═══
+[bench-e2e] prewarm 2.5s · load 0.5s
+[bench-e2e] q4 · warmup (excluded): 911.4s · peak 34.36 GB · thermal nominal→fair
+[bench-e2e] q4 · run 1: 984.1s · peak 34.09 GB · thermal fair→fair
+[bench-e2e] block floor after drop+clearCache: 6.76 GB
+[bench-e2e] cooldown 60s…
+
+[bench-e2e] ═══ block 1 · arm q4 (quant=q4 decoder=stock) ═══
+[bench-e2e] prewarm 4.4s · load 0.5s
+[bench-e2e] q4 · warmup (excluded): 934.3s · peak 36.46 GB · thermal nominal→fair
+[bench-e2e] q4 · run 1: 1016.3s · peak 36.67 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 6.78 GB
+[bench-e2e] cooldown 60s…
+
+[bench-e2e] ═══ block 1 · arm bf16 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 7.1s · load 1.2s
+[bench-e2e] bf16 · warmup (excluded): 941.9s · peak 63.38 GB · thermal nominal→fair
+[bench-e2e] bf16 · run 1: 1012.8s · peak 63.27 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 6.79 GB
+[bench-e2e] cooldown 60s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] bf16  median 973.2s  (933.6–1012.8)  peak 61.14 GB
+[bench-e2e] q4  median 1000.2s  (984.1–1016.3)  peak 35.38 GB
+[bench-e2e] q4 vs bf16: Δmed +27.0s > spread 5.3s — MEASURABLE ⚠  ⚠ drift span +80.9s rivals Δ — decided on drift-adjusted Δ +27.0s · nonstationary: within-arm block span 79.2s vs Δ 27.0s
+[bench-e2e] output q4 vs bf16: cos=0.740417 maxAbs=1.97850 (divergent-by-design)
+[bench-e2e] receipts: probes/bench_e2e_q4abba-481f_20260806-132717.md + .json
