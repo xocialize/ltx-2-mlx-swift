@@ -237,8 +237,8 @@
         "audioBranch": false,
         "loraGate": "PASS (on 0.792/off 0.999914/detach 1.000000, finite vmax=4.901)",
         "metadata": "model_version 2.3.0; reference_downscale_factor=2; full LTX-2 Community licence embedded in header",
-        "note": "canny signal LIVE-VERIFIED; still owed for full 'verified': pose + depth fixtures (need signal extractors), reference-usage cross-check vs upstream ComfyUI IC workflow (strength/stage conventions), operator eyeball. defaultStrength 1.0 held up in the canny fixture.",
-        "cannyLiveFixture": "PASS 2026-08-06 (LTX_TESTING/fixtures/union-canny/): appearance-transfer prompt over face-clip canny control, 704x512x121f one-stage bf16 seed42, strengths 1.0/1.0, ref at ds=2 (352x256); edge-overlap Dice IC 0.222/0.593-tolerant vs no-IC null 0.031/0.115 = 5.2-7x separation -> structural transfer confirmed; SPLIT floor 39.13 / peak 54.93 / act 15.80 GB, 161.7s. Confirms referenceDownscale=2 ingest path live."
+        "note": "canny signal LIVE-VERIFIED; still owed for full 'verified': pose + depth fixtures (need signal extractors), reference-usage cross-check vs upstream ComfyUI IC workflow (strength/stage conventions). defaultStrength 1.0 held up in the canny fixture.",
+        "cannyLiveFixture": "PASS 2026-08-06 (LTX_TESTING/fixtures/union-canny/): appearance-transfer prompt over face-clip canny control, 704x512x121f one-stage bf16 seed42, strengths 1.0/1.0, ref at ds=2 (352x256); edge-overlap Dice IC 0.222/0.593-tolerant vs no-IC null 0.031/0.115 = 5.2-7x separation -> structural transfer confirmed; SPLIT floor 39.13 / peak 54.93 / act 15.80 GB, 161.7s. Confirms referenceDownscale=2 ingest path live. OPERATOR EYEBALL PASS same day: IC output carries the control's animated movement ('same animated movement' as the outline); baseline fully divergent (seed lock broken by prompt-token change -> independent null). Strength-1.0 note: edges dominated silhouette appearance (hair contour kept, prompt beard lost) - compare upstream default strength in the usage cross-check."
       }
     },
     {
