@@ -1,0 +1,14 @@
+[bench-e2e] arms=fps48 blocks=1 runs=1/block cooldown=30s
+[bench-e2e] geometry=704x512x241f fps=48 two-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5388g) | 02313a6+dirty
+
+[bench-e2e] ═══ block 0 · arm fps48 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 7.3s · load 1.4s
+[bench-e2e] fps48 · warmup (excluded): 244.5s · peak 56.84 GB · thermal nominal→fair
+[bench-e2e] fps48 · run 1: 399.0s · peak 56.19 GB · thermal fair→fair
+[bench-e2e] block floor after drop+clearCache: 2.40 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] fps48  median 399.0s  (399.0–399.0)  peak 56.19 GB
+[bench-e2e] receipts: probes/bench_e2e_fps48x2-5s_20260806-005713.md + .json
