@@ -1,0 +1,14 @@
+[bench-e2e] arms=q4 blocks=1 runs=1/block cooldown=30s
+[bench-e2e] geometry=1280x704x241f fps=24 one-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5388g) | 02313a6+dirty
+
+[bench-e2e] ═══ block 0 · arm q4 (quant=q4 decoder=stock) ═══
+[bench-e2e] prewarm 1.0s · load 0.5s
+[bench-e2e] q4 · warmup (excluded): 1568.3s · peak 53.52 GB · thermal fair→fair
+[bench-e2e] q4 · run 1: 1643.9s · peak 53.47 GB · thermal fair→fair
+[bench-e2e] block floor after drop+clearCache: 5.53 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] q4  median 1643.9s  (1643.9–1643.9)  peak 53.47 GB
+[bench-e2e] receipts: probes/bench_e2e_q4-241f-720p_20260805-234953.md + .json
