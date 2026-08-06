@@ -1113,9 +1113,20 @@ func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     // LTX_T2V_PROMPT/LTX_T2V_SAVE: perceptual A/B hooks (e.g. the Pruna face-prompt caveat —
     // decoder swapped via LTX_VAE_DECODER, trajectory bit-identical, so saved MP4s differ by
     // decode only). No timing claims ride on this gate, so thermal state is irrelevant here.
+    // LTX_IC_ADAPTER + LTX_IC_REF: IC-adapter fixture hooks (union-control canny fixture) —
+    // rides the wrapper's full ic.* intake (registry lookup, LoRA apply at entry default
+    // strength, reference ingest at the entry's declared downscale).
     func request(_ nf: Int) -> T2VRequest {
-        T2VRequest(prompt: env["LTX_T2V_PROMPT"] ?? "a fox running down a beach at sunset, waves rolling in",
-                   numFrames: nf, fps: 24, width: width, height: height, seed: 42)
+        var meta: [String: MetaValue] = [:]
+        if let ic = env["LTX_IC_ADAPTER"], !ic.isEmpty {
+            meta[ICMetaKeys.adapterId] = .string(ic)
+            if let ref = env["LTX_IC_REF"], !ref.isEmpty {
+                meta[ICMetaKeys.referencePath] = .string(ref)
+            }
+        }
+        return T2VRequest(prompt: env["LTX_T2V_PROMPT"] ?? "a fox running down a beach at sunset, waves rolling in",
+                          numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                          metaData: meta)
     }
     // Warmup at 9f (kernel compile + decode/encode stacks) — excluded from the measured peak.
     _ = try await pkg.run(request(9))
