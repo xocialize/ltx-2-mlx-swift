@@ -205,6 +205,42 @@
       }
     },
     {
+      "id": "union-control",
+      "displayName": "Union Control — pose/depth/canny structural control (Lightricks)",
+      "kind": "ic",
+      "status": "gate-verified",
+      "license": "LTX-2-community",
+      "gatedDownload": true,
+      "repo": "Lightricks/LTX-2.3-22b-IC-LoRA-Union-Control",
+      "weightFile": "ltx-2.3-22b-ic-lora-union-control-ref0.5.safetensors",
+      "defaultStrength": 1.0,
+      "trigger": "",
+      "referenceDownscale": 2,
+      "stage2": "clean",
+      "surface": "textToVideo",
+      "conditioning": [
+        {
+          "role": "control_video",
+          "media": "video",
+          "required": true,
+          "ingest": "videoClip",
+          "defaultStrength": 1.0,
+          "note": "extracted control-signal clip — pose skeleton render, depth map, or canny edges; the active signal is chosen by WHICH extraction you feed (union adapter accepts all three). Reference runs at 0.5x output resolution (referenceDownscale 2 — embedded in the checkpoint metadata)."
+        }
+      ],
+      "verification": {
+        "date": "2026-08-06",
+        "headerDialect": "diffusers-PEFT (diffusion_model.*)",
+        "rank": 64,
+        "tensors": 960,
+        "targetsApplied": "480/480",
+        "audioBranch": false,
+        "loraGate": "PASS (on 0.792/off 0.999914/detach 1.000000, finite vmax=4.901)",
+        "metadata": "model_version 2.3.0; reference_downscale_factor=2; full LTX-2 Community licence embedded in header",
+        "note": "GATE-verified only — the closer to 'verified' is a reference-usage cross-check (upstream ComfyUI IC-LoRA workflow: LTXICLoRALoaderModelOnly + LTXAddVideoICLoRAGuide with downscale) + a live perceptual fixture per the ingredients P3 pattern: one pose-driven and one depth-driven clip, identity/structure transfer eyeballed, SPLIT recorded. defaultStrength 1.0 is a placeholder pending that check. IC pipeline is distilled-only per vendor — no CFG-tier dependency."
+      }
+    },
+    {
       "id": "cameraman-v2",
       "displayName": "Cameraman v2 — camera-motion transfer (Cseti)",
       "kind": "ic",
