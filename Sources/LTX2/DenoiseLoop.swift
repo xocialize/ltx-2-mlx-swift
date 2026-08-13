@@ -54,8 +54,47 @@ public enum DenoiseLoop {
         x0 * mask + clean.asType(.float32) * (1.0 - mask)
     }
 
+    /// Ancestral (SDE) Euler step in the RECTIFIED-FLOW parameterisation — LTX-2.5 stage 1.
+    ///
+    /// Exact port of `euler_ancestral_step` (oracle samplers.py), itself a port of upstream
+    /// `EulerAncestralDiffusionStep.step`: a deterministic Euler step down to an intermediate
+    /// `sigmaDown`, then a variance-preserving renoise up to `sigmaNext`.
+    ///
+    /// ⚠️ `alpha = 1 - sigma`, deliberately NOT the DDIM helper — rectified flow, not
+    /// variance-preserving diffusion. Using the DDIM alpha here yields a plausible-looking
+    /// trajectory that drifts.
+    /// ⚠️ Math in fp32, result cast back to `x.dtype`.
+    /// ⚠️ `eta == 0` reduces to the plain Euler step, but the variance-preserving rescale is
+    /// still skipped only because the noise term vanishes — upstream gates the noise DRAW on
+    /// eta alone, so keep the branch shape identical.
+    public static func eulerAncestralStep(
+        _ x: MLXArray, _ x0: MLXArray, sigma: Float, sigmaNext: Float,
+        noise: MLXArray?, eta: Float = 1.0, sNoise: Float = 1.0
+    ) -> MLXArray {
+        if sigmaNext == 0 { return x0.asType(x.dtype) }
+        let xf = x.asType(.float32), x0f = x0.asType(.float32)
+
+        let downstepRatio = 1.0 + (sigmaNext / sigma - 1.0) * eta
+        let sigmaDown = sigmaNext * downstepRatio
+        let sigmaDownRatio = sigmaDown / sigma
+        var xNext = sigmaDownRatio * xf + (1.0 - sigmaDownRatio) * x0f
+
+        if eta > 0 {
+            guard let noise else {
+                fatalError("eulerAncestralStep requires a noise tensor when eta > 0")
+            }
+            let alphaNext = 1.0 - sigmaNext
+            let alphaDown = 1.0 - sigmaDown
+            let renoiseSq = sigmaNext * sigmaNext
+                - sigmaDown * sigmaDown * alphaNext * alphaNext / (alphaDown * alphaDown)
+            let renoiseCoeff = Foundation.sqrt(Swift.max(renoiseSq, 0.0))
+            xNext = (alphaNext / alphaDown) * xNext + noise.asType(.float32) * sNoise * renoiseCoeff
+        }
+        return xNext.asType(x.dtype)
+    }
+
     /// euler_step on an x0-prediction model. σ==0 → already clean.
-    static func eulerStep(_ x: MLXArray, _ x0: MLXArray, sigma: Float, sigmaNext: Float) -> MLXArray {
+    public static func eulerStep(_ x: MLXArray, _ x0: MLXArray, sigma: Float, sigmaNext: Float) -> MLXArray {
         if sigma == 0 { return x0 }
         return x + (sigmaNext - sigma) * (x - x0) / sigma
     }

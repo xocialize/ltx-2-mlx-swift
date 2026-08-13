@@ -281,6 +281,71 @@ func ditTinyKF25Gate() throws {
     }
 }
 
+
+/// LTX-2.5 ancestral-Euler step parity (pure sampler math, INJECTED noise).
+///
+/// Noise is injected from the fixture rather than drawn: MLX-Swift and MLX-Python RNG
+/// streams are not bit-identical (determinism doctrine / ISSUES I1), so a seeded gate
+/// would be measuring the RNG instead of the step being ported.
+func ancestralStepGate() throws {
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(goldensBase)/ancestral_step/io.safetensors"))
+    let x = io["x"]!, x0 = io["x0"]!, noise = io["noise"]!
+    let caseSigmas = io["case_sigmas"]!
+    let n = Int(io["n_cases"]!.item(Float.self))
+    var worst: Float = 0, worstCase = ""
+    var zeroBoundaryChecked = false
+
+    for i in 0 ..< n {
+        let sigma = caseSigmas[i, 0].item(Float.self)
+        let sigmaNext = caseSigmas[i, 1].item(Float.self)
+        let eta = caseSigmas[i, 2].item(Float.self)
+        let got = DenoiseLoop.eulerAncestralStep(x, x0, sigma: sigma, sigmaNext: sigmaNext,
+                                                 noise: noise, eta: eta, sNoise: 1.0)
+        let d = maxAbs(got, io["eta1_\(i)"]!)
+        if d > worst { worst = d; worstCase = String(format: "σ %.5f→%.5f", sigma, sigmaNext) }
+        if sigmaNext == 0 {
+            zeroBoundaryChecked = true
+            // σ_next == 0 must return x0 EXACTLY, not approximately.
+            if maxAbs(got, x0) != 0 {
+                print("[ancestral-step-gate] FAIL — σ_next=0 did not return x0 exactly")
+                fflush(stdout); exit(1)
+            }
+        }
+    }
+    print(String(format: "[ancestral-step-gate] %d eta=1 cases, worst maxAbs=%.3e (%@)",
+                 n, worst, worstCase as NSString))
+
+    // eta = 0 must reduce to the plain Euler step — the property, not just the golden.
+    let s = io["meta_eta0_sigma"]![0].item(Float.self)
+    let sn = io["meta_eta0_sigma"]![1].item(Float.self)
+    let eta0 = DenoiseLoop.eulerAncestralStep(x, x0, sigma: s, sigmaNext: sn,
+                                              noise: noise, eta: 0.0, sNoise: 1.0)
+    let vsGolden = maxAbs(eta0, io["eta0"]!)
+    let vsPlain = maxAbs(eta0, DenoiseLoop.eulerStep(x, x0, sigma: s, sigmaNext: sn))
+    print(String(format: "[ancestral-step-gate] eta=0: vs golden %.3e, vs plain euler %.3e",
+                 vsGolden, vsPlain))
+
+    // Discrimination: eta=1 must actually DIFFER from eta=0, or the gate proves nothing
+    // about the ancestral branch (which is the entire 2.5 delta).
+    let eta1 = DenoiseLoop.eulerAncestralStep(x, x0, sigma: s, sigmaNext: sn,
+                                              noise: noise, eta: 1.0, sNoise: 1.0)
+    let branchDelta = maxAbs(eta1, eta0)
+    print(String(format: "[ancestral-step-gate] eta=1 vs eta=0 delta=%.4f (must be >> tolerance)", branchDelta))
+
+    let tol: Float = 1e-5
+    var ok = worst < tol && vsGolden < tol && vsPlain < 1e-4 && zeroBoundaryChecked
+    if branchDelta <= tol {
+        print("[ancestral-step-gate] FAIL — the ancestral branch changes nothing at these sigmas; "
+            + "this gate cannot detect a port that ignores eta")
+        ok = false
+    }
+    if !zeroBoundaryChecked {
+        print("[ancestral-step-gate] FAIL — no σ_next=0 case in the fixture; the boundary is untested")
+    }
+    if ok { print("[ancestral-step-gate] PASS ✅"); fflush(stdout) }
+    else { print("[ancestral-step-gate] FAIL ❌"); fflush(stdout); exit(1) }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1521,6 +1586,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--ancestral-step-gate") {
+    try ancestralStepGate()
 } else if args.contains("--dit-tiny-kf25-gate") {
     try ditTinyKF25Gate()
 } else if args.contains("--timestep-dtype-gate") {
