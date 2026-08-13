@@ -789,6 +789,71 @@ func pipeline25Gate() throws {
     else { for f in fails { print("[pipeline-25-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
 }
 
+
+/// DFR canvas layout parity — BIT-EXACT, integers, no tolerance.
+///
+/// The golden comes from the Python port, which is itself gated `==` against upstream
+/// (399 segment lengths, 18 canvases, 72 tile partitions), so this transitively inherits
+/// upstream parity.
+func dfrLayoutGate() throws {
+    let url = URL(fileURLWithPath: "\(goldensBase)/dfr_layout/golden.json")
+    let g = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+    var fails: [String] = []
+
+    let lengths = g["segment_lengths"] as! [String: Int]
+    for (content, want) in lengths {
+        let got = DFRLayout.chooseSegmentLength(contentFrames: Int(content)!)
+        if got != want { fails.append("chooseSegmentLength(\(content)) = \(got) != \(want)") }
+    }
+    print("[dfr-layout-gate] segment lengths  \(lengths.count) exact  \(fails.isEmpty ? "PASS" : "FAIL")")
+
+    var n0 = fails.count
+    let canvases = g["canvases"] as! [String: [String: Any]]
+    for (n, want) in canvases {
+        let (padded, segment, positions) = try DFRLayout.resolveCanvas(numFrames: Int(n)!)
+        if padded != want["padded"] as! Int || segment != want["segment"] as! Int
+            || positions != want["positions"] as! [Int] {
+            fails.append("resolveCanvas(\(n)) mismatch: (\(padded), \(segment), \(positions))")
+        }
+    }
+    print("[dfr-layout-gate] canvases         \(canvases.count) exact  \(fails.count == n0 ? "PASS" : "FAIL")")
+
+    n0 = fails.count
+    let tiles = g["tiles"] as! [String: [[Any]]]
+    for (key, want) in tiles {
+        let parts = key.split(separator: ":").map { Int($0)! }
+        let (padded, _, positions) = try DFRLayout.resolveCanvas(numFrames: parts[0])
+        let got = try DFRLayout.tileRanges(seamPositions: positions, numFrames: padded, numTiles: parts[1])
+        if got.count != want.count { fails.append("tileRanges(\(key)) count \(got.count) != \(want.count)"); continue }
+        for (i, t) in got.enumerated() {
+            let w = want[i]
+            let fields: [Int] = [t.pixelStart, t.pixelEnd, t.latentStart, t.latentEndExclusive]
+            let wf: [Int] = [w[0] as! Int, w[1] as! Int, w[2] as! Int, w[3] as! Int]
+            if fields != wf { fails.append("tileRanges(\(key))[\(i)] bounds \(fields) != \(wf)") }
+            if t.anchorKFGlobal != (w[4] as! [Int]) { fails.append("tileRanges(\(key))[\(i)] anchors \(t.anchorKFGlobal) != \(w[4])") }
+            if t.slotKFGlobal != (w[5] as! [Int]) { fails.append("tileRanges(\(key))[\(i)] slots \(t.slotKFGlobal) != \(w[5])") }
+            if t.dropLatentPrefix != (w[6] as! Int) { fails.append("tileRanges(\(key))[\(i)] drop \(t.dropLatentPrefix) != \(w[6])") }
+        }
+    }
+    print("[dfr-layout-gate] tile partitions   \(tiles.count) exact  \(fails.count == n0 ? "PASS" : "FAIL")")
+
+    // Discrimination: the stitch must be a GAPLESS, NON-OVERLAPPING latent run. Checking
+    // bounds alone would pass on an off-by-one in dropLatentPrefix.
+    n0 = fails.count
+    let (padded97, _, pos97) = try DFRLayout.resolveCanvas(numFrames: 97)
+    let rs = try DFRLayout.tileRanges(seamPositions: pos97, numFrames: padded97, numTiles: 4)
+    var covered: [Int] = []
+    for r in rs { covered.append(contentsOf: (r.latentStart + r.dropLatentPrefix) ..< r.latentEndExclusive) }
+    let expected = Array((rs[0].latentStart + rs[0].dropLatentPrefix) ..< rs.last!.latentEndExclusive)
+    if covered != expected {
+        fails.append("stitch is not a gapless non-overlapping run: \(covered) vs \(expected)")
+    }
+    print("[dfr-layout-gate] stitch coverage   latents \(expected.first ?? -1)…\(expected.last ?? -1)  \(fails.count == n0 ? "PASS" : "FAIL")")
+
+    if fails.isEmpty { print("[dfr-layout-gate] PASS ✅  bit-identical to the Python port"); fflush(stdout) }
+    else { for f in fails.prefix(8) { print("[dfr-layout-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -2047,6 +2112,8 @@ if args.contains("--connector-gate") {
     try await e2e25(width: w, height: h, frames: f)
 } else if args.contains("--pipeline-25-gate") {
     try pipeline25Gate()
+} else if args.contains("--dfr-layout-gate") {
+    try dfrLayoutGate()
 } else if args.contains("--keyframe-slots-gate") {
     try keyframeSlotsGate()
 } else if args.contains("--gemma4-gate") {
