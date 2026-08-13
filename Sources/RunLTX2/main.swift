@@ -44,6 +44,26 @@ func maxAbs(_ a: MLXArray, _ b: MLXArray) -> Float {
     MLX.abs(a.asType(.float32) - b.asType(.float32)).max().item(Float.self)
 }
 
+/// `DiT` forward for gates that always supply an audio latent, with the audio output unwrapped.
+///
+/// The DiT's audio return is optional only for the AUDIO-FREE forward (`audioLatent: nil`, oracle
+/// `run_ax`), which exists for the DFR temporal rounds. Every parity gate below feeds a real audio
+/// latent, so the unwrap is total — done once here instead of at a dozen callsites.
+func ditAV(_ dit: DiT,
+           videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
+           videoText: MLXArray?, audioText: MLXArray?,
+           videoPositions: MLXArray, audioPositions: MLXArray,
+           videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
+           keyframesMask: MLXArray? = nil) -> (video: MLXArray, audio: MLXArray) {
+    let (v, a) = dit(
+        videoLatent: videoLatent, audioLatent: audioLatent, sigma: sigma,
+        videoText: videoText, audioText: audioText,
+        videoPositions: videoPositions, audioPositions: audioPositions,
+        videoTimesteps: videoTimesteps, audioTimesteps: audioTimesteps,
+        keyframesMask: keyframesMask)
+    return (v, a!)
+}
+
 func connectorGate(goldensPath: String, connectorPath: String) throws {
     print("[connector-gate] goldens:   \(goldensPath)")
     print("[connector-gate] connector: \(connectorPath)")
@@ -383,7 +403,7 @@ func ditTinyKF25Gate() throws {
     print("[dit-tiny-kf25-gate] \(weights.count) weight tensors, mask marks \(Int(marked))/\(Int(total)) tokens")
 
     let dit = DiT(weights: weights, config: tinyDiTConfig())
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"]!, audioText: io["audio_text"]!,
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
@@ -396,7 +416,7 @@ func ditTinyKF25Gate() throws {
     // Discrimination: WITHOUT the mask the embedding must not be applied, so the video
     // output must MOVE. If it did not, this gate would pass on a port that ignores the
     // mask entirely — the exact failure it exists to catch.
-    let (videoNoKF, _) = dit(
+    let (videoNoKF, _) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"]!, audioText: io["audio_text"]!,
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
@@ -898,7 +918,7 @@ func ditTinyGate() throws {
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[dit-tiny-gate] \(weights.count) weight tensors")
     let dit = DiT(weights: weights, config: tinyDiTConfig())
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -919,7 +939,7 @@ func ditFullGate() throws {
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[dit-full-gate] loading real distilled transformer (bf16)…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: weightsPath), config: DiTConfig(), computeDtype: .bfloat16)
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -1057,10 +1077,11 @@ func denoiseGate() throws {
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dit = DiT(weights: weights, config: tinyDiTConfig())
     let sigmas = io["sigmas"]!.asArray(Float.self)
-    let (video, audio) = try DenoiseLoop.run(
+    let (video, audioOpt) = try DenoiseLoop.run(
         dit: dit, videoLatent0: io["video_latent"]!, audioLatent0: io["audio_latent"]!, sigmas: sigmas,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+    let audio = audioOpt!   // audio supplied ⇒ audio returned (audio-free is the DFR-round path)
     eval(video, audio)
     let vCos = cosine(video, io["video_final"]!), vMax = maxAbs(video, io["video_final"]!)
     let aCos = cosine(audio, io["audio_final"]!), aMax = maxAbs(audio, io["audio_final"]!)
@@ -1093,13 +1114,14 @@ func icTinyGate() throws {
                                        targetPositions: io["\(name)_video_positions"]!,
                                        references: [ref])
         let posMax = maxAbs(state.positions, io["\(name)_ext_positions"]!)
-        let (vFull, audio) = try DenoiseLoop.runConditioned(
+        let (vFull, audioOpt) = try DenoiseLoop.runConditioned(
             dit: dit, videoLatent0: state.latent, audioLatent0: io["\(name)_audio_latent"]!,
             sigmas: sigmas,
             videoText: io["\(name)_video_text"], audioText: io["\(name)_audio_text"],
             videoPositions: state.positions, audioPositions: io["\(name)_audio_positions"]!,
             videoCleanLatent: state.clean, videoDenoiseMask: state.denoiseMask)
         let vSliced = state.slice(vFull)
+        let audio = audioOpt!   // audio supplied ⇒ audio returned
         eval(vFull, audio)
         let fCos = cosine(vFull, io["\(name)_video_final_full"]!)
         let sCos = cosine(vSliced, io["\(name)_video_final"]!)
@@ -1117,12 +1139,13 @@ func icTinyGate() throws {
         let audioState = ICVideoState.build(targetLatent: io["c_audio_latent"]!,
                                             targetPositions: io["c_tgt_audio_positions"]!,
                                             references: [ref])
-        let (video, afull) = try DenoiseLoop.runConditioned(
+        let (video, afullOpt) = try DenoiseLoop.runConditioned(
             dit: dit, videoLatent0: io["c_video_latent"]!, audioLatent0: audioState.latent,
             sigmas: sigmas,
             videoText: io["c_video_text"], audioText: io["c_audio_text"],
             videoPositions: io["c_video_positions"]!, audioPositions: audioState.positions,
             audioCleanLatent: audioState.clean, audioDenoiseMask: audioState.denoiseMask)
+        let afull = afullOpt!   // audio supplied ⇒ audio returned
         let aSliced = audioState.slice(afull)
         eval(video, afull)
         let aFullCos = cosine(afull, io["c_audio_final_full"]!)
@@ -1358,7 +1381,7 @@ func ditQ8Gate() throws {
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q8/io.safetensors"))     // q8 outputs
     print("[dit-q8-gate] loading int8 transformer…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: q8), config: DiTConfig(), computeDtype: .bfloat16)
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -1381,7 +1404,7 @@ func ditQ4Gate() throws {
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q4/io.safetensors"))     // q4 outputs
     print("[dit-q4-gate] loading int4 transformer…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: q4), config: DiTConfig(), computeDtype: .bfloat16)
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -1404,7 +1427,7 @@ func ditPerTokenGate() throws {
     let pt = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_pertoken/io.safetensors"))   // timesteps + outputs
     print("[dit-pertoken-gate] loading bf16 transformer…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: bf16), config: DiTConfig(), computeDtype: .bfloat16)
-    let (video, audio) = dit(
+    let (video, audio) = ditAV(dit,
         videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
         videoText: io["video_text"], audioText: io["audio_text"],
         videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
@@ -1430,7 +1453,7 @@ func loraGate(loraPath: String) throws {
     print("[lora-gate] loading real distilled transformer (bf16)…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: weightsPath), config: DiTConfig(), computeDtype: .bfloat16)
     func fwd() -> (MLXArray, MLXArray) {
-        let (v, a) = dit(
+        let (v, a) = ditAV(dit,
             videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
             videoText: io["video_text"], audioText: io["audio_text"],
             videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
@@ -2147,8 +2170,17 @@ if args.contains("--connector-gate") {
     let h = args.count > i + 2 ? Int(args[i + 2]) ?? 320 : 320
     let f = args.count > i + 3 ? Int(args[i + 3]) ?? 9 : 9
     try await e2e25(width: w, height: h, frames: f)
+} else if args.contains("--dfr25") {
+    let i = args.firstIndex(of: "--dfr25")!
+    let w = args.count > i + 1 ? Int(args[i + 1]) ?? 448 : 448
+    let h = args.count > i + 2 ? Int(args[i + 2]) ?? 320 : 320
+    let f = args.count > i + 3 ? Int(args[i + 3]) ?? 25 : 25
+    let r = args.count > i + 4 ? Int(args[i + 4]) ?? 0 : 0
+    try await dfr25(width: w, height: h, frames: f, rounds: r)
 } else if args.contains("--pipeline-25-gate") {
     try pipeline25Gate()
+} else if args.contains("--dfr-gate") {
+    try dfrGate()
 } else if args.contains("--dfr-layout-gate") {
     try dfrLayoutGate()
 } else if args.contains("--keyframe-slots-gate") {

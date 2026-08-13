@@ -128,6 +128,14 @@ public enum DFRLayout {
 
     // MARK: - Round helpers (what the temporal rounds assemble)
 
+    /// Shift global pixel indices into a tile-local frame (`local = global − pixelStart`).
+    ///
+    /// ⚠️ Conditioning inside a tile is TILE-LOCAL: frame 0 means the tile's first frame. Passing a
+    /// global index to a non-first tile pins the wrong frame onto the seam, with no error.
+    public static func remapPositionsToLocal(_ positions: [Int], pixelStart: Int) -> [Int] {
+        positions.map { $0 - pixelStart }
+    }
+
     /// Concatenate tile video latents along T, each contributing `latent[dropLatentPrefix...]`.
     ///
     /// Every tile is validated against its own range first: a tile whose T does not match
