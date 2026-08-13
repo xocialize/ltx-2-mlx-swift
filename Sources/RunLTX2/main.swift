@@ -592,17 +592,38 @@ func gemma4Gate() async throws {
     // EVERY state is printed, not a sample. This encoder feeds all 49 into the connector,
     // so the failure mode that matters is quantization error COMPOUNDING with depth —
     // a monotone decay toward state 48, which a mean hides completely.
+    //
+    // TWO cosines per state, and the second is the one to read for a quantization arm.
+    // The whole-array cosine covers all 1024 positions, but this fixture's prompt occupies
+    // only 27 of them — so ~97% of it is PAD-position output. Pad positions are not inert
+    // (they are real forward outputs, with much larger magnitude than the prompt tokens),
+    // so they dominate the whole-array number while saying nothing about the tokens the
+    // connector actually keeps. The whole-array value is retained so this gate stays
+    // comparable to the AB-R-0028 bf16 baseline; the valid-masked value is the honest read
+    // of prompt-token fidelity. The count is printed, not assumed — see AB-L-0017.
+    let maskInts = mask.reshaped(-1).asArray(Int32.self)
+    let validPositions = (0 ..< maskInts.count).filter { maskInts[$0] != 0 }
+    let validCount = validPositions.count
+    let validIdx = MLXArray(validPositions.map { Int32($0) })
+    func validSlice(_ x: MLXArray) -> MLXArray { x.take(validIdx, axis: 1) }
+
     var worstCos: Float = 1, worstIdx = 0, sumCos: Float = 0, worstMax: Float = 0
+    var worstValid: Float = 1, worstValidIdx = 0, sumValid: Float = 0
     var perState: [Float] = []
     for i in 0 ..< states.count {
         let exp = g[String(format: "gemma_hidden_%02d", i)]!
         let c = cosine(states[i], exp), m = maxAbs(states[i], exp)
-        sumCos += c; worstMax = Swift.max(worstMax, m); perState.append(c)
+        let cv = cosine(validSlice(states[i]), validSlice(exp))
+        sumCos += c; sumValid += cv; worstMax = Swift.max(worstMax, m); perState.append(cv)
         if c < worstCos { worstCos = c; worstIdx = i }
-        print(String(format: "[gemma4-gate] state %02d cosine=%.6f maxAbs=%.4f", i, c, m))
+        if cv < worstValid { worstValid = cv; worstValidIdx = i }
+        print(String(format: "[gemma4-gate] state %02d cosine=%.6f (valid-only %.6f) maxAbs=%.4f",
+                     i, c, cv, m))
     }
-    print(String(format: "[gemma4-gate] mean=%.6f  worst=%.6f (state %d)  maxAbs=%.4f",
+    print(String(format: "[gemma4-gate] whole-array: mean=%.6f  worst=%.6f (state %d)  maxAbs=%.4f",
                  sumCos / Float(states.count), worstCos, worstIdx, worstMax))
+    print(String(format: "[gemma4-gate] valid-only (%d of %d positions): mean=%.6f  worst=%.6f (state %d)",
+                 validCount, maskInts.count, sumValid / Float(states.count), worstValid, worstValidIdx))
 
     // Depth trend: shallow-third vs deep-third mean. A quantization scheme whose error
     // compounds through the residual stream shows here even when the mean still looks fine.
@@ -618,6 +639,19 @@ func gemma4Gate() async throws {
     let finalNormDelta = maxAbs(states[states.count - 1], states[states.count - 2])
     print(String(format: "[gemma4-gate] |state48 - state47| = %.2f (final norm applied)", finalNormDelta))
 
+    // PASS/FAIL stays on the whole-array cosine, deliberately. This is a PORT-PARITY gate —
+    // its contract and its published baseline (AB-R-0028: mean 0.999985, worst 0.999919)
+    // are whole-array, and re-defining the metric would silently make every future run
+    // incomparable to that receipt. The valid-only figure above is a diagnostic.
+    //
+    // ⚠️ It is therefore NOT a quantization-acceptance gate. Pointing LTX_GEMMA4_DIR at a
+    // quantized encoder repurposes it as a quant-delta probe, and its 0.999 threshold was
+    // never calibrated for that. Acceptance for a quant arm is decided on the CONNECTOR
+    // output at valid positions (scripts/report_ltx25_te_quant.py stage 4), because the
+    // connector RMS-normalizes each state per (token, layer) — per-state magnitude error
+    // dies there and only angular error reaches the DiT. Measured: int8 g64's worst
+    // per-state valid cosine is 0.997012, yet its connector output sits at 0.999820,
+    // against a bf16 floor of 0.999879.
     var ok = worstCos >= 0.999
     if finalNormDelta < 1.0 {
         print("[gemma4-gate] FAIL — states 47 and 48 are nearly identical; the final norm is "
