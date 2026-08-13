@@ -8,7 +8,7 @@ in the parent [`../CLAUDE.md`](../CLAUDE.md)** (auto-loads) — don't duplicate 
 | File | What | Gate |
 |---|---|---|
 | `RoPE.swift` | split-type RoPE (log-spaced freq grid, fractional positions) — shared by connector + DiT | (via others) |
-| `GemmaEncoder.swift` | Gemma-3 load (stock mlx-swift-lm) + combined causal+padding mask + tokenize | `--gemma-gate` |
+| `GemmaEncoder.swift` | Gemma-3 load (stock mlx-swift-lm) + combined causal+padding mask + tokenize (+ `loadTokenizer` — tokenizer only, no 12B). `tokenize` is a static over a bare tokenizer so the gate can pin it cheaply | `--gemma-gate` (49 states), **`--gemma-tokenizer-gate`** (tokenization: INTEGER equality, 7 cases, no weights loaded) |
 | `Gemma3+AllHiddenStates.swift` | the 49-state encoder tap itself — uniform mask on every layer, per-layer `eval` (watchdog), per-layer `Task.checkCancellation()`. Ours, via `@_spi(GemmaEncoder) import MLXLLM` | `--gemma-gate` |
 | `Connector.swift` | `GemmaFeaturesExtractorV2` + `Embeddings1DConnector` (49-layer RMS, dual project, gated attn, GEGLU, registers) — **fp32** | `--connector-gate` |
 | `DiT.swift` | joint-AV Diffusion Transformer (48 blocks, AdaLN ×4 kinds, self/text-cross/AV-cross attn) — **bf16**. Quant-aware `dense()` (q8/q4, bits auto). Optional **per-token timesteps** (i2v). | `--dit-tiny`, `--dit-full`, `--dit-q8`, `--dit-q4`, `--dit-pertoken` |

@@ -108,6 +108,130 @@ func gemmaGate(goldensPath: String, gemmaDir: String) async throws {
     if !pass { exit(1) }
 }
 
+// MARK: - Tokenizer gate
+//
+// `--gemma-gate` reads token_ids/attention_mask FROM the golden and feeds them straight to the
+// 49-state forward, so `GemmaEncoder.tokenize` is exercised by NO other gate on the board — a
+// text encoder can gate at cosine 1.0 while being fed wrongly-tokenized input in production
+// (AB-L-0011). This gate closes that hole with INTEGER EQUALITY, not cosine: any drift in
+// special-token handling, truncation side, or padding placement is a hard fail.
+//
+//   xcrun swift run RunLTX2 --gemma-tokenizer-gate [goldensDir] [gemmaDir]
+
+private struct TokenizerGoldenCase: Decodable {
+    let index: Int
+    let name: String
+    let prompt: String
+    let rawTokenCount: Int
+    let keptTokenCount: Int
+    let truncated: Bool
+    let nValid: Int
+    let nPad: Int
+    let firstKeptId: Int?
+    let startsWithBos: Bool
+}
+
+private struct TokenizerGoldenMeta: Decodable {
+    let maxLength: Int
+    let padTokenId: Int
+    let unkTokenId: Int?
+    let bosTokenId: Int?
+    let cases: [TokenizerGoldenCase]
+}
+
+func gemmaTokenizerGate(goldensDir: String, gemmaDir: String) async throws {
+    let dir = URL(fileURLWithPath: goldensDir)
+    print("[gemma-tokenizer-gate] goldens: \(dir.path)")
+    print("[gemma-tokenizer-gate] gemma:   \(gemmaDir)")
+
+    let goldens = try MLX.loadArrays(url: dir.appendingPathComponent("goldens.safetensors"))
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    let meta = try decoder.decode(
+        TokenizerGoldenMeta.self,
+        from: Data(contentsOf: dir.appendingPathComponent("prompts.json")))
+
+    // Tokenizer only — no 12B weights. Same object production gets from `#huggingFaceLoadModel`.
+    let tk = try await GemmaEncoder.loadTokenizer(directory: URL(fileURLWithPath: gemmaDir))
+    let swiftPadToken = tk.unknownTokenId ?? 0
+    print("[gemma-tokenizer-gate] maxLength=\(meta.maxLength)  oracle pad=\(meta.padTokenId)  "
+          + "swift pad=\(swiftPadToken)  bos=\(meta.bosTokenId.map(String.init) ?? "nil")")
+
+    var failures: [String] = []
+    var failedCases = 0
+
+    for c in meta.cases {
+        let key = String(format: "case%02d", c.index)
+        guard let expIds = goldens["\(key)_token_ids"], let expMask = goldens["\(key)_attention_mask"] else {
+            fatalError("goldens missing \(key)_token_ids / \(key)_attention_mask")
+        }
+        let (gotIdsArr, gotMaskArr) = GemmaEncoder.tokenize(c.prompt, tokenizer: tk, maxLength: meta.maxLength)
+        let gotIds = gotIdsArr.asType(.int32).reshaped(-1).asArray(Int32.self)
+        let gotMask = gotMaskArr.asType(.int32).reshaped(-1).asArray(Int32.self)
+        let wantIds = expIds.asType(.int32).reshaped(-1).asArray(Int32.self)
+        let wantMask = expMask.asType(.int32).reshaped(-1).asArray(Int32.self)
+
+        var problems: [String] = []
+
+        // 1. Attention mask — exact, every slot. Catches a padding-side or truncation-side flip.
+        if gotMask != wantMask {
+            let first = zip(gotMask, wantMask).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? -1
+            problems.append("attention_mask differs (first at \(first): got \(gotMask[first]) want \(wantMask[first]))")
+        }
+        let gotValid = gotMask.reduce(0) { $0 + Int($1) }
+        if gotValid != c.nValid { problems.append("valid-token count \(gotValid) != \(c.nValid)") }
+
+        // 2. Token ids at VALID positions — exact. This is the real tokenization surface:
+        //    a missing/extra BOS, a different truncation side, or any BPE drift lands here.
+        let validIdx = (0 ..< gotMask.count).filter { wantMask[$0] == 1 }
+        let gotValidIds = validIdx.map { gotIds[$0] }
+        let wantValidIds = validIdx.map { wantIds[$0] }
+        if gotValidIds != wantValidIds {
+            let d = zip(gotValidIds, wantValidIds).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? -1
+            problems.append("token ids differ at valid position \(d): "
+                            + "got \(gotValidIds[d]) want \(wantValidIds[d])")
+        }
+        // Explicit BOS report — the 2.5 tokenizer's post_processor emits NO BOS, so this line is
+        // the tripwire when the Gemma-4 encoder lands (its `single: [Sequence A]` means BOS must
+        // be prepended by hand). Reported per case, gated by the id comparison above.
+        let gotFirstValid = validIdx.first.map { gotIds[$0] }
+        if gotFirstValid.map({ Int($0) }) != c.firstKeptId {
+            problems.append("first valid token \(gotFirstValid.map(String.init) ?? "nil") "
+                            + "!= oracle \(c.firstKeptId.map(String.init) ?? "nil")")
+        }
+
+        // 3. Token ids at PAD positions — must be uniformly the port's pad token. The DIVERGENCE
+        //    from the oracle's `<pad>` is deliberate and measured benign (see GemmaEncoder.swift
+        //    `tokenize` + parity/probe_pad_token_effect.py); what must not drift is that every
+        //    pad slot carries one real vocab token and is masked off.
+        let padIdx = (0 ..< gotMask.count).filter { wantMask[$0] == 0 }
+        if let bad = padIdx.first(where: { gotIds[$0] != Int32(swiftPadToken) }) {
+            problems.append("pad slot \(bad) is \(gotIds[bad]), expected the port's pad token \(swiftPadToken)")
+        }
+
+        let name = c.name.padding(toLength: max(14, c.name.count), withPad: " ", startingAt: 0)
+        print("[gemma-tokenizer-gate] \(String(format: "%02d", c.index)) \(name) "
+              + "raw=\(c.rawTokenCount) kept=\(c.keptTokenCount) valid=\(c.nValid) pad=\(c.nPad) "
+              + "trunc=\(c.truncated ? "Y" : "N") bos=\(c.startsWithBos ? "Y" : "N") "
+              + (problems.isEmpty ? "✅" : "❌"))
+        if !problems.isEmpty { failedCases += 1 }
+        for p in problems {
+            print("[gemma-tokenizer-gate]      ↳ \(p)")
+            failures.append("\(c.name): \(p)")
+        }
+    }
+
+    let padNote = swiftPadToken == meta.padTokenId
+        ? "pad token matches the oracle (\(meta.padTokenId))"
+        : "pad token \(swiftPadToken) != oracle \(meta.padTokenId) — DELIBERATE, measured "
+          + "bit-irrelevant to the DiT-facing embeds (parity/goldens/pad_token_probe/report.json)"
+    print("[gemma-tokenizer-gate] \(padNote)")
+    print("[gemma-tokenizer-gate] \(meta.cases.count - failedCases)/\(meta.cases.count) cases exact")
+    let pass = failures.isEmpty
+    print(pass ? "[gemma-tokenizer-gate] PASS ✅" : "[gemma-tokenizer-gate] FAIL ❌")
+    if !pass { exit(1) }
+}
+
 /// Full text-encode front-end: token_ids → Gemma 49 states → connector → (video, audio) embeds.
 func textEncodeGate(goldensPath: String, gemmaDir: String, connectorPath: String) async throws {
     print("[text-encode-gate] composing Gemma → connector end-to-end")
@@ -1582,6 +1706,10 @@ if args.contains("--connector-gate") {
     let goldens = positional.first ?? defaultGoldens
     let gemmaDir = positional.dropFirst().first ?? defaultGemma
     try await gemmaGate(goldensPath: goldens, gemmaDir: gemmaDir)
+} else if args.contains("--gemma-tokenizer-gate") {
+    let dir = positional.first ?? "\(goldensBase)/gemma_tokenizer"
+    let gemmaDir = positional.dropFirst().first ?? defaultGemma
+    try await gemmaTokenizerGate(goldensDir: dir, gemmaDir: gemmaDir)
 } else if args.contains("--gemma-textgen-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {

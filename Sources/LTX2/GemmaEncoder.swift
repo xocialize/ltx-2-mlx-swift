@@ -36,6 +36,17 @@ public struct GemmaEncoder {
         }
     }
 
+    /// Load ONLY the tokenizer from a local Gemma directory — no model weights touched.
+    ///
+    /// This is exactly what `#huggingFaceLoadModel` installs in `context.tokenizer`
+    /// (`Tokenizers.AutoTokenizer.from(modelFolder:)` wrapped by the MLXLMCommon adaptor —
+    /// see mlx-swift-lm `TokenizerLoaderMacro`), so `--gemma-tokenizer-gate` exercises the
+    /// SAME tokenizer production uses without paying for the 12B load.
+    public static func loadTokenizer(directory: URL) async throws -> any MLXLMCommon.Tokenizer {
+        let upstream = try await Tokenizers.AutoTokenizer.from(modelFolder: directory)
+        return #adaptHuggingFaceTokenizer(upstream)
+    }
+
     /// Load Gemma 3 from a local directory (config.json + quantized safetensors).
     public static func load(directory: URL) async throws -> GemmaEncoder {
         let configuration = ModelConfiguration(directory: directory)
@@ -68,10 +79,38 @@ public struct GemmaEncoder {
     /// Tokenize + left-pad to `maxLength` (mirrors LTXVGemmaTokenizer, padding_side="left").
     /// Returns (tokenIds (1,maxLength), attentionMask (1,maxLength)).
     public func tokenize(_ text: String, maxLength: Int = 1024) -> (tokenIds: MLXArray, mask: MLXArray) {
-        let tk = context.tokenizer
+        GemmaEncoder.tokenize(text, tokenizer: context.tokenizer, maxLength: maxLength)
+    }
+
+    /// The tokenization itself, over a bare tokenizer — so `--gemma-tokenizer-gate` can pin it
+    /// without loading the 12B. Mirrors the oracle `GemmaLanguageModel.tokenize`
+    /// (base_encoder.py): encode the stripped text WITH special tokens (Gemma-3's
+    /// post_processor prepends `<bos>`), keep the LAST `maxLength` on overflow (which drops
+    /// that `<bos>` — matched behavior, pinned as gate case 05), then left-pad.
+    public static func tokenize(
+        _ text: String,
+        tokenizer tk: any MLXLMCommon.Tokenizer,
+        maxLength: Int = 1024
+    ) -> (tokenIds: MLXArray, mask: MLXArray) {
         var tokens = tk.encode(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
         if tokens.count > maxLength { tokens = Array(tokens.suffix(maxLength)) }
         let pad = maxLength - tokens.count
+        // DELIBERATE DIVERGENCE, measured benign: we pad with `<unk>`(3) where the oracle pads
+        // with `pad_token_id` = `<pad>`(0). Verified empirically, not argued — see
+        // `parity/probe_pad_token_effect.py` (receipt: parity/goldens/pad_token_probe/report.json),
+        // run in the regime that can actually discriminate: prompt "a red fox", 4 valid tokens,
+        // 1020/1024 slots (99.6%) padding, so pad tokens dominate if they matter at all.
+        //   · Gemma hidden states at VALID positions, pad0 vs pad3: 0 of 15360 elements differ,
+        //     on all 49 layers — the combined causal+padding mask isolates pad keys exactly.
+        //   · FINAL connector outputs (what the DiT consumes): BIT-IDENTICAL —
+        //     0/4194304 video, 0/2097152 audio elements differ.
+        //   · Controls confirm the check could have failed: pad-POSITION hidden states differ
+        //     hugely (maxAbs 1.01e5 @ layer 42), and re-running the connector with the mask
+        //     forced to all-ones — so nothing is discarded — moves 4003767/4194304 video
+        //     elements (maxAbs 1.25).
+        // Two independent mechanisms make it irrelevant: `GemmaFeaturesExtractorV2` zeroes
+        // padded positions before the projection, and `_replace_padding_with_registers` then
+        // overwrites them with learned registers. The id only has to be a real vocab token.
         let padToken = tk.unknownTokenId ?? 0
         let ids = Array(repeating: padToken, count: pad) + tokens
         let m = Array(repeating: 0, count: pad) + Array(repeating: 1, count: tokens.count)
