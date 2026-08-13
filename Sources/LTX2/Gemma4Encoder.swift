@@ -51,6 +51,20 @@ public struct Gemma4Encoder {
         return Gemma4Encoder(model: wrapper.languageModel, context: ctx)
     }
 
+    /// `bos_token_id` / `pad_token_id` read from the checkpoint's config.json.
+    ///
+    /// Read rather than hardcoded: the oracle pads with `pad_token_id` (0 = `<pad>`), and the
+    /// 2.3 Swift path's use of `unknownTokenId` (3 = `<unk>`) was only ever benign by accident
+    /// of the connector discarding padded positions.
+    public static func specialTokenIds(directory: URL) throws -> (bos: Int, pad: Int) {
+        let data = try Data(contentsOf: directory.appending(path: "config.json"))
+        let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+        let text = (root["text_config"] as? [String: Any]) ?? root
+        let bos = (text["bos_token_id"] as? Int) ?? (root["bos_token_id"] as? Int) ?? 2
+        let pad = (text["pad_token_id"] as? Int) ?? (root["pad_token_id"] as? Int) ?? 0
+        return (bos, pad)
+    }
+
     /// Tokenize + left-pad, with the manual BOS the 2.5 tokenizer does not supply.
     ///
     /// Mirrors the oracle: encode the stripped text, prepend `<bos>` if absent, keep the LAST

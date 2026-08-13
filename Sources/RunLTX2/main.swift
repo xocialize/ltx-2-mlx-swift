@@ -702,6 +702,43 @@ func keyframeSlotsGate() throws {
     else { for f in fails { print("[keyframe-slots-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
 }
 
+
+/// LTX-2.5 pipeline wiring: version detection and the first-latent-frame mask.
+///
+/// Checks detection against the REAL model directories on disk, not a synthetic fixture —
+/// the failure this guards is "the pipeline silently treats a 2.5 checkpoint as 2.3", which
+/// a fixture with a hand-made directory would not exercise.
+func pipeline25Gate() throws {
+    var fails: [String] = []
+    let dirs: [(String, String, Bool)] = [
+        ("2.5", "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx", true),
+        ("2.3", "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx", false),
+    ]
+    for (label, path, want) in dirs {
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("[pipeline-25-gate] SKIP \(label): \(path) not present"); continue
+        }
+        let got = LTX2Pipeline.isLTX25(ltxDir: URL(fileURLWithPath: path))
+        print("[pipeline-25-gate] \(label) dir -> isLTX25=\(got) (want \(want))")
+        if got != want { fails.append("\(label) detected as isLTX25=\(got), want \(want)") }
+    }
+
+    // Mask shape + marking: frame 0 marked, everything else not.
+    let F = 4, H = 4, W = 6
+    let m = LTX2Pipeline.firstLatentFrameKeyframesMask(totalTokens: F * H * W,
+                                                       tokensPerLatentFrame: H * W)
+    eval(m)
+    let head = m[0..., ..<(H * W), 0...].min().item(Float.self)
+    let tail = m[0..., (H * W)..., 0...].max().item(Float.self)
+    print(String(format: "[pipeline-25-gate] mask %@ head=%.0f tail=%.0f", "\(m.shape)" as NSString, head, tail))
+    if m.dim(1) != F * H * W { fails.append("mask length \(m.dim(1)) != \(F * H * W)") }
+    if head != 1 { fails.append("first latent frame not marked (min \(head))") }
+    if tail != 0 { fails.append("tokens beyond frame 0 are marked (max \(tail))") }
+
+    if fails.isEmpty { print("[pipeline-25-gate] PASS ✅"); fflush(stdout) }
+    else { for f in fails { print("[pipeline-25-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1946,6 +1983,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--pipeline-25-gate") {
+    try pipeline25Gate()
 } else if args.contains("--keyframe-slots-gate") {
     try keyframeSlotsGate()
 } else if args.contains("--gemma4-gate") {

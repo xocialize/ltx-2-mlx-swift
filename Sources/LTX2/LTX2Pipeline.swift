@@ -185,6 +185,7 @@ public final class LTX2Pipeline {
     /// derives every width from the weights and enables its channel adapters on sight.
     private let vaeDecoderPath: URL?
     private var gemma: GemmaEncoder?
+    private var gemma4: Gemma4Encoder?
     private var connector: Connector?
     private var vae: VideoVAEDecoder?
     private var audioVAE: AudioVAEDecoder?
@@ -251,6 +252,39 @@ public final class LTX2Pipeline {
     /// (49 × (1,1024,3840) ≈ 0.4 GB bf16), so sequencing cuts ~6.5 GB (Gemma 4-bit) off the
     /// encode-stage peak — which T3 measurement showed is THE peak on low tiers. `isolation`
     /// inherits the caller's actor (the wrapper's `@InferenceActor`).
+    /// Which LTX generation this model directory is.
+    ///
+    /// Detected from the CHECKPOINT, mirroring the oracle's `resolve_text_encoder`: LTX-2.5
+    /// conversions ship the tuned Gemma-4 encoder in-dir as `gemma4-12b-ltx-v1/`, and 2.3 uses
+    /// an external Gemma-3. Deliberately not a path-name parse — a renamed or local copy must
+    /// still be recognised (the oracle had exactly that bug: slots were created on the
+    /// checkpoint capability but marked only when the directory name parsed as >= 2.5).
+    var isLTX25: Bool { Self.isLTX25(ltxDir: ltxDir) }
+
+    var gemma4Dir: URL { Self.gemma4Dir(ltxDir: ltxDir) }
+
+    /// Static form so the wiring can be gated without loading a 38 GB checkpoint.
+    public static func gemma4Dir(ltxDir: URL) -> URL { ltxDir.appending(path: "gemma4-12b-ltx-v1") }
+    public static func isLTX25(ltxDir: URL) -> Bool {
+        var isDir: ObjCBool = false
+        let ok = FileManager.default.fileExists(atPath: gemma4Dir(ltxDir: ltxDir).path, isDirectory: &isDir)
+        return ok && isDir.boolValue
+    }
+
+    /// (B, N, 1) mask marking the target's FIRST latent frame.
+    ///
+    /// On 2.5 the first latent frame is always marked: the causal video encoder makes it cover
+    /// a single pixel frame while the rest cover 8, so it IS a keyframe and receives the
+    /// trained `keyframes_abs_pos_embedding`. Slots (when present) add their own marks on top.
+    public static func firstLatentFrameKeyframesMask(
+        totalTokens: Int, tokensPerLatentFrame: Int, batch: Int = 1
+    ) -> MLXArray {
+        let head = MLXArray.ones([batch, Swift.min(tokensPerLatentFrame, totalTokens), 1])
+        if tokensPerLatentFrame >= totalTokens { return head.asType(.bfloat16) }
+        let tail = MLXArray.zeros([batch, totalTokens - tokensPerLatentFrame, 1])
+        return concatenated([head, tail], axis: 1).asType(.bfloat16)
+    }
+
     private func encodePrompt(
         _ prompt: String, isolation: isolated (any Actor)? = #isolation
     ) async throws -> (video: MLXArray, audio: MLXArray) {
@@ -268,14 +302,28 @@ public final class LTX2Pipeline {
         // checkpointable without a fork API change) — worst case ≈ that forward's few seconds.
         try Task.checkCancellation()
         LTX2Progress.report(.encode)
-        let gSpan = prof.begin("encode", "gemma", note: "gemma-3-12b 4-bit")
-        if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
-        try Task.checkCancellation()
-        let (ids, mask) = gemma!.tokenize(prompt)
-        let states = try gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        let gSpan = prof.begin("encode", "gemma",
+                               note: isLTX25 ? "gemma4-12b-ltx-v1 bf16" : "gemma-3-12b 4-bit")
+        let ids: MLXArray, mask: MLXArray, states: [MLXArray]
+        if isLTX25 {
+            // ⚠️ The 2.5 tokenizer emits NO <bos> (post_processor `single: [Sequence A]`),
+            // where Gemma-3's does — Gemma4Encoder.tokenize prepends it and pads with
+            // pad_token_id. Using GemmaEncoder here would silently feed BOS-less input.
+            if gemma4 == nil { gemma4 = try await Gemma4Encoder.load(directory: gemma4Dir) }
+            try Task.checkCancellation()
+            let cfg = try Gemma4Encoder.specialTokenIds(directory: gemma4Dir)
+            (ids, mask) = Gemma4Encoder.tokenize(prompt, tokenizer: gemma4!.context.tokenizer,
+                                                 bosId: cfg.bos, padId: cfg.pad)
+            states = try gemma4!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        } else {
+            if gemma == nil { gemma = try await GemmaEncoder.load(directory: gemmaDir) }
+            try Task.checkCancellation()
+            (ids, mask) = gemma!.tokenize(prompt)
+            states = try gemma!.allHiddenStates(tokenIds: ids, attentionMask: mask)
+        }
         eval(states); eval(mask)   // materialize BEFORE dropping Gemma (lazy graph would pin it)
         prof.end(gSpan)
-        if !keepStagesResident { gemma = nil; Memory.clearCache() }
+        if !keepStagesResident { gemma = nil; gemma4 = nil; Memory.clearCache() }
 
         try Task.checkCancellation()
         let cSpan = prof.begin("encode", "connector")
@@ -839,11 +887,22 @@ public final class LTX2Pipeline {
         // rather than condemning a run whose full-res stage would stream
         // (STREAMING-PLAN §4).
         armStreamingGate(largestStageTokens: nv2 + audioT)
+        // LTX-2.5 stage 1: ancestral Euler (eta 1.0, noise seed = seed + 10000) and the
+        // first-latent-frame keyframes mask on every forward. Both are inert on 2.3, where
+        // `isLTX25` is false and the checkpoint carries no keyframes embedding.
+        let kfMask1 = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: v1.dim(1),
+                                                 tokensPerLatentFrame: hLat1 * wLat1)
+            : nil
         let (v1f, a1f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat1, H: hLat1, W: wLat1, fps: Float(fps1)),
-            audioPositions: Positions.audio(tokens: audioT), label: "s1-", stage: 1, totalStages: 2)
+            audioPositions: Positions.audio(tokens: audioT),
+            keyframesMask: kfMask1,
+            ancestralEta: isLTX25 ? 1.0 : 0,
+            ancestralNoiseSeed: (seed ?? 0) &+ 10_000,
+            label: "s1-", stage: 1, totalStages: 2)
         eval(v1f, a1f)
 
         // --- Upscale in un-normalized latent space (encoder+upsampler loaded only here) ---
@@ -870,11 +929,19 @@ public final class LTX2Pipeline {
         // --- Stage 2: full resolution refine (init = noise·σ₀ + upscaled·(1-σ₀)) ---
         let v2init = LTX2Pipeline.noiseInit(clean: v2tokens, sigma: sigma0, shape: v2tokens.shape, seed: seed.map { $0 &+ 2 })
         let a2init = LTX2Pipeline.noiseInit(clean: a1f, sigma: sigma0, shape: a1f.shape, seed: seed.map { $0 &+ 2 })
+        // Stage 2 keeps plain Euler (the oracle only switches stage 1 to ancestral) but still
+        // needs the keyframes mask — the trained embedding applies on every 2.5 forward.
+        let kfMask2 = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: v2init.dim(1),
+                                                 tokensPerLatentFrame: hLat2 * wLat2)
+            : nil
         let (v2f, a2f) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat2, H: hLat2, W: wLat2, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT), label: "s2-", stage: 2, totalStages: 2)
+            audioPositions: Positions.audio(tokens: audioT),
+            keyframesMask: kfMask2,
+            label: "s2-", stage: 2, totalStages: 2)
         eval(v2f, a2f)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
