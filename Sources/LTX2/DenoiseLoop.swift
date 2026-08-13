@@ -104,11 +104,20 @@ public enum DenoiseLoop {
     /// run at the next step boundary (≤ one step's latency) instead of after the full loop.
     /// Reports each step to `LTX2Progress` (V2 run-phase plane); `stage`/`totalStages` tag the
     /// two-stage passes (s1 = 1/2, s2 = 2/2) so a consumer can render "pass 2/2 · step 3/8".
+    /// ⚠️ `keyframesMask` and `ancestralEta` are the LTX-2.5 deltas. They MUST be threaded
+    /// from here, not just implemented on `DiT`/`eulerAncestralStep`: an earlier revision
+    /// wired them only as far as `x0` and the gates, so `--dit-tiny-kf25-gate` and
+    /// `--ancestral-step-gate` were green while every production run took the `nil` default
+    /// and plain Euler. A defaulted-nil argument turns "forgot to wire it" into a
+    /// compile-clean no-op.
     public static func run(
         dit: any LTXDenoiser, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
+        keyframesMask: MLXArray? = nil,
+        ancestralEta: Float = 0, ancestralSNoise: Float = 1, ancestralNoiseSeed: UInt64 = 0,
         label: String = "", stage: Int? = nil, totalStages: Int? = nil
     ) throws -> (video: MLXArray, audio: MLXArray) {
+        var ancestralKey = MLXRandom.key(ancestralNoiseSeed)
         var vx = videoLatent0, ax = audioLatent0
         let vN = vx.dim(1), aN = ax.dim(1)   // token counts (static shapes — no eval)
         var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
@@ -122,7 +131,8 @@ public enum DenoiseLoop {
             let vxIn = vx
             let (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
                                 videoText: videoText, audioText: audioText,
-                                videoPositions: videoPositions, audioPositions: audioPositions)
+                                videoPositions: videoPositions, audioPositions: audioPositions,
+                                keyframesMask: keyframesMask)
             if logStepDeltas {
                 if let pIn = prevIn, let pV = prevVX0, let pA = prevAX0 {
                     print(String(format: "[STEP-DELTA] %@step%d σ=%.3f  video in-cos=%.4f x0-cos=%.4f  audio x0-cos=%.4f",
@@ -130,8 +140,21 @@ public enum DenoiseLoop {
                 }
                 prevIn = vxIn; prevVX0 = vx0; prevAX0 = ax0
             }
-            vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
-            ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
+            if ancestralEta > 0 && sigmaNext != 0 {
+                // Video noise is drawn before audio, matching the oracle's split order.
+                let (k1, vKey) = MLXRandom.split(key: ancestralKey)
+                let (k2, aKey) = MLXRandom.split(key: k1)
+                ancestralKey = k2
+                vx = eulerAncestralStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext,
+                                        noise: MLXRandom.normal(vx.shape, key: vKey),
+                                        eta: ancestralEta, sNoise: ancestralSNoise)
+                ax = eulerAncestralStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext,
+                                        noise: MLXRandom.normal(ax.shape, key: aKey),
+                                        eta: ancestralEta, sNoise: ancestralSNoise)
+            } else {
+                vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
+                ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
+            }
             eval(vx, ax)
             MLXProfiler.shared.end(span)
         }
@@ -143,13 +166,22 @@ public enum DenoiseLoop {
     /// is injected into the initial state and re-blended after each x0 prediction so those tokens
     /// stay exactly clean. Pass a mask ONLY when non-uniform (oracle `_is_uniform_mask`); nil ⇒
     /// that modality follows the scalar t2v path. Audio is usually unconditioned (nil) for i2v.
+    /// ⚠️ `keyframesMask` and `ancestralEta` are the LTX-2.5 deltas. They MUST be threaded
+    /// from here, not just implemented on `DiT`/`eulerAncestralStep`: an earlier revision
+    /// wired them only as far as `x0` and the gates, so `--dit-tiny-kf25-gate` and
+    /// `--ancestral-step-gate` were green while every production run took the `nil` default
+    /// and plain Euler. A defaulted-nil argument turns "forgot to wire it" into a
+    /// compile-clean no-op.
     public static func runConditioned(
         dit: any LTXDenoiser, videoLatent0: MLXArray, audioLatent0: MLXArray, sigmas: [Float],
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
         videoCleanLatent: MLXArray? = nil, videoDenoiseMask: MLXArray? = nil,
         audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,
+        keyframesMask: MLXArray? = nil,
+        ancestralEta: Float = 0, ancestralSNoise: Float = 1, ancestralNoiseSeed: UInt64 = 0,
         label: String = "", stage: Int? = nil, totalStages: Int? = nil
     ) throws -> (video: MLXArray, audio: MLXArray) {
+        var ancestralKey = MLXRandom.key(ancestralNoiseSeed)
         var vx = videoLatent0.asType(.float32), ax = audioLatent0.asType(.float32)
         // Inject clean conditioned latents into the initial noised state.
         if let clean = videoCleanLatent, let m = videoDenoiseMask { vx = applyDenoiseMask(vx, clean: clean, mask: m) }
@@ -169,7 +201,8 @@ public enum DenoiseLoop {
             var (vx0, ax0) = x0(dit, videoLatent: vx, audioLatent: ax, sigma: sigma,
                                 videoText: videoText, audioText: audioText,
                                 videoPositions: videoPositions, audioPositions: audioPositions,
-                                videoTimesteps: vts, audioTimesteps: ats)
+                                videoTimesteps: vts, audioTimesteps: ats,
+                                keyframesMask: keyframesMask)
             if logStepDeltas {
                 if let pIn = prevIn, let pV = prevVX0, let pA = prevAX0 {
                     print(String(format: "[STEP-DELTA] %@step%d σ=%.3f  video in-cos=%.4f x0-cos=%.4f  audio x0-cos=%.4f",
@@ -179,8 +212,21 @@ public enum DenoiseLoop {
             }
             if let clean = videoCleanLatent, let m = videoDenoiseMask { vx0 = applyDenoiseMask(vx0, clean: clean, mask: m) }
             if let clean = audioCleanLatent, let m = audioDenoiseMask { ax0 = applyDenoiseMask(ax0, clean: clean, mask: m) }
-            vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
-            ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
+            if ancestralEta > 0 && sigmaNext != 0 {
+                // Video noise is drawn before audio, matching the oracle's split order.
+                let (k1, vKey) = MLXRandom.split(key: ancestralKey)
+                let (k2, aKey) = MLXRandom.split(key: k1)
+                ancestralKey = k2
+                vx = eulerAncestralStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext,
+                                        noise: MLXRandom.normal(vx.shape, key: vKey),
+                                        eta: ancestralEta, sNoise: ancestralSNoise)
+                ax = eulerAncestralStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext,
+                                        noise: MLXRandom.normal(ax.shape, key: aKey),
+                                        eta: ancestralEta, sNoise: ancestralSNoise)
+            } else {
+                vx = eulerStep(vx, vx0, sigma: sigma, sigmaNext: sigmaNext)
+                ax = eulerStep(ax, ax0, sigma: sigma, sigmaNext: sigmaNext)
+            }
             eval(vx, ax)
             MLXProfiler.shared.end(span)
         }

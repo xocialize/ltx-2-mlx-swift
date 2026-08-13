@@ -35,9 +35,13 @@ extension Gemma4TextModel {
     ///   - tokenIds: `(B, T)` token ids.
     ///   - mask: a uniform additive mask applied to EVERY layer (LTX's encoder semantics —
     ///     deliberately not Gemma's per-layer sliding/global masks).
+    /// ⚠️ `mask` is REQUIRED, matching the Gemma-3 sibling. It was briefly defaulted to
+    /// `.none`, which let a caller silently run with neither a causal nor a padding mask —
+    /// left-pad tokens leaking into every valid position, producing plausible-but-wrong
+    /// states with no error and no gate to catch it (there is no Gemma-4 parity gate yet).
     public func allHiddenStates(
         _ tokenIds: MLXArray,
-        mask: MLXFast.ScaledDotProductAttentionMaskMode = .none
+        mask: MLXFast.ScaledDotProductAttentionMaskMode
     ) throws -> [MLXArray] {
         let inner = self.model
 

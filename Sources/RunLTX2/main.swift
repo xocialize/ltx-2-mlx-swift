@@ -173,8 +173,18 @@ func gemmaTokenizerGate(goldensDir: String, gemmaDir: String) async throws {
 
         var problems: [String] = []
 
+        // 0. Lengths first. zip() truncates to the shorter sequence, so a pure LENGTH
+        //    disagreement — exactly what a maxLength/truncation regression produces — finds
+        //    no differing pair, leaves the `?? -1` fallback in place, and index-traps on the
+        //    next line. A gate that fatals is indistinguishable from a broken build.
+        if gotMask.count != wantMask.count || gotIds.count != wantIds.count {
+            problems.append("length mismatch: mask \(gotMask.count) vs \(wantMask.count), "
+                            + "ids \(gotIds.count) vs \(wantIds.count) — regenerate the goldens "
+                            + "(prompts.json maxLength and goldens.safetensors disagree)")
+        }
+
         // 1. Attention mask — exact, every slot. Catches a padding-side or truncation-side flip.
-        if gotMask != wantMask {
+        if problems.isEmpty, gotMask != wantMask {
             let first = zip(gotMask, wantMask).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? -1
             problems.append("attention_mask differs (first at \(first): got \(gotMask[first]) want \(wantMask[first]))")
         }
@@ -183,7 +193,9 @@ func gemmaTokenizerGate(goldensDir: String, gemmaDir: String) async throws {
 
         // 2. Token ids at VALID positions — exact. This is the real tokenization surface:
         //    a missing/extra BOS, a different truncation side, or any BPE drift lands here.
-        let validIdx = (0 ..< gotMask.count).filter { wantMask[$0] == 1 }
+        // Guarded by the length check above; indexing wantMask over gotMask's range is only
+        // safe once the two are known equal.
+        let validIdx = problems.isEmpty ? (0 ..< gotMask.count).filter { wantMask[$0] == 1 } : []
         let gotValidIds = validIdx.map { gotIds[$0] }
         let wantValidIds = validIdx.map { wantIds[$0] }
         if gotValidIds != wantValidIds {
@@ -468,6 +480,80 @@ func ancestralStepGate() throws {
     }
     if ok { print("[ancestral-step-gate] PASS ✅"); fflush(stdout) }
     else { print("[ancestral-step-gate] FAIL ❌"); fflush(stdout); exit(1) }
+}
+
+
+/// Wiring gate: the LTX-2.5 deltas must reach production through DenoiseLoop, not just
+/// through DiT and the step function.
+///
+/// ⚠️ This gate exists because the component gates could not see the real defect. An earlier
+/// revision implemented keyframesMask on DiT/TiledDiT and eulerAncestralStep on DenoiseLoop,
+/// gated both (--dit-tiny-kf25-gate at cosine 0.999999, --ancestral-step-gate at 9.3e-06),
+/// and shipped with NEITHER reachable from `run`/`runConditioned` — the only entry points the
+/// pipeline uses. Both gates stayed green. A gate that calls a component directly proves the
+/// component works and says nothing about whether anything calls it.
+///
+/// So this one drives the LOOP and asserts each delta CHANGES the result.
+func denoiseWiringGate() throws {
+    let dir = "\(goldensBase)/dit_tiny_kf25"
+    let weights = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/weights.safetensors"))
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    let dit = DiT(weights: weights, config: tinyDiTConfig())
+    let v = io["video_latent"]!, a = io["audio_latent"]!
+    let vp = io["video_positions"]!, ap = io["audio_positions"]!
+    let vt = io["video_text"]!, at = io["audio_text"]!
+    let mask = io["keyframes_mask"]!
+    let sigmas: [Float] = [1.0, 0.5, 0.0]
+    var fails: [String] = []
+
+    func loop(mask m: MLXArray?, eta: Float) throws -> MLXArray {
+        try DenoiseLoop.run(
+            dit: dit, videoLatent0: v, audioLatent0: a, sigmas: sigmas,
+            videoText: vt, audioText: at, videoPositions: vp, audioPositions: ap,
+            keyframesMask: m, ancestralEta: eta, ancestralNoiseSeed: 7).video
+    }
+
+    let base = try loop(mask: nil, eta: 0)
+    let withMask = try loop(mask: mask, eta: 0)
+    let withEta = try loop(mask: nil, eta: 1.0)
+    eval(base, withMask, withEta)
+
+    let maskDelta = maxAbs(withMask, base)
+    let etaDelta = maxAbs(withEta, base)
+    print(String(format: "[denoise-wiring-gate] keyframesMask delta=%.5f   ancestralEta delta=%.5f",
+                 maskDelta, etaDelta))
+    if maskDelta == 0 {
+        fails.append("keyframesMask does not reach the DiT through DenoiseLoop.run — the 2.5 "
+                   + "keyframes embedding would be silently absent in production")
+    }
+    if etaDelta == 0 {
+        fails.append("ancestralEta does not change the trajectory — DenoiseLoop.run is still "
+                   + "taking the plain Euler branch")
+    }
+
+    // runConditioned must thread them too; it is the i2v entry point.
+    let condMask = try DenoiseLoop.runConditioned(
+        dit: dit, videoLatent0: v, audioLatent0: a, sigmas: sigmas,
+        videoText: vt, audioText: at, videoPositions: vp, audioPositions: ap,
+        keyframesMask: mask, ancestralEta: 0, ancestralNoiseSeed: 7).video
+    let condBase = try DenoiseLoop.runConditioned(
+        dit: dit, videoLatent0: v, audioLatent0: a, sigmas: sigmas,
+        videoText: vt, audioText: at, videoPositions: vp, audioPositions: ap,
+        keyframesMask: nil, ancestralEta: 0, ancestralNoiseSeed: 7).video
+    eval(condMask, condBase)
+    let condDelta = maxAbs(condMask, condBase)
+    print(String(format: "[denoise-wiring-gate] runConditioned mask delta=%.5f", condDelta))
+    if condDelta == 0 {
+        fails.append("keyframesMask does not reach the DiT through DenoiseLoop.runConditioned")
+    }
+
+    if fails.isEmpty {
+        print("[denoise-wiring-gate] PASS ✅  both 2.5 deltas reach the DiT through the loops")
+        fflush(stdout)
+    } else {
+        for f in fails { print("[denoise-wiring-gate] FAIL — \(f)") }
+        fflush(stdout); exit(1)
+    }
 }
 
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
@@ -1714,6 +1800,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--denoise-wiring-gate") {
+    try denoiseWiringGate()
 } else if args.contains("--ancestral-step-gate") {
     try ancestralStepGate()
 } else if args.contains("--dit-tiny-kf25-gate") {
