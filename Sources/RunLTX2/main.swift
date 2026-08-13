@@ -2033,6 +2033,12 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--quant-ab") {
+    let i = args.firstIndex(of: "--quant-ab")!
+    let w = args.count > i + 1 ? Int(args[i + 1]) ?? 448 : 448
+    let h = args.count > i + 2 ? Int(args[i + 2]) ?? 320 : 320
+    let f = args.count > i + 3 ? Int(args[i + 3]) ?? 25 : 25
+    try await quantAB(width: w, height: h, frames: f, seeds: [4242, 77])
 } else if args.contains("--e2e25") {
     let i = args.firstIndex(of: "--e2e25")!
     let w = args.count > i + 1 ? Int(args[i + 1]) ?? 448 : 448
