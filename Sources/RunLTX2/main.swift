@@ -162,6 +162,66 @@ func tinyDiTConfig() -> DiTConfig {
     return c
 }
 
+
+/// AB-L-0003 audit: the sigma feeding the SINUSOIDAL timestep embedding must stay fp32.
+///
+/// The Python oracle shipped a real bug here for months — the sampler built sigma as
+/// bf16 and the model cast it to fp32 again, which recovers nothing. Rounding sigma
+/// before the ×1000 multiply shifts the embedding argument, and the high-frequency
+/// dimensions of a sinusoidal embedding have period ~1, so those dims are scrambled
+/// (measured: worst-step velocity cosine 0.855 → 0.990 once fixed).
+///
+/// The Swift stack is structurally immune, and this gate pins the REASONS so a future
+/// edit cannot quietly remove them:
+///   1. the scalar path — `MLXArray([sigma])` from a Swift `Float` — is fp32,
+///   2. the per-token path — `denoiseMask * sigma` — is fp32, which depends on
+///      `MLXArray.zeros/ones` defaulting to `Float.self`,
+///   3. bf16 would MEASURABLY differ on the real distilled schedule.
+///
+/// ⚠️ (3) is swept over the ACTUAL sigma schedule rather than one hand-picked value.
+/// A first draft used sigma = 0.7 and read a delta of exactly ZERO — not because bf16
+/// is harmless there, but because bf16(0.7) = 0.69921875 and 699.21875 rounds BACK to
+/// 700.0 (bf16 spacing near 700 is 4). The two roundings cancel at that value. A gate
+/// probing a single point can therefore "prove" immunity it has not tested.
+func timestepDtypeGate() throws {
+    var fails: [String] = []
+
+    let mask = MLX.concatenated([MLXArray.zeros([1, 4, 1]), MLXArray.ones([1, 8, 1])], axis: 1)
+    if mask.dtype != .float32 { fails.append("denoise mask dtype is \(mask.dtype), expected .float32") }
+
+    var maxDelta: Float = 0
+    var worstSigma: Float = 0
+    for sigma in Positions.distilledSigmas where sigma > 0 {
+        let scalar = MLXArray([sigma])
+        if scalar.dtype != .float32 {
+            fails.append("scalar sigma dtype is \(scalar.dtype) at σ=\(sigma), expected .float32")
+        }
+        let perToken = (mask * sigma).squeezed(axis: -1)
+        if perToken.dtype != .float32 {
+            fails.append("per-token sigma dtype is \(perToken.dtype) at σ=\(sigma), expected .float32")
+        }
+        let fp32Arg = (scalar * 1000.0).asType(.float32).item(Float.self)
+        let bf16Arg = (scalar.asType(.bfloat16) * 1000.0).asType(.float32).item(Float.self)
+        let d = Swift.abs(fp32Arg - bf16Arg)
+        if d > maxDelta { maxDelta = d; worstSigma = sigma }
+    }
+
+    print(String(format: "[timestep-dtype-gate] scalar/perToken/mask all fp32 | worst bf16 drift σ=%.6f → arg off by %.3f",
+                 worstSigma, maxDelta))
+    if maxDelta == 0 {
+        fails.append("no sigma in the distilled schedule discriminates bf16 from fp32 — "
+                   + "this gate cannot detect a regression and must be re-designed")
+    }
+    if fails.isEmpty {
+        print("[timestep-dtype-gate] PASS ✅  sigma stays fp32 into the sinusoidal embedding")
+        fflush(stdout)
+    } else {
+        for f in fails { print("[timestep-dtype-gate] FAIL — \(f)") }
+        fflush(stdout)   // a thrown error kills the process before stdout drains
+        exit(1)
+    }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1402,6 +1462,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--timestep-dtype-gate") {
+    try timestepDtypeGate()
 } else if args.contains("--dit-tiny-gate") {
     try ditTinyGate()
 } else if args.contains("--dit-q8-gate") {
