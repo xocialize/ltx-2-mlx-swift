@@ -1983,6 +1983,12 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--e2e25") {
+    let i = args.firstIndex(of: "--e2e25")!
+    let w = args.count > i + 1 ? Int(args[i + 1]) ?? 448 : 448
+    let h = args.count > i + 2 ? Int(args[i + 2]) ?? 320 : 320
+    let f = args.count > i + 3 ? Int(args[i + 3]) ?? 9 : 9
+    try await e2e25(width: w, height: h, frames: f)
 } else if args.contains("--pipeline-25-gate") {
     try pipeline25Gate()
 } else if args.contains("--keyframe-slots-gate") {
