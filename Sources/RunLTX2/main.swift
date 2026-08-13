@@ -556,6 +556,62 @@ func denoiseWiringGate() throws {
     }
 }
 
+
+/// LTX-2.5 Gemma-4 49-state parity, per state, against the oracle.
+///
+/// The per-state breakdown localises WHICH of the three Gemma-3→Gemma-4 deltas broke:
+///   * a wrong embed-scale dtype moves state 00,
+///   * a wrong final norm moves ONLY state 48,
+///   * a wrong norm convention inside the stack moves everything from 01 on.
+/// Loads the 23.8 GB bf16 encoder, so this is a machine-with-headroom gate.
+func gemma4Gate() async throws {
+    let dir = "\(goldensBase)/gemma4"
+    let g = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/goldens.safetensors"))
+    let meta = try JSONSerialization.jsonObject(
+        with: Data(contentsOf: URL(fileURLWithPath: "\(dir)/meta.json"))) as! [String: Any]
+    let gemmaDir = ProcessInfo.processInfo.environment["LTX_GEMMA4_DIR"]
+        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1"
+    print("[gemma4-gate] encoder: \(gemmaDir)")
+
+    let encoder = try await Gemma4Encoder.load(directory: URL(fileURLWithPath: gemmaDir))
+    let tokenIds = g["token_ids"]!, mask = g["attention_mask"]!
+    let states = try encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
+    eval(states)
+
+    let nStates = meta["n_states"] as? Int ?? 49
+    guard states.count == nStates else {
+        print("[gemma4-gate] FAIL — got \(states.count) states, want \(nStates)")
+        fflush(stdout); exit(1)
+    }
+
+    var worstCos: Float = 1, worstIdx = 0, sumCos: Float = 0, worstMax: Float = 0
+    for i in 0 ..< states.count {
+        let exp = g[String(format: "gemma_hidden_%02d", i)]!
+        let c = cosine(states[i], exp), m = maxAbs(states[i], exp)
+        sumCos += c; worstMax = Swift.max(worstMax, m)
+        if c < worstCos { worstCos = c; worstIdx = i }
+        if i < 2 || i == states.count - 1 {
+            print(String(format: "[gemma4-gate] state %02d cosine=%.6f maxAbs=%.4f", i, c, m))
+        }
+    }
+    print(String(format: "[gemma4-gate] mean=%.6f  worst=%.6f (state %d)  maxAbs=%.4f",
+                 sumCos / Float(states.count), worstCos, worstIdx, worstMax))
+
+    // Discrimination: the final norm must actually do something, or a tap that skipped it
+    // would pass. The fixture reports |state48 - state47| ~3088, so this is a real check.
+    let finalNormDelta = maxAbs(states[states.count - 1], states[states.count - 2])
+    print(String(format: "[gemma4-gate] |state48 - state47| = %.2f (final norm applied)", finalNormDelta))
+
+    var ok = worstCos >= 0.999
+    if finalNormDelta < 1.0 {
+        print("[gemma4-gate] FAIL — states 47 and 48 are nearly identical; the final norm is "
+            + "not being applied, and this gate could not tell")
+        ok = false
+    }
+    if ok { print("[gemma4-gate] PASS ✅"); fflush(stdout) }
+    else { print("[gemma4-gate] FAIL ❌"); fflush(stdout); exit(1) }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1800,6 +1856,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--gemma4-gate") {
+    try await gemma4Gate()
 } else if args.contains("--denoise-wiring-gate") {
     try denoiseWiringGate()
 } else if args.contains("--ancestral-step-gate") {
