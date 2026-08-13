@@ -612,6 +612,96 @@ func gemma4Gate() async throws {
     else { print("[gemma4-gate] FAIL ❌"); fflush(stdout); exit(1) }
 }
 
+
+/// LTX-2.5 keyframe slots: structure, RoPE spans, and the seeded re-append.
+///
+/// Compared against the ORACLE's own numbers where they are exact integers or closed-form
+/// (token counts, mask marking, temporal spans, evenly-spaced positions), rather than a
+/// dumped golden — slots are integer/geometry work, so an exact check beats a tolerance.
+func keyframeSlotsGate() throws {
+    let F = 4, H = 4, W = 6, C = 128
+    let fps: Float = 24.0
+    let N = F * H * W
+    var fails: [String] = []
+
+    let latent = MLXRandom.normal([1, N, C])
+    let clean = MLXArray.zeros([1, N, C])
+    let dmask = MLXArray.ones([1, N, 1])
+    let pos = Positions.video(F: F, H: H, W: W, fps: fps)
+
+    let st = KeyframeSlots.append(
+        latent: latent, clean: clean, denoiseMask: dmask, positions: pos,
+        keyframesMask: nil, pixelFrameIndices: [48, 96], H: H, W: W, fps: fps,
+        sigma: 1.0, noiseSeed: 7)
+    eval(st.latent, st.keyframesMask, st.positions)
+
+    // 1. token counts
+    let want = N + 2 * H * W
+    if st.latent.dim(1) != want { fails.append("token count \(st.latent.dim(1)) != \(want)") }
+    if st.keyframesMask.dim(1) != st.latent.dim(1) {
+        fails.append("keyframesMask length desynced from the sequence")
+    }
+    // 2. slots are DENOISED and MARKED; base is not marked
+    let slotDenoise = st.denoiseMask[0..., N..., 0...].min().item(Float.self)
+    let slotMark = st.keyframesMask[0..., N..., 0...].min().item(Float.self)
+    let baseMark = st.keyframesMask[0..., ..<N, 0...].max().item(Float.self)
+    if slotDenoise != 1 { fails.append("slot denoiseMask \(slotDenoise) != 1 — slots must be denoised") }
+    if slotMark != 1 { fails.append("slot keyframesMask \(slotMark) != 1 — slots must be marked") }
+    if baseMark != 0 { fails.append("base tokens are marked (\(baseMark)); only slots should be") }
+    print(String(format: "[keyframe-slots-gate] tokens %d -> %d, slot denoise=%.0f mark=%.0f base mark=%.0f",
+                 N, st.latent.dim(1), slotDenoise, slotMark, baseMark))
+
+    // 3. RoPE spans: slot temporal coord must be exactly (t + 0.5) / fps, NOT an 8-frame span.
+    let slotT = st.positions[0, N..., 0].asArray(Float.self)
+    for (i, t) in [48, 96].enumerated() {
+        let expect = (Float(t) + 0.5) / fps
+        let got = slotT[i * H * W]
+        if abs(got - expect) > 1e-4 {
+            fails.append(String(format: "slot %d temporal %.6f != %.6f", i, got, expect))
+        }
+    }
+    let baseSpan = st.positions[0, ..<N, 0].asArray(Float.self)
+    let spanWidth = (baseSpan.max() ?? 0) - (baseSpan.min() ?? 0)
+    print(String(format: "[keyframe-slots-gate] slot t = %.5f / %.5f (want %.5f / %.5f); base spans %.4f",
+                 slotT[0], slotT[H * W], (48 + Float(0.5)) / fps, (96 + Float(0.5)) / fps, spanWidth))
+
+    // 4. seeded re-append: seed must SURVIVE at small sigma and VANISH at sigma 1.
+    let seed = MLXRandom.normal([1, C, 2, H, W])
+    func slotBlock(sigma: Float) -> MLXArray {
+        let s2 = KeyframeSlots.append(
+            latent: latent, clean: clean, denoiseMask: dmask, positions: pos,
+            keyframesMask: nil, pixelFrameIndices: [48, 96], H: H, W: W, fps: fps,
+            sigma: sigma, noiseSeed: 7, initialKeyframes: seed)
+        return s2.latent[0..., N..., 0...]
+    }
+    let seedTokens = seed.transposed(0, 2, 3, 4, 1).reshaped(1, 2 * H * W, C)
+    let cosLow = cosine(slotBlock(sigma: 0.05), seedTokens)
+    let cosHigh = cosine(slotBlock(sigma: 1.0), seedTokens)
+    print(String(format: "[keyframe-slots-gate] seed survival: cos@sigma0.05=%.4f  cos@sigma1.0=%.4f",
+                 cosLow, cosHigh))
+    if cosLow < 0.99 { fails.append("seed does not survive at sigma 0.05 (cos \(cosLow)) — stage-2 re-append would re-invent the slot") }
+    if abs(cosHigh) > 0.2 { fails.append("seed still present at sigma 1.0 (cos \(cosHigh)) — stage 1 must be pure noise") }
+
+    // 5. evenly-spaced positions must match the oracle's banker's rounding.
+    // Oracle-verified pairs (from gate_ltx25_slot_positions.py's 4482-case sweep).
+    let cases: [(Int, Int, [Int])] = [(1, 97, [48]), (3, 97, [24, 48, 72]), (2, 25, [8, 16])]
+    for (k, n, expect) in cases {
+        let got = KeyframeSlots.evenlySpacedPositions(k, numFrames: n)
+        if got != expect { fails.append("evenlySpaced(\(k), \(n)) = \(got) != \(expect)") }
+    }
+
+    // 6. extract must return ONE latent per slot, never a stacked clip.
+    let kfs = st.extract(st.latent, H: H, W: W)
+    if kfs.count != 2 { fails.append("extract returned \(kfs.count) latents, want 2") }
+    if let first = kfs.first, first.dim(2) != 1 {
+        fails.append("extracted keyframe has T=\(first.dim(2)); each must be a standalone one-frame latent")
+    }
+    print("[keyframe-slots-gate] extract -> \(kfs.count) x \(kfs.first.map { $0.shape } ?? [])")
+
+    if fails.isEmpty { print("[keyframe-slots-gate] PASS ✅"); fflush(stdout) }
+    else { for f in fails { print("[keyframe-slots-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1856,6 +1946,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--keyframe-slots-gate") {
+    try keyframeSlotsGate()
 } else if args.contains("--gemma4-gate") {
     try await gemma4Gate()
 } else if args.contains("--denoise-wiring-gate") {
