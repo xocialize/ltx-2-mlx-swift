@@ -850,6 +850,43 @@ func dfrLayoutGate() throws {
     }
     print("[dfr-layout-gate] stitch coverage   latents \(expected.first ?? -1)…\(expected.last ?? -1)  \(fails.count == n0 ? "PASS" : "FAIL")")
 
+    // --- round helpers: stitch, slot seeds, carry-forward merge ---
+    n0 = fails.count
+    // Fill each tile with its OWN global latent indices so a wrong prefix drop or tile order
+    // shows up as VALUES, not just a length.
+    var tileLatents: [MLXArray] = []
+    for r in rs {
+        let t = r.latentEndExclusive - r.latentStart
+        let idx = (MLXArray(0 ..< t) + r.latentStart).asType(.float32).reshaped(1, 1, t, 1, 1)
+        tileLatents.append(MLX.broadcast(idx, to: [1, 2, t, 3, 3]))
+    }
+    let stitched = try DFRLayout.stitchTileLatents(tileLatents, ranges: rs)
+    eval(stitched)
+    let seq = stitched[0, 0, 0..., 0, 0].asArray(Float.self).map { Int($0) }
+    if seq != expected { fails.append("stitch values \(seq) != \(expected)") }
+    print("[dfr-layout-gate] stitch values     T=\(stitched.dim(2)) \(fails.count == n0 ? "PASS" : "FAIL")")
+
+    // A tile whose T disagrees with its range must be REFUSED, not silently stitched.
+    n0 = fails.count
+    var bad = tileLatents
+    bad[1] = bad[1][0..., 0..., ..<(bad[1].dim(2) - 1), 0..., 0...]
+    do { _ = try DFRLayout.stitchTileLatents(bad, ranges: rs); fails.append("stitch accepted a wrong-T tile") }
+    catch {}
+    print("[dfr-layout-gate] stitch rejects bad T  \(fails.count == n0 ? "PASS" : "FAIL")")
+
+    // slot seeds: position -> nearest latent frame, and the merge orders + dedupes.
+    n0 = fails.count
+    let vid = MLX.broadcast((MLXArray(0 ..< 13)).asType(.float32).reshaped(1, 1, 13, 1, 1), to: [1, 2, 13, 3, 3])
+    let seeds = DFRLayout.slotInitialsFromVideo(vid, positions: [32, 64, 96])
+    eval(seeds)
+    let seedIdx = [0, 1, 2].map { Int(seeds[0, 0, $0, 0, 0].item(Float.self)) }
+    if seedIdx != [4, 8, 12] { fails.append("slot seeds picked latents \(seedIdx), want [4, 8, 12]") }
+    let merged = try DFRLayout.mergeCarryForwardKeyframes(
+        anchorPositions: [64, 32], anchorLatents: seeds[0..., 0..., ..<2, 0..., 0...],
+        slotPositions: [96], slotLatents: seeds[0..., 0..., 2..., 0..., 0...])
+    if merged.positions != [32, 64, 96] { fails.append("merge positions \(merged.positions) != [32, 64, 96]") }
+    print("[dfr-layout-gate] slot seeds+merge   \(seedIdx) / \(merged.positions)  \(fails.count == n0 ? "PASS" : "FAIL")")
+
     if fails.isEmpty { print("[dfr-layout-gate] PASS ✅  bit-identical to the Python port"); fflush(stdout) }
     else { for f in fails.prefix(8) { print("[dfr-layout-gate] FAIL — \(f)") }; fflush(stdout); exit(1) }
 }

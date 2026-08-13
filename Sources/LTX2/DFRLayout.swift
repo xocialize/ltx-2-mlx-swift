@@ -13,6 +13,7 @@
 //     drops its lead-in PLUS one.
 
 import Foundation
+import MLX
 
 public enum DFRLayout {
     public static let temporalScale = 8
@@ -123,5 +124,74 @@ public enum DFRLayout {
             ownLo += count
         }
         return tiles
+    }
+
+    // MARK: - Round helpers (what the temporal rounds assemble)
+
+    /// Concatenate tile video latents along T, each contributing `latent[dropLatentPrefix...]`.
+    ///
+    /// Every tile is validated against its own range first: a tile whose T does not match
+    /// `latentEndExclusive - latentStart` means the caller sliced the canvas with different
+    /// geometry than it tiled with, which would otherwise stitch silently into a wrong-length
+    /// clip.
+    public static func stitchTileLatents(_ tileLatents: [MLXArray], ranges: [TileRange]) throws -> MLXArray {
+        guard tileLatents.count == ranges.count, !tileLatents.isEmpty else {
+            throw LayoutError.badSeams("expected \(ranges.count) tile latents, got \(tileLatents.count)")
+        }
+        var pieces: [MLXArray] = []
+        for (latent, tile) in zip(tileLatents, ranges) {
+            guard latent.ndim == 5 else {
+                throw LayoutError.badSeams("expected tile latent (B,C,T,H,W), got \(latent.shape)")
+            }
+            let expectedT = tile.latentEndExclusive - tile.latentStart
+            guard latent.dim(2) == expectedT else {
+                throw LayoutError.badSeams("tile T=\(latent.dim(2)) != expected \(expectedT) for "
+                    + "[\(tile.latentStart), \(tile.latentEndExclusive))")
+            }
+            guard tile.dropLatentPrefix >= 0, tile.dropLatentPrefix < latent.dim(2) else {
+                throw LayoutError.badSeams("dropLatentPrefix \(tile.dropLatentPrefix) invalid for T=\(latent.dim(2))")
+            }
+            pieces.append(latent[0..., 0..., tile.dropLatentPrefix..., 0..., 0...])
+        }
+        return concatenated(pieces, axis: 2)
+    }
+
+    /// Stack the nearest video latent frames as `(B, C, K, H, W)` slot seeds.
+    ///
+    /// `round(position / temporalScale)` never hits a half-way case: both segment candidates
+    /// (24, 32) are multiples of 8, so every slot position divides exactly.
+    public static func slotInitialsFromVideo(_ videoLatent: MLXArray, positions: [Int]) -> MLXArray {
+        let maxIdx = videoLatent.dim(2) - 1
+        let frames = positions.map { pos -> MLXArray in
+            let idx = Swift.min(Swift.max(Int((Double(pos) / Double(temporalScale)).rounded()), 0), maxIdx)
+            return videoLatent[0..., 0..., idx ..< (idx + 1), 0..., 0...]
+        }
+        return concatenated(frames, axis: 2)
+    }
+
+    /// Next round's anchor bag: carried keyframe stills plus this round's denoised slots.
+    ///
+    /// ⚠️ Positions must ALREADY be on the current round's pixel grid; callers remap (x2) for
+    /// the next round. Later entries win on a position collision, matching the oracle's dict
+    /// assignment — the lead-in makes seam keyframes appear in two adjacent tiles.
+    public static func mergeCarryForwardKeyframes(
+        anchorPositions: [Int], anchorLatents: MLXArray?,
+        slotPositions: [Int], slotLatents: MLXArray?
+    ) throws -> (positions: [Int], latents: MLXArray) {
+        var byPosition: [Int: MLXArray] = [:]
+        for (positions, latents, label) in [(anchorPositions, anchorLatents, "anchor"),
+                                            (slotPositions, slotLatents, "slot")] {
+            guard !positions.isEmpty else { continue }
+            guard let latents else { throw LayoutError.badSeams("missing \(label) keyframe latents") }
+            guard latents.dim(2) == positions.count else {
+                throw LayoutError.badSeams("\(label) latents K=\(latents.dim(2)) != \(positions.count) positions")
+            }
+            for (i, pos) in positions.enumerated() {
+                byPosition[pos] = latents[0..., 0..., i ..< (i + 1), 0..., 0...]
+            }
+        }
+        guard !byPosition.isEmpty else { throw LayoutError.badSeams("carry-forward bag is empty") }
+        let ordered = byPosition.keys.sorted()
+        return (ordered, concatenated(ordered.map { byPosition[$0]! }, axis: 2))
     }
 }
