@@ -41,7 +41,15 @@ let package = Package(
         //      .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "<tag>")
         //    once a release tag containing #387 (`6608a35`) exists. Carries no local
         //    patches — ../mlx-swift-lm is checked out at plain upstream `main`.
-        .package(path: "../mlx-swift-lm"),
+        // ⚠️ Traits disabled deliberately. mlx-swift-lm's default-on
+        // `FoundationModelsIntegration` trait builds MLXFoundationModels, the adapter for
+        // APPLE's FoundationModels framework — which LTX does not use (we consume only
+        // MLXLLM / MLXLMCommon / MLXHuggingFace, and no source here imports it).
+        // Apple changed that framework's API in the macOS 27 SDK (`capabilities:` label
+        // removed; `ConvertibleToGeneratedContent` replaced the old dictionary type) and
+        // upstream has not caught up, so leaving the trait on fails the build of an
+        // adapter we never link. Upstream anticipated exactly this and made it a trait.
+        .package(path: "../mlx-swift-lm", traits: []),
         // mlx-swift-lm 3.x decoupled the HF stack — the consumer provides these for
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
