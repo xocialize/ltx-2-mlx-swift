@@ -1,0 +1,127 @@
+#!/usr/bin/env python
+"""LTX-2.5 DiT delta fixture: tiny LTXModel with the KEYFRAMES embedding active.
+
+Same shape as dump_dit_tiny_goldens.py, but with ``use_keyframes_abs_pos_embedding``
+ON and ``ff_bias`` OFF (the two config-driven 2.5 deltas), plus a keyframes_mask that
+marks a NON-TRIVIAL subset of tokens. A mask of all-ones or all-zeros would pass even
+if Swift applied the embedding to the wrong tokens, so the fixture marks latent frame 0
+AND an interior slot-like block, and the gate checks the mask is genuinely mixed.
+
+Builds a tiny LTXModel (2 layers, small dims), random-initialised with a fixed
+seed, runs ONE forward (video+audio latents + sigma + text embeds + positions →
+velocities), and dumps the model weights + the inputs + the outputs so the Swift
+port can inject identical weights/inputs and compare its velocity output.
+
+Validates the DiT forward MATH without the 35GB transformer download. Full-scale
+parity (real weights) follows once the transformer lands.
+
+Run in the oracle uv env:
+    cd ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx && \
+        uv run python ~/Development/mlxengine-video/LTX_DEV/ltx-2-mlx-swift/parity/dump_dit_tiny_goldens.py
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import mlx.core as mx
+from mlx.utils import tree_flatten
+
+from ltx_core_mlx.model.transformer.model import LTXModel, LTXModelConfig
+
+OUT_DIR = Path(__file__).resolve().parent / "goldens" / "dit_tiny_kf25"
+
+# Tiny config — small enough to debug fast, exercises every code path.
+CFG = LTXModelConfig(
+    num_layers=2,
+    video_dim=64, video_num_heads=2, video_head_dim=32,
+    audio_dim=32, audio_num_heads=2, audio_head_dim=16,
+    av_cross_num_heads=2, av_cross_head_dim=16,
+    video_patch_channels=8, audio_patch_channels=8,
+    ff_mult=2.0,
+    ff_bias=False,                          # 2.5: video FF loses its bias
+    use_keyframes_abs_pos_embedding=True,   # 2.5: learned keyframes marker
+    timestep_embedding_dim=32,
+    timestep_scale_multiplier=1000.0,
+    av_ca_timestep_scale_multiplier=1000.0,  # checkpoint value (issue #37)
+    rope_theta=10000.0, rope_type="split",
+    positional_embedding_max_pos=(20, 2048, 2048),
+    audio_positional_embedding_max_pos=(20,),
+    norm_eps=1e-6,
+)
+
+B, Nv, Na, Nt = 1, 12, 6, 8
+
+
+def main() -> None:
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    mx.random.seed(0)
+
+    model = LTXModel(CFG)
+    mx.eval(model.parameters())
+
+    # Fixed seeded inputs.
+    mx.random.seed(1)
+    # fp32 inputs; LTXModel.__call__ casts per LTX2_DIT_FP32 (bf16 by default).
+    video_latent = mx.random.normal((B, Nv, CFG.video_patch_channels)).astype(mx.float32)
+    audio_latent = mx.random.normal((B, Na, CFG.audio_patch_channels)).astype(mx.float32)
+    sigma = mx.array([0.7]).astype(mx.float32)
+    video_text = mx.random.normal((B, Nt, CFG.video_dim)).astype(mx.float32)
+    audio_text = mx.random.normal((B, Nt, CFG.audio_dim)).astype(mx.float32)
+    # Integer positions (the same values are loaded by Swift — any valid grid works).
+    vp = mx.arange(Nv).astype(mx.int32)
+    video_positions = mx.stack([vp % 4, (vp // 4) % 2, vp % 3], axis=-1)[None]  # (B,Nv,3)
+    audio_positions = mx.arange(Na).astype(mx.int32)[None, :, None]              # (B,Na,1)
+
+    # ⚠️ The model ZERO-INITIALISES keyframes_abs_pos_embedding, so a fixture built
+    # straight from the constructor adds zero and the whole delta is a no-op — a gate
+    # against it passes even on a port that ignores keyframes_mask entirely. (That is
+    # exactly what the Swift gate's discrimination check caught.) The real checkpoint
+    # carries a TRAINED value, so seed a non-trivial one here.
+    mx.random.seed(2)
+    model.keyframes_abs_pos_embedding = mx.random.normal((1, CFG.video_dim)) * 0.5
+    mx.eval(model.keyframes_abs_pos_embedding)
+
+    # Mark a mixed subset: tokens 0-3 (frame 0) and 8-9 (an interior slot-like block).
+    kf = mx.zeros((B, Nv, 1))
+    kf[:, 0:4, :] = 1.0
+    kf[:, 8:10, :] = 1.0
+    keyframes_mask = kf
+
+    video_v, audio_v = model(
+        video_latent=video_latent,
+        audio_latent=audio_latent,
+        timestep=sigma,
+        video_text_embeds=video_text,
+        audio_text_embeds=audio_text,
+        video_positions=video_positions,
+        audio_positions=audio_positions,
+        keyframes_mask=keyframes_mask,
+    )
+    mx.eval(video_v, audio_v)
+
+    # Save weights (flattened param tree → keys match the functional Swift port).
+    weights = {k: v for k, v in tree_flatten(model.parameters())}
+    mx.save_safetensors(str(OUT_DIR / "weights.safetensors"), {k: v.astype(mx.float32) for k, v in weights.items()})
+
+    io = {
+        "video_latent": video_latent, "audio_latent": audio_latent, "sigma": sigma,
+        "video_text": video_text, "audio_text": audio_text,
+        "video_positions": video_positions.astype(mx.int32),
+        "audio_positions": audio_positions.astype(mx.int32),
+        "keyframes_mask": keyframes_mask,
+        "video_v": video_v, "audio_v": audio_v,
+    }
+    mx.save_safetensors(str(OUT_DIR / "io.safetensors"), {k: v.astype(mx.float32) for k, v in io.items()})
+
+    print("wrote", OUT_DIR)
+    print("num weight tensors:", len(weights))
+    print("video_v", video_v.shape, "mean=%.5f std=%.5f" % (float(video_v.mean()), float(video_v.std())))
+    print("audio_v", audio_v.shape, "mean=%.5f std=%.5f" % (float(audio_v.mean()), float(audio_v.std())))
+    # Print a few weight keys so the Swift port can match them.
+    for k in sorted(weights)[:6]:
+        print("  key:", k, list(weights[k].shape))
+
+
+if __name__ == "__main__":
+    main()

@@ -142,12 +142,24 @@ public struct DiT {
         videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray,
-        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil
+        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
+        keyframesMask: MLXArray? = nil
     ) -> (video: MLXArray, audio: MLXArray) {
         let vd = cfg.videoDim, ad = cfg.audioDim, tED = cfg.timestepEmbeddingDim
 
         var videoHidden = dense(videoLatent.asType(dtype), "patchify_proj")
         var audioHidden = dense(audioLatent.asType(dtype), "audio_patchify_proj")
+
+        // LTX-2.5: learned keyframes ABSOLUTE-position embedding, added post-patchify to the
+        // tokens `keyframesMask` marks. Marked tokens are generated keyframe SLOTS (and, on
+        // 2.5, the target's first latent frame). Presence is driven by the CHECKPOINT — 2.3
+        // has no such weight, so this is inert there and the 2.3 path stays byte-identical.
+        // ⚠️ The mask is thresholded, not used as a weight: upstream adds the full embedding
+        // to any token with mask > 0, so a soft mask must not scale it.
+        if let kfEmb = w["keyframes_abs_pos_embedding"], let mask = keyframesMask {
+            let marked = MLX.greater(mask, MLXArray(Float(0))).asType(videoHidden.dtype)
+            videoHidden = videoHidden + marked * kfEmb.asType(videoHidden.dtype)
+        }
 
         let t = sigma.asType(.float32)
         let tEmb = timestepEmbedding(t * cfg.timestepScaleMultiplier, tED)

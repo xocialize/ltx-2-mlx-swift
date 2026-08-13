@@ -222,6 +222,65 @@ func timestepDtypeGate() throws {
     }
 }
 
+
+/// LTX-2.5 DiT delta parity: the learned KEYFRAMES absolute-position embedding.
+///
+/// Same tiny-model shape as `ditTinyGate`, but the fixture has
+/// `use_keyframes_abs_pos_embedding=True` and `ff_bias=False` — the two config-driven
+/// 2.5 deltas. `ff_bias=False` needs NO Swift change: `dense()` adds a bias only when
+/// the key exists, so a 2.5 checkpoint simply has none. This gate proves that too, by
+/// running weights that lack the video FF biases.
+func ditTinyKF25Gate() throws {
+    let dir = "\(goldensBase)/dit_tiny_kf25"
+    let weights = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/weights.safetensors"))
+    let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
+    guard weights["keyframes_abs_pos_embedding"] != nil else {
+        print("[dit-tiny-kf25-gate] FAIL — fixture has no keyframes_abs_pos_embedding"); fflush(stdout); exit(1)
+    }
+    let mask = io["keyframes_mask"]!
+    let marked = mask.sum().item(Float.self), total = Float(mask.dim(1))
+    guard marked > 0, marked < total else {
+        print("[dit-tiny-kf25-gate] FAIL — mask marks \(marked)/\(total) tokens; an all-on or "
+            + "all-off mask would pass even if the embedding hit the wrong tokens")
+        fflush(stdout); exit(1)
+    }
+    print("[dit-tiny-kf25-gate] \(weights.count) weight tensors, mask marks \(Int(marked))/\(Int(total)) tokens")
+
+    let dit = DiT(weights: weights, config: tinyDiTConfig())
+    let (video, audio) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"]!, audioText: io["audio_text"]!,
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
+        videoTimesteps: nil, audioTimesteps: nil, keyframesMask: mask)
+    let vCos = cosine(video, io["video_v"]!), vMax = maxAbs(video, io["video_v"]!)
+    let aCos = cosine(audio, io["audio_v"]!), aMax = maxAbs(audio, io["audio_v"]!)
+    print(String(format: "[dit-tiny-kf25-gate] VIDEO cosine=%.6f maxAbs=%.5f", vCos, vMax))
+    print(String(format: "[dit-tiny-kf25-gate] AUDIO cosine=%.6f maxAbs=%.5f", aCos, aMax))
+
+    // Discrimination: WITHOUT the mask the embedding must not be applied, so the video
+    // output must MOVE. If it did not, this gate would pass on a port that ignores the
+    // mask entirely — the exact failure it exists to catch.
+    let (videoNoKF, _) = dit(
+        videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!, sigma: io["sigma"]!,
+        videoText: io["video_text"]!, audioText: io["audio_text"]!,
+        videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
+        videoTimesteps: nil, audioTimesteps: nil, keyframesMask: nil)
+    let drift = maxAbs(videoNoKF, io["video_v"]!)
+    print(String(format: "[dit-tiny-kf25-gate] mask-off drift vs golden=%.5f (must be >> 0)", drift))
+
+    var ok = vCos >= 0.9999 && aCos >= 0.9999
+    if drift <= vMax {
+        print("[dit-tiny-kf25-gate] FAIL — dropping the mask changes the output by \(drift), no more "
+            + "than the parity error \(vMax); this gate cannot detect a port that ignores the mask")
+        ok = false
+    }
+    if ok {
+        print("[dit-tiny-kf25-gate] PASS ✅"); fflush(stdout)
+    } else {
+        print("[dit-tiny-kf25-gate] FAIL ❌"); fflush(stdout); exit(1)
+    }
+}
+
 /// Small-scale DiT parity: tiny seeded LTXModel forward vs oracle goldens.
 func ditTinyGate() throws {
     let dir = "\(goldensBase)/dit_tiny"
@@ -1462,6 +1521,8 @@ if args.contains("--connector-gate") {
     try await gemmaTextGenGate(gemmaDir: positional.first ?? defaultGemma)
 } else if args.contains("--text-encode-gate") {
     try await textEncodeGate(goldensPath: defaultGoldens, gemmaDir: defaultGemma, connectorPath: defaultConnector)
+} else if args.contains("--dit-tiny-kf25-gate") {
+    try ditTinyKF25Gate()
 } else if args.contains("--timestep-dtype-gate") {
     try timestepDtypeGate()
 } else if args.contains("--dit-tiny-gate") {

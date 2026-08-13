@@ -33,13 +33,15 @@ public enum DenoiseLoop {
     static func x0(
         _ dit: any LTXDenoiser, videoLatent: MLXArray, audioLatent: MLXArray, sigma: Float,
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray,
-        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil
+        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
+        keyframesMask: MLXArray? = nil
     ) -> (MLXArray, MLXArray) {
         let (vv, av) = dit(
             videoLatent: videoLatent, audioLatent: audioLatent, sigma: MLXArray([sigma]),
             videoText: videoText, audioText: audioText,
             videoPositions: videoPositions, audioPositions: audioPositions,
-            videoTimesteps: videoTimesteps, audioTimesteps: audioTimesteps)
+            videoTimesteps: videoTimesteps, audioTimesteps: audioTimesteps,
+            keyframesMask: keyframesMask)
         let vSigma = videoTimesteps.map { $0.asType(.float32).expandedDimensions(axis: -1) }  // (B,N,1)
         let aSigma = audioTimesteps.map { $0.asType(.float32).expandedDimensions(axis: -1) }
         let vx0 = videoLatent.asType(.float32) - (vSigma ?? MLXArray(sigma)) * vv.asType(.float32)

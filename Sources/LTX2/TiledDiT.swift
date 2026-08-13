@@ -26,7 +26,8 @@ public protocol LTXDenoiser {
         videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray,
-        videoTimesteps: MLXArray?, audioTimesteps: MLXArray?
+        videoTimesteps: MLXArray?, audioTimesteps: MLXArray?,
+        keyframesMask: MLXArray?
     ) -> (video: MLXArray, audio: MLXArray)
 }
 
@@ -45,7 +46,8 @@ public struct TiledDiT: LTXDenoiser {
         videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray,
-        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil
+        videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
+        keyframesMask: MLXArray? = nil
     ) -> (video: MLXArray, audio: MLXArray) {
         let B = videoLatent.dim(0), D = videoLatent.dim(2)
         var videoOut = MLXArray.zeros([B, videoLatent.dim(1), D]).asType(videoLatent.dtype)
@@ -67,12 +69,18 @@ public struct TiledDiT: LTXDenoiser {
             let tTimesteps = videoTimesteps.map { ts in
                 tiler.sliceTokens(ts.expandedDimensions(axis: -1), tile: tile).squeezed(axis: -1)
             }
+            // The keyframes mask is per-VIDEO-TOKEN, so it must be sliced with the tile like
+            // the latent and positions are. Forwarding the full-length mask would mark the
+            // wrong tokens in every tile but the first — silently, since the shapes still
+            // broadcast against a smaller tile only when the mask happens to be length 1.
+            let tKeyframes = keyframesMask.map { tiler.sliceTokens($0, tile: tile) }
 
             let (vOut, aOut) = inner.callAsFunction(
                 videoLatent: tLatent, audioLatent: audioLatent, sigma: sigma,
                 videoText: videoText, audioText: audioText,
                 videoPositions: tPositions, audioPositions: audioPositions,
-                videoTimesteps: tTimesteps, audioTimesteps: audioTimesteps)
+                videoTimesteps: tTimesteps, audioTimesteps: audioTimesteps,
+                keyframesMask: tKeyframes)
 
             videoOut = tiler.blend(vOut, tile: tile, into: videoOut)
             audioParts.append(aOut)
