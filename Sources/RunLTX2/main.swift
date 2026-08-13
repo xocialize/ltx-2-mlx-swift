@@ -573,10 +573,15 @@ func gemma4Gate() async throws {
         ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1"
     print("[gemma4-gate] encoder: \(gemmaDir)")
 
+    // Encode peak = load the encoder + one 49-state forward. Reset here so the goldens
+    // loaded above are not billed to the encoder; they are ~600 MB and would inflate it.
+    MLX.GPU.resetPeakMemory()
     let encoder = try await Gemma4Encoder.load(directory: URL(fileURLWithPath: gemmaDir))
     let tokenIds = g["token_ids"]!, mask = g["attention_mask"]!
     let states = try encoder.allHiddenStates(tokenIds: tokenIds, attentionMask: mask)
     eval(states)
+    let encodePeakGB = Double(MLX.GPU.peakMemory) / 1e9
+    let residentGB = Double(MLX.GPU.activeMemory) / 1e9
 
     let nStates = meta["n_states"] as? Int ?? 49
     guard states.count == nStates else {
@@ -584,18 +589,29 @@ func gemma4Gate() async throws {
         fflush(stdout); exit(1)
     }
 
+    // EVERY state is printed, not a sample. This encoder feeds all 49 into the connector,
+    // so the failure mode that matters is quantization error COMPOUNDING with depth —
+    // a monotone decay toward state 48, which a mean hides completely.
     var worstCos: Float = 1, worstIdx = 0, sumCos: Float = 0, worstMax: Float = 0
+    var perState: [Float] = []
     for i in 0 ..< states.count {
         let exp = g[String(format: "gemma_hidden_%02d", i)]!
         let c = cosine(states[i], exp), m = maxAbs(states[i], exp)
-        sumCos += c; worstMax = Swift.max(worstMax, m)
+        sumCos += c; worstMax = Swift.max(worstMax, m); perState.append(c)
         if c < worstCos { worstCos = c; worstIdx = i }
-        if i < 2 || i == states.count - 1 {
-            print(String(format: "[gemma4-gate] state %02d cosine=%.6f maxAbs=%.4f", i, c, m))
-        }
+        print(String(format: "[gemma4-gate] state %02d cosine=%.6f maxAbs=%.4f", i, c, m))
     }
     print(String(format: "[gemma4-gate] mean=%.6f  worst=%.6f (state %d)  maxAbs=%.4f",
                  sumCos / Float(states.count), worstCos, worstIdx, worstMax))
+
+    // Depth trend: shallow-third vs deep-third mean. A quantization scheme whose error
+    // compounds through the residual stream shows here even when the mean still looks fine.
+    let third = perState.count / 3
+    let shallow = perState.prefix(third).reduce(0, +) / Float(third)
+    let deep = perState.suffix(third).reduce(0, +) / Float(third)
+    print(String(format: "[gemma4-gate] depth trend: states 00-%02d mean=%.6f  vs  %02d-%02d mean=%.6f  (delta %+.6f)",
+                 third - 1, shallow, perState.count - third, perState.count - 1, deep, deep - shallow))
+    print(String(format: "[gemma4-gate] encode peak %.2f GB  resident %.2f GB", encodePeakGB, residentGB))
 
     // Discrimination: the final norm must actually do something, or a tap that skipped it
     // would pass. The fixture reports |state48 - state47| ~3088, so this is a real check.

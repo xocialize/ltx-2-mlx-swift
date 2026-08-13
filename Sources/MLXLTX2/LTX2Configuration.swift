@@ -33,10 +33,24 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     public var vaeChunkFrames: Int {
         switch self { case .compact24: 4; case .balanced32: 6; default: 8 }
     }
-    /// Low tiers evict the DiT after the last denoise step so the decode stage never carries it
-    /// (T3c — decode-with-DiT-resident was the residual low-tier peak). Costs a DiT reload on the
-    /// next request (mmap re-fault; kernels stay process-cached), accepted on these tiers.
-    public var evictDiTBeforeDecode: Bool { self == .compact24 || self == .balanced32 }
+    /// Evict the DiT around the stages that do not need it — ON FOR EVERY TIER as of the
+    /// LTX-2.5 measurement below.
+    ///
+    /// Originally low-tier only (T3c: decode-with-DiT-resident was the residual low-tier peak).
+    /// LTX-2.5 widened the case decisively, because its text encoder is a bf16 12B rather than
+    /// 2.3's 4-bit one, so the PRE-ENCODE drop now dominates: measured on one binary,
+    /// ABAB-alternated at 448×320×9 (AB-R-0030),
+    ///
+    ///     off: peak 62.40 GB   (DiT floor 37.98 + 24.42 encoder co-resident)
+    ///     on:  peak 40.66 GB   (DiT floor 37.98 + 2.68 denoise activation)
+    ///     → −21.74 GB, −34.8%, output BIT-IDENTICAL (mean −0.1274, std 0.4222 both arms)
+    ///
+    /// Wall-clock was NOISE between arms (13.8–15.8 s, overlapping), so the reload cost this
+    /// pays for — mmap re-fault, kernels stay process-cached — does not show above run-to-run
+    /// variance at this size. A third of peak memory for no measurable time is worth taking on
+    /// every tier, and headroom is what absorbs pressure from whatever else the machine is
+    /// doing. `LTX_EVICT_DIT=0` still forces it off for an A/B.
+    public var evictDiTBeforeDecode: Bool { true }
     /// Runtime-LoRA factor packing (BRIDGE-LTX-012): on the 24/32 GB tiers the rank-256 i2v
     /// adapter (4.93 GB bf16) rides the DiT through the denoise peak — measured 18.86 GB on the
     /// 24 GB target vs the 16.8 budget. int8 group-64 factors halve that residency (≈16.4 GB,
