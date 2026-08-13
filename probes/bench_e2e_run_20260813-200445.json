@@ -1,0 +1,51 @@
+{
+  "blockRecords" : [
+    {
+      "arm" : "ctl",
+      "block" : 0,
+      "loadSeconds" : 1.3627150058746338,
+      "postDropFloorGB" : 2.875901584,
+      "prewarmSeconds" : 4.283673048019409
+    }
+  ],
+  "blocks" : 1,
+  "cooldownS" : 45,
+  "geometry" : "448x320x9f fps=24 two-stage",
+  "git" : "47a99ac+dirty",
+  "host" : "Mac17,7",
+  "label" : "run",
+  "memGB" : 137,
+  "os" : "Version 27.0 (Build 26A5406e)",
+  "prompt" : "a cat playing piano",
+  "runs" : [
+    {
+      "arm" : "ctl",
+      "block" : 0,
+      "mlxActiveGB" : 0.015619432,
+      "mlxCacheGB" : 0.025732096,
+      "outputMean" : -0.25540963,
+      "outputStd" : 0.46904683,
+      "peakPhysGB" : 44.01918432,
+      "run" : 0,
+      "thermalAfter" : "nominal",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 13.845469951629639
+    },
+    {
+      "arm" : "ctl",
+      "block" : 0,
+      "mlxActiveGB" : 0.015624864,
+      "mlxCacheGB" : 0.025732096,
+      "outputMean" : -0.25540963,
+      "outputStd" : 0.46904683,
+      "peakPhysGB" : 43.964347192,
+      "run" : 1,
+      "thermalAfter" : "nominal",
+      "thermalBefore" : "nominal",
+      "wallSeconds" : 13.670683026313782
+    }
+  ],
+  "runsPerBlock" : 1,
+  "seed" : 42,
+  "stamp" : "20260813-200445"
+}

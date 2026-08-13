@@ -8,21 +8,25 @@ import Foundation
 import LTX2
 import MLX
 
+/// print + flush. Redirected stdout is block-buffered, so an abnormal exit would otherwise
+/// discard every diagnostic printed before it — the failure then looks like a broken build.
+private func say(_ m: String) { print(m); fflush(stdout) }
+
 func e2e25(width: Int, height: Int, frames: Int) async throws {
     let base = ProcessInfo.processInfo.environment["LTX25_DIR"]
         ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx"
     let ltxDir = URL(fileURLWithPath: base)
     guard FileManager.default.fileExists(atPath: base) else {
-        print("[e2e25] model dir not present: \(base)"); exit(2)
+        say("[e2e25] model dir not present: \(base)"); exit(2)
     }
 
     // The whole point: this must resolve as 2.5 from the checkpoint, or the run silently
     // exercises the 2.3 path and proves nothing about the delta.
     let is25 = LTX2Pipeline.isLTX25(ltxDir: ltxDir)
-    print("[e2e25] dir=\(base)")
-    print("[e2e25] isLTX25=\(is25) (gemma4-12b-ltx-v1 present)")
+    say("[e2e25] dir=\(base)")
+    say("[e2e25] isLTX25=\(is25) (gemma4-12b-ltx-v1 present)")
     guard is25 else {
-        print("[e2e25] FAIL — 2.5 not detected; the run would silently take the 2.3 path")
+        say("[e2e25] FAIL — 2.5 not detected; the run would silently take the 2.3 path")
         fflush(stdout); exit(1)
     }
 
@@ -41,6 +45,9 @@ func e2e25(width: Int, height: Int, frames: Int) async throws {
     let pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: g4, transformerPath: nil)
 
     let t0 = Date()
+    // Resident floor BEFORE the run, read from activeMemory — note resetPeakMemory() ZEROES
+    // the counter rather than seeding it with current usage, so peakMemory here reads 0.00.
+    let floorGB = Double(MLX.GPU.activeMemory) / 1e9
     MLX.GPU.resetPeakMemory()
     let out = try await pipeline.t2vTwoStage(
         prompt: "A lone lighthouse on a rocky headland during a storm, waves exploding "
@@ -55,8 +62,13 @@ func e2e25(width: Int, height: Int, frames: Int) async throws {
     let mean = px.asType(.float32).mean().item(Float.self)
     let f32 = px.asType(.float32)
     let std = MLX.sqrt(MLX.mean(MLX.square(f32 - MLX.mean(f32)))).item(Float.self)
-    print(String(format: "[e2e25] %@ in %.1fs  peak %.2f GB", "\(px.shape)" as NSString, secs, peak))
-    print(String(format: "[e2e25] pixels finite=%@ mean=%.4f std=%.4f", finite ? "yes" : "NO", mean, std))
+    // ⚠️ NEVER use %s or %@ with a Swift String in String(format:) — it arrives as a bridged
+    // object pointer and CFString runs strlen on it, segfaulting. That mistake cost this
+    // project a phantom "2.5 eviction bug": the crash fired AFTER the video was generated,
+    // and an attribution table then compared a scaffolded binary against a clean-HEAD
+    // baseline, blaming the env var. Interpolate instead.
+    say("[e2e25] \(px.shape) in \(String(format: "%.1f", secs))s  floor \(String(format: "%.2f", floorGB)) GB  peak \(String(format: "%.2f", peak)) GB")
+    say("[e2e25] pixels finite=\(finite ? "yes" : "NO") mean=\(String(format: "%.4f", mean)) std=\(String(format: "%.4f", std))")
 
     var fails: [String] = []
     if !finite { fails.append("output contains NaN/Inf") }
@@ -65,7 +77,7 @@ func e2e25(width: Int, height: Int, frames: Int) async throws {
 
     if let a = out.audio {
         eval(a)
-        print("[e2e25] audio \(a.shape) finite=\(MLX.all(MLX.isFinite(a)).item(Bool.self))")
+        say("[e2e25] audio \(a.shape) finite=\(MLX.all(MLX.isFinite(a)).item(Bool.self))")
     }
     if fails.isEmpty { print("[e2e25] PASS ✅  2.5 generates end to end through LTX2Pipeline"); fflush(stdout) }
     else { for f in fails { print("[e2e25] FAIL — \(f)") }; fflush(stdout); exit(1) }
