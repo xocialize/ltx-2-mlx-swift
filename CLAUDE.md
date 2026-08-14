@@ -3,6 +3,35 @@
 Package-level navigation. **Methodology, quirks, license, and the determinism doctrine are
 in the parent [`../CLAUDE.md`](../CLAUDE.md)** (auto-loads) — don't duplicate them here.
 
+
+## 🔑 LTX-2.5 IS PRIMARY (2026-08-13)
+
+Default to 2.5. The Swift port is at FULL PARITY with the oracle — DiT keyframes embedding,
+ancestral-Euler stage 1, Gemma-4 encoder, keyframe slots, DFR layout + pipeline with temporal
+rounds — and generates end to end (`RunLTX2 --e2e25`, `--dfr25`). Gate board below.
+
+2.3 still loads and still gates; every 2.5 addition is CHECKPOINT-driven (`isLTX25` keys off
+the in-dir `gemma4-12b-ltx-v1/`, never a path-name parse), so 2.3 output is byte-identical —
+verified: `--e2e25` reproduces its documented baseline exactly after the audio-optional
+refactor touched every transformer block. Do not start new feature work on 2.3.
+
+### The 2.5 gate board (all green)
+
+| gate | covers |
+|---|---|
+| `--dit-tiny-kf25` | keyframes_abs_pos_embedding + `ff_bias:false`; fixture seeds a NON-ZERO embedding (a zero one makes the delta a no-op) |
+| `--ancestral-step` | stage-1 ancestral Euler, INJECTED noise (cross-binding RNG is not bit-identical) |
+| `--denoise-wiring` | that the two deltas REACH the DiT through `run`/`runConditioned` — components were once gated while nothing called them |
+| `--keyframe-slots` | slot geometry, `(t+0.5)/fps` spans, seed survival at σ 0.05 vs 1.0 |
+| `--dfr-layout` | canvas/tile/stitch geometry, bit-exact vs the Python port |
+| `--dfr` | DFR orchestration: frame contract, trims, fps split, tile-local conditioning, per-tile seeds, clean re-blend |
+| `--pipeline-25` | 2.5 detection against the REAL model dirs; 2.3 must read false |
+| `--gemma-tokenizer` | tokenization by INTEGER equality (was covered by nothing) |
+| `--gemma4-gate` | 49-state encoder parity, mean 0.999985 (needs the 23.8 GB encoder) |
+
+⚠️ Rows in the table below without a 2.5 marker were measured on 2.3. The doctrine carries;
+the numbers do not (2.5's encoder is a bf16 12B vs 2.3's 4-bit Gemma-3).
+
 ## Source map (`Sources/LTX2/` — engine-agnostic functional cores)
 
 | File | What | Gate |
