@@ -1,0 +1,44 @@
+^D[bench-e2e] arms=ltx23,ltx25 blocks=2 runs=2/block cooldown=30s
+[bench-e2e] geometry=704x512x121f fps=24 two-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5406e) | ef5b901+dirty
+[bench-e2e] arm 'ltx23' → model=ltx23 quant=bf16 decoder=stock tree=ltx-2.3-mlx dit=in-tree
+[bench-e2e] arm 'ltx25' → model=ltx25 quant=bf16 decoder=stock tree=ltx-2.5-mlx dit=in-tree
+
+[bench-e2e] ═══ block 0 · arm ltx23 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 2.3s · load 1.3s
+[bench-e2e] ltx23 · warmup (excluded): 61.7s · peak 56.16 GB · thermal nominal→nominal
+[bench-e2e] ltx23 · run 1: 67.7s · peak 56.30 GB · thermal nominal→fair
+[bench-e2e] ltx23 · run 2: 97.5s · peak 56.86 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 4.08 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 0 · arm ltx25 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 11.9s · load 1.5s
+[bench-e2e] ltx25 · warmup (excluded): 94.6s · peak 65.06 GB · thermal fair→fair
+[bench-e2e] ltx25 · run 1: 95.3s · peak 64.04 GB · thermal fair→fair
+[bench-e2e] ltx25 · run 2: 101.8s · peak 64.56 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 5.25 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm ltx25 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 6.1s · load 1.5s
+[bench-e2e] ltx25 · warmup (excluded): 92.5s · peak 65.62 GB · thermal fair→fair
+[bench-e2e] ltx25 · run 1: 95.1s · peak 64.56 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] ltx25 · run 2: 103.2s · peak 65.61 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 5.30 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm ltx23 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 9.4s · load 1.3s
+[bench-e2e] ltx23 · warmup (excluded): 92.4s · peak 56.34 GB · thermal fair→fair
+[bench-e2e] ltx23 · run 1: 100.5s · peak 56.10 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] ltx23 · run 2: 107.5s · peak 57.05 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 3.75 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] ltx23  median 99.0s  (67.7–107.5)  peak 56.58 GB
+[bench-e2e] ltx25  median 98.5s  (95.1–103.2)  peak 64.56 GB
+[bench-e2e] ltx25 vs ltx23: Δmed -0.4s — NOISE (sign flips between block sets)
+[bench-e2e] output ltx25 vs ltx23: cos=0.528606 maxAbs=1.94179 (divergent-by-design)
+[bench-e2e] receipts: probes/bench_e2e_armA-perf-parity_20260814-161527.md + .json
