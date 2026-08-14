@@ -20,6 +20,13 @@
 // q4 / pruna arms legitimately DIVERGE the sample — their cosine is recorded, never gated.
 //
 // Usage:
+//   dfr=<rounds>            run this arm through DFR with N temporal rounds (bench matrix arm B =
+//                           the C2 efficiency claim). The harness is given ONE TARGET output spec
+//                           via --frames/--fps; a DFR arm derives the smaller request it needs to
+//                           deliver that same clip ((target−1)/2^N+1 frames at fps/2^N) and the
+//                           delivered frame count is VERIFIED per run. Requires model=ltx25 — DFR
+//                           is trained-for there; 2.3's temporal-x2 is our hand wiring, so express
+//                           that arm as env.LTX_UPSAMPLER=temporal_upscaler_x2_v1_0 instead.
 //   model=<ltx23|ltx25>     which MODEL this arm runs (bench matrix arm A = the 2.3-vs-2.5
 //                           perf-parity gate, LTX25-PORT-PLAN §V). Selects the components tree,
 //                           the encoder root (2.5's Gemma-4 is IN-tree), and the quantized-DiT
@@ -65,10 +72,48 @@ struct BenchArm {
     let model: String          // ltx23 | ltx25 — the MODEL axis (bench matrix arm A, C2 arm B)
     let quant: String          // bf16 | q8 | q4
     let decoder: String        // stock | pruna
+    let dfrRounds: Int         // 0 = plain t2v; N>0 = DFR with N temporal rounds (bench matrix arm B)
     let cacheGB: Int?
     let env: [String: String]
 
     var is25: Bool { model == "ltx25" || model == "2.5" }
+
+    /// **Matched OUTPUT spec, derived request geometry — the whole point of the `dfr=` axis.**
+    ///
+    /// Bench matrix arm B (the C2 efficiency claim) compares paths that reach the SAME delivered
+    /// clip by different routes: 2.5-native generates 241f@48 directly, while 2.5-DFR-1-round
+    /// generates 121f@24 and densifies it to 241f@48. DFR's contract is
+    /// `delivered = (requested−1)·2^rounds + 1` at `fps·2^rounds` (`DFRPlan`).
+    ///
+    /// So the harness is given ONE target output spec and each arm derives the request it needs to
+    /// hit it. Hand-specifying per-arm geometry instead would make the matched-output property
+    /// depend on the operator doing this arithmetic correctly every time — and an arm that quietly
+    /// delivered a different clip length would still produce a perfectly plausible wall-clock
+    /// number. Deriving it makes the comparison correct by construction.
+    func request(targetFrames: Int, targetFps: Double) -> (frames: Int, fps: Double) {
+        guard dfrRounds > 0 else { return (targetFrames, targetFps) }
+        let factor = 1 << dfrRounds
+        return ((targetFrames - 1) / factor + 1, targetFps / Double(factor))
+    }
+
+    /// Reject a target this arm cannot hit EXACTLY. A non-integral division would silently deliver
+    /// a different clip than the arms it is being compared against.
+    func validate(targetFrames: Int, targetFps: Double) -> String? {
+        guard dfrRounds > 0 else { return nil }
+        guard is25 else { return "dfr= requires model=ltx25 (DFR is trained-for on 2.5; 2.3's temporal-x2 is our hand wiring — use env.LTX_UPSAMPLER for that arm)" }
+        let factor = 1 << dfrRounds
+        guard (targetFrames - 1) % factor == 0 else {
+            return "dfr=\(dfrRounds) cannot deliver \(targetFrames)f exactly: (\(targetFrames)−1) is not divisible by \(factor)"
+        }
+        let (rf, rfps) = request(targetFrames: targetFrames, targetFps: targetFps)
+        guard (rf - 1) % 8 == 0 else {
+            return "dfr=\(dfrRounds) implies a \(rf)f request, which is not 8k+1"
+        }
+        guard rfps == rfps.rounded(), rfps > 0 else {
+            return "dfr=\(dfrRounds) implies fps \(rfps), which is not a positive integer"
+        }
+        return nil
+    }
 
     /// The components tree for this arm. 2.5's Gemma-4 encoder is IN this directory, so the
     /// gemma root is derived from it rather than from `LTX_BENCH_GEMMA`.
@@ -112,17 +157,21 @@ struct BenchArm {
     /// ⚠️ **Different MODELS never expect identical output** — 2.3 and 2.5 are different weights,
     /// so a cross-arm cosine there is meaningless and must not be read as a reproducibility signal.
     /// Bench matrix arm A compares WALL-CLOCK across models, never pixels.
+    /// ⚠️ Different PATHS never expect identical output either — a DFR arm and a native arm reach
+    /// the same clip length by different computation, so their pixels differ by design.
     func expectsIdenticalOutput(to ref: BenchArm) -> Bool {
-        model == ref.model && quant == ref.quant && decoder == ref.decoder && quant == "bf16"
+        model == ref.model && quant == ref.quant && decoder == ref.decoder
+            && dfrRounds == ref.dfrRounds && quant == "bf16"
     }
 
     static func parse(_ spec: String) throws -> BenchArm {
         guard let colon = spec.firstIndex(of: ":") else {
             return BenchArm(name: spec, model: "ltx23", quant: "bf16", decoder: "stock",
-                            cacheGB: nil, env: [:])
+                            dfrRounds: 0, cacheGB: nil, env: [:])
         }
         let name = String(spec[..<colon])
         var model = "ltx23", quant = "bf16", decoder = "stock"
+        var dfrRounds = 0
         var cacheGB: Int? = nil
         var env: [String: String] = [:]
         for kv in spec[spec.index(after: colon)...].split(separator: ",") {
@@ -132,6 +181,11 @@ struct BenchArm {
             case "model": model = parts[1]
             case "quant": quant = parts[1]
             case "decoder": decoder = parts[1]
+            case "dfr":
+                guard let r = Int(parts[1]), r >= 0, r <= 4 else {
+                    throw BenchError.badSpec("\(spec) → dfr must be 0…4, got '\(parts[1])'")
+                }
+                dfrRounds = r
             case "cache": cacheGB = Int(parts[1])
             default:
                 if parts[0].hasPrefix("env.") { env[String(parts[0].dropFirst(4))] = parts[1] }
@@ -144,7 +198,7 @@ struct BenchArm {
         // Refuse a combination that would silently benchmark the wrong weights: 2.5 has no q4 DiT,
         // and 2.5 + pruna would quietly fall back to the stock decoder and report a null delta.
         let arm = BenchArm(name: name, model: model, quant: quant, decoder: decoder,
-                           cacheGB: cacheGB, env: env)
+                           dfrRounds: dfrRounds, cacheGB: cacheGB, env: env)
         if arm.is25, quant == "q4" || quant == "int4" {
             throw BenchError.badSpec("\(spec) → no q4 LTX-2.5 DiT exists (AB-D-0013)")
         }
@@ -308,9 +362,25 @@ func benchE2E() async throws {
         if let t = arm.transformerPath, !FileManager.default.fileExists(atPath: t.path) {
             print("[bench-e2e] FAIL ❌ arm '\(arm.name)': missing transformer \(t.path)"); return
         }
+        if let why = arm.validate(targetFrames: frames, targetFps: fps) {
+            print("[bench-e2e] FAIL ❌ arm '\(arm.name)': \(why)"); return
+        }
+        let (rf, rfps) = arm.request(targetFrames: frames, targetFps: fps)
+        // Echo the RESOLVED request, not the intended one — an arm silently running the harness
+        // default is this project's most-repeated measurement failure.
         print("[bench-e2e] arm '\(arm.name)' → model=\(arm.model) quant=\(arm.quant) "
-              + "decoder=\(arm.decoder) tree=\(arm.ltxDir.lastPathComponent) "
-              + "dit=\(arm.transformerPath?.deletingLastPathComponent().lastPathComponent ?? "in-tree")")
+              + "decoder=\(arm.decoder) dfr=\(arm.dfrRounds) tree=\(arm.ltxDir.lastPathComponent) "
+              + "dit=\(arm.transformerPath?.deletingLastPathComponent().lastPathComponent ?? "in-tree") "
+              + "request=\(rf)f@\(Int(rfps)) → delivers \(frames)f@\(Int(fps))")
+    }
+
+    // `--dry-run` stops here: the preflight above has resolved and printed every arm's tree, DiT,
+    // and derived request geometry without loading a weight or touching the GPU. Added after a
+    // "just check the spec parses" invocation started a real multi-minute generation on a machine
+    // that was busy — verifying a plan should never cost a run.
+    if flag("--dry-run") {
+        print("[bench-e2e] --dry-run: plan resolved, no generation performed.")
+        return
     }
 
     // Every env key any arm sets gets cleared between blocks so state can never leak across arms.
@@ -384,13 +454,32 @@ func benchE2E() async throws {
 
             sampler.start()
 
+            // Request geometry is PER-ARM: a DFR arm asks for fewer frames at half the fps and
+            // densifies up to the same delivered clip (see `BenchArm.request`).
+            let (reqFrames, reqFps) = arm.request(targetFrames: frames, targetFps: fps)
             func generate() async throws -> LTX2Pipeline.Output {
-                let out = twoStage
-                    ? try await pipeline.t2vTwoStage(prompt: prompt, height: height, width: width,
-                                                     numFrames: frames, fps: fps, seed: seed)
-                    : try await pipeline.t2v(prompt: prompt, height: height, width: width,
-                                             numFrames: frames, fps: fps, seed: seed)
+                let out: LTX2Pipeline.Output
+                if arm.dfrRounds > 0 {
+                    out = try await pipeline.dfr(prompt: prompt, height: height, width: width,
+                                                 numFrames: reqFrames, fps: reqFps, seed: seed,
+                                                 temporalUpsampleRounds: arm.dfrRounds).output
+                } else if twoStage {
+                    out = try await pipeline.t2vTwoStage(prompt: prompt, height: height, width: width,
+                                                        numFrames: reqFrames, fps: reqFps, seed: seed)
+                } else {
+                    out = try await pipeline.t2v(prompt: prompt, height: height, width: width,
+                                                 numFrames: reqFrames, fps: reqFps, seed: seed)
+                }
                 eval(out.video); if let a = out.audio { eval(a) }
+                // The matched-output property is what makes the wall-clock comparable, so VERIFY it
+                // rather than trusting the derivation: a silently short clip would still produce a
+                // plausible number, and a faster one at that.
+                let delivered = out.video.dim(2)
+                guard delivered == frames else {
+                    throw BenchError.badSpec(
+                        "arm '\(arm.name)' delivered \(delivered)f, target is \(frames)f — "
+                        + "output specs are not matched, the comparison would be void")
+                }
                 return out
             }
 
