@@ -65,7 +65,7 @@ public final class LTX2Pipeline {
     /// ⚠️ Note the real coupling this exposes: the gate's own `N_min ≈ N·C/S` is derived from the
     /// same N, so **tiling genuinely makes the streaming gate harder to clear** — the two memory
     /// levers partly cancel rather than compose freely (TILING-PLAN hazard 1).
-    private func armStreamingGate(largestStageTokens: Int) {
+    func armStreamingGate(largestStageTokens: Int) {
         ditStorage?.blockStreamer?.gateEvaluationThresholdTokens = largestStageTokens
     }
 
@@ -115,7 +115,7 @@ public final class LTX2Pipeline {
 
     /// Stop the refill thread between the denoise and decode phases (slots and bindings
     /// stay; the next request's first forward re-activates IO).
-    private func quiesceStreaming() {
+    func quiesceStreaming() {
         ditStorage?.blockStreamer?.finish()
     }
 
@@ -170,7 +170,7 @@ public final class LTX2Pipeline {
     /// before the connector loads (encode is the T3b-measured peak: connector int8 quantize
     /// scratch + a warmed-resident DiT ≈ 26 GB co-resident) AND after the last denoise step
     /// (decode). `ensureDiT()` reloads in seconds (mmap re-fault; kernels process-cached).
-    private func dropDiTIfSequential() {
+    func dropDiTIfSequential() {
         guard sequentialDiT, !keepStagesResident, ditStorage != nil else { return }
         ditStorage = nil
         Memory.clearCache()
@@ -178,7 +178,7 @@ public final class LTX2Pipeline {
 
     // Evictable stages — held only around the phase that needs them (load → use → evict).
     // Stored loaders (`ltxDir`/`gemmaDir`) let a dropped stage re-load on the next request.
-    private let ltxDir: URL
+    let ltxDir: URL
     private let gemmaDir: URL
     /// Override for the video VAE decoder file (nil = stock `vae_decoder.safetensors`).
     /// A pruned sibling such as PrunaVAED loads through the same `VideoVAEDecoder`, which
@@ -190,8 +190,11 @@ public final class LTX2Pipeline {
     private var vae: VideoVAEDecoder?
     private var audioVAE: AudioVAEDecoder?
     private var vocoder: Vocoder?
-    private var vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats + i2v encode
-    private var upsampler: Upsampler?          // any variant; selected via `upsamplerFile`
+    var vaeEncoder: VideoVAEEncoder?   // for two-stage upscale denorm/renorm stats + i2v encode
+    var upsampler: Upsampler?          // any variant; selected via `upsamplerFile`
+    /// Temporal x2 latent upsampler — DFR rounds only, in its own slot because a round needs it
+    /// while `upsampler` still holds the SPATIAL checkpoint stage 2 used.
+    var temporalUpsampler: Upsampler?
 
     // File availability, probed once at load — drives `supportsTwoStage` / audio presence
     // WITHOUT holding the components resident (they were `!= nil` checks before).
@@ -285,7 +288,7 @@ public final class LTX2Pipeline {
         return concatenated([head, tail], axis: 1).asType(.bfloat16)
     }
 
-    private func encodePrompt(
+    func encodePrompt(
         _ prompt: String, isolation: isolated (any Actor)? = #isolation
     ) async throws -> (video: MLXArray, audio: MLXArray) {
         let prof = MLXProfiler.shared
@@ -339,7 +342,7 @@ public final class LTX2Pipeline {
 
     /// Page in the VAE decoder stack (video + optional audio) — deferred until AFTER denoise so it
     /// is never co-resident with the denoise activation peak.
-    private func ensureDecoder() throws {
+    func ensureDecoder() throws {
         if vae == nil {
             vae = try VideoVAEDecoder.load(
                 path: vaeDecoderPath ?? ltxDir.appending(path: "vae_decoder.safetensors"))
@@ -381,14 +384,14 @@ public final class LTX2Pipeline {
     /// needs it BEFORE running, to declare the writer's audio input up front.
     public var audioEnabled: Bool { hasAudio }
 
-    private func decodePixels(_ spatial: MLXArray) throws -> MLXArray {
+    func decodePixels(_ spatial: MLXArray) throws -> MLXArray {
         var parts: [MLXArray] = []
         try decodePixels(spatial) { parts.append($0) }
         return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
     }
 
     /// Sink form — one chunk-policy code path for both lanes (the VideoVAE pattern).
-    private func decodePixels(_ spatial: MLXArray, sink: (MLXArray) throws -> Void) throws {
+    func decodePixels(_ spatial: MLXArray, sink: (MLXArray) throws -> Void) throws {
         // Whole-clip decode reports once here; the chunked path refines with per-chunk
         // step/totalSteps from inside `decodeChunked`.
         LTX2Progress.report(.decode)
@@ -423,14 +426,14 @@ public final class LTX2Pipeline {
                                sink: sink)
     }
 
-    private func dropDecoder() {
+    func dropDecoder() {
         guard !keepStagesResident else { return }
         vae = nil; audioVAE = nil; vocoder = nil
         Memory.clearCache()
     }
 
     /// Page in the VAE encoder (two-stage denorm/renorm stats; i2v init-frame encode).
-    private func ensureVAEEncoder() throws {
+    func ensureVAEEncoder() throws {
         if vaeEncoder == nil { vaeEncoder = try VideoVAEEncoder.load(path: ltxDir.appending(path: "vae_encoder.safetensors")) }
     }
 
@@ -451,7 +454,7 @@ public final class LTX2Pipeline {
     }
 
     /// The selected upsampler checkpoint as a concrete URL.
-    private var upsamplerURL: URL {
+    var upsamplerURL: URL {
         upsamplerFile.contains("/")
             ? URL(fileURLWithPath: (upsamplerFile as NSString).expandingTildeInPath)
             : ltxDir.appending(path: upsamplerFile)
@@ -459,7 +462,7 @@ public final class LTX2Pipeline {
 
     /// Page in the selected latent upsampler (two-stage only). Reloads when the selection
     /// changed since the last load (keepStagesResident would otherwise pin the old variant).
-    private func ensureUpsampler() throws {
+    func ensureUpsampler() throws {
         if upsampler == nil || loadedUpsamplerFile != upsamplerFile {
             guard FileManager.default.fileExists(atPath: upsamplerURL.path) else {
                 throw TwoStageError.upsamplerMissing(upsamplerURL.path)
@@ -471,9 +474,36 @@ public final class LTX2Pipeline {
 
     /// Evict the two-stage encoder + upsampler after the upscale step (before the stage-2 denoise
     /// peak). Caller must `eval` the upscaled latent first. Also covers i2v (encoder only).
-    private func dropUpscaler() {
+    func dropUpscaler() {
         guard !keepStagesResident else { return }
         vaeEncoder = nil; upsampler = nil
+        Memory.clearCache()
+    }
+
+    /// Page in the temporal x2 upsampler (DFR rounds only).
+    ///
+    /// ⚠️ A missing checkpoint is a hard error, never a silent skip: without the trained module the
+    /// densified latent decodes into a periodic temporal artefact and nothing else reports it
+    /// (oracle `_load_temporal_upsampler`). The variant is asserted for the same reason — pointing
+    /// this at a spatial checkpoint would change the geometry, not the frame count.
+    func ensureTemporalUpsampler() throws {
+        guard temporalUpsampler == nil else { return }
+        let url = ltxDir.appending(path: "temporal_upscaler_x2_v1_0.safetensors")
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw TwoStageError.upsamplerMissing(url.path)
+        }
+        let variant = try Upsampler.peekVariant(path: url)
+        guard variant == .temporalX2 else {
+            throw TwoStageError.badGeometry(
+                "temporal_upscaler_x2_v1_0.safetensors resolved to variant \(variant.rawValue), "
+                + "expected temporal_x2 — DFR rounds double FRAMES, not resolution")
+        }
+        temporalUpsampler = try Upsampler.load(path: url)
+    }
+
+    func dropTemporalUpsampler() {
+        guard !keepStagesResident else { return }
+        temporalUpsampler = nil
         Memory.clearCache()
     }
 
@@ -612,10 +642,13 @@ public final class LTX2Pipeline {
         // one-stage: this IS the largest stage. `denoiser` arms the gate (tiled or not).
         let engine = denoiser(dit, F: fLat, H: hLat, W: wLat, positions: videoPositions,
                               untiledTokens: nv + audioT, audioTokens: audioT)
-        let (vfinal, afinal) = try DenoiseLoop.run(
+        let (vfinal, afinalOpt) = try DenoiseLoop.run(
             dit: engine, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: videoPositions, audioPositions: audioPositions, label: "")
+        // The loop returns nil audio only on the audio-free (DFR round) path; this one always
+        // supplies an audio latent, so the unwrap cannot fail.
+        let afinal = afinalOpt!
         eval(vfinal, afinal)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
@@ -684,12 +717,13 @@ public final class LTX2Pipeline {
         let audioLatent = MLXRandom.normal([1, audioT, 128])
         _ = try ensureDiT()
         armStreamingGate(largestStageTokens: nv + audioT)  // one-stage i2v
-        let (vfinal, afinal) = try DenoiseLoop.runConditioned(
+        let (vfinal, afinalOpt) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT),
             videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
+        let afinal = afinalOpt!   // audio always supplied here (see t2v)
         eval(vfinal, afinal)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
@@ -795,7 +829,7 @@ public final class LTX2Pipeline {
             audioDenoiseMask: audioReferences.isEmpty ? nil : audioState.denoiseMask,
             label: "ic-")
         let vfinal = state.slice(vfull)
-        let afinal = audioState.slice(afull)
+        let afinal = audioState.slice(afull!)   // audio always supplied here (see t2v)
         eval(vfinal, afinal)
         dropDiTIfSequential()
 
@@ -894,7 +928,7 @@ public final class LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v1.dim(1),
                                                  tokensPerLatentFrame: hLat1 * wLat1)
             : nil
-        let (v1f, a1f) = try DenoiseLoop.run(
+        let (v1f, a1fOpt) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat1, H: hLat1, W: wLat1, fps: Float(fps1)),
@@ -903,6 +937,7 @@ public final class LTX2Pipeline {
             ancestralEta: isLTX25 ? 1.0 : 0,
             ancestralNoiseSeed: (seed ?? 0) &+ 10_000,
             label: "s1-", stage: 1, totalStages: 2)
+        let a1f = a1fOpt!   // audio always supplied here (see t2v)
         eval(v1f, a1f)
 
         // --- Upscale in un-normalized latent space (encoder+upsampler loaded only here) ---
@@ -935,13 +970,14 @@ public final class LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v2init.dim(1),
                                                  tokensPerLatentFrame: hLat2 * wLat2)
             : nil
-        let (v2f, a2f) = try DenoiseLoop.run(
+        let (v2f, a2fOpt) = try DenoiseLoop.run(
             dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat2, H: hLat2, W: wLat2, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT),
             keyframesMask: kfMask2,
             label: "s2-", stage: 2, totalStages: 2)
+        let a2f = a2fOpt!   // audio always supplied here (see t2v)
         eval(v2f, a2f)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)

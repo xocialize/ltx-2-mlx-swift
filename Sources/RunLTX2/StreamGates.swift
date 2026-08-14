@@ -89,10 +89,11 @@ private struct DiTInputs {
     }
 
     func run(_ dit: DiT) -> (MLXArray, MLXArray) {
-        let (v, a) = dit(
+        let (v, aOpt) = dit(
             videoLatent: videoLatent, audioLatent: audioLatent, sigma: sigma,
             videoText: videoText, audioText: audioText,
             videoPositions: videoPositions, audioPositions: audioPositions)
+        let a = aOpt!   // audio supplied ⇒ audio returned (the audio-free path is DFR-only)
         eval(v, a)
         return (v, a)
     }

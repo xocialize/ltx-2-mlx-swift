@@ -138,17 +138,24 @@ public struct DiT {
     /// Per oracle `model.py`, ONLY `adaln_single` + `av_ca_video_scale_shift_adaln_single` (and the
     /// audio mirror) go per-token; the AV-cross gate + prompt AdaLN ALWAYS use the scalar timestep
     /// (text/gate embeddings don't correspond to individual latent tokens). nil ⇒ scalar t2v path.
+    ///
+    /// ⚠️ `audioLatent == nil` is the **AUDIO-FREE forward** (`run_ax` in oracle `model.py:414` /
+    /// `transformer.py:269`; upstream spells the same thing as `ax.numel() > 0`). Video still runs
+    /// — it just loses its A2V cross-attention contribution, which is a REAL change to the video
+    /// output, not a no-op. DFR temporal rounds denoise each tile this way. Every audio touch below
+    /// is gated, and the audio-PRESENT path is left byte-identical on purpose.
     public func callAsFunction(
-        videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
+        videoLatent: MLXArray, audioLatent: MLXArray?, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
-        videoPositions: MLXArray, audioPositions: MLXArray,
+        videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
         keyframesMask: MLXArray? = nil
-    ) -> (video: MLXArray, audio: MLXArray) {
+    ) -> (video: MLXArray, audio: MLXArray?) {
         let vd = cfg.videoDim, ad = cfg.audioDim, tED = cfg.timestepEmbeddingDim
+        let runAX = audioLatent != nil
 
         var videoHidden = dense(videoLatent.asType(dtype), "patchify_proj")
-        var audioHidden = dense(audioLatent.asType(dtype), "audio_patchify_proj")
+        var audioHidden = audioLatent.map { dense($0.asType(dtype), "audio_patchify_proj") }
 
         // LTX-2.5: learned keyframes ABSOLUTE-position embedding, added post-patchify to the
         // tokens `keyframesMask` marks. Marked tokens are generated keyframe SLOTS (and, on
@@ -180,11 +187,16 @@ public struct DiT {
 
         let videoRope = ropeFreqs(videoPositions, cfg.videoNumHeads, cfg.videoHeadDim,
                                   maxPos: Array(cfg.positionalMaxPos.prefix(videoPositions.dim(-1))))
-        let audioRope = ropeFreqs(audioPositions, cfg.audioNumHeads, cfg.audioHeadDim,
-                                  maxPos: cfg.audioPositionalMaxPos)
         let crossMax = max(cfg.positionalMaxPos[0], cfg.audioPositionalMaxPos[0])
         let videoCrossRope = ropeFreqs(videoPositions[0..., 0..., 0 ..< 1], cfg.avCrossNumHeads, cfg.avCrossHeadDim, maxPos: [crossMax])
-        let audioCrossRope = ropeFreqs(audioPositions[0..., 0..., 0 ..< 1], cfg.avCrossNumHeads, cfg.avCrossHeadDim, maxPos: [crossMax])
+        // Gated on `runAX && audioPositions != nil`, exactly as the oracle gates them — an
+        // audio-free forward has no audio grid to build frequencies over.
+        let audioRope = runAX ? audioPositions.map {
+            ropeFreqs($0, cfg.audioNumHeads, cfg.audioHeadDim, maxPos: cfg.audioPositionalMaxPos)
+        } : nil
+        let audioCrossRope = runAX ? audioPositions.map {
+            ropeFreqs($0[0..., 0..., 0 ..< 1], cfg.avCrossNumHeads, cfg.avCrossHeadDim, maxPos: [crossMax])
+        } : nil
 
         let cond = Cond(
             videoAdaln: videoAdaln, audioAdaln: audioAdaln, videoPrompt: videoPrompt, audioPrompt: audioPrompt,
@@ -204,31 +216,37 @@ public struct DiT {
             // forward — this branch is then never taken again.
             streamer.ensureActive()
             streamer.beginForward(
-                tokens: videoLatent.dim(0) * (videoLatent.dim(1) + audioLatent.dim(1)))
+                tokens: videoLatent.dim(0) * (videoLatent.dim(1) + (audioLatent?.dim(1) ?? 0)))
             for g in 0..<streamer.numGroups {
                 streamer.acquireGroup()
                 for i in streamer.blockRange(g) {
                     (videoHidden, audioHidden) = block(i, videoHidden, audioHidden, cond)
                 }
-                eval(videoHidden, audioHidden)  // slot handoff; MUST precede releaseGroup
+                eval([videoHidden, audioHidden].compactMap { $0 })  // slot handoff; MUST precede releaseGroup
                 streamer.releaseGroup()
             }
             streamer.endForward()
         } else {
             for i in 0 ..< cfg.numLayers {
                 (videoHidden, audioHidden) = block(i, videoHidden, audioHidden, cond)
-                if (i + 1) % 8 == 0 { eval(videoHidden, audioHidden) }
+                if (i + 1) % 8 == 0 { eval([videoHidden, audioHidden].compactMap { $0 }) }
             }
         }
 
         let videoOut = outputBlock(videoHidden, videoEmbeddedTs, "scale_shift_table", "proj_out")
-        let audioOut = outputBlock(audioHidden, audioEmbeddedTs, "audio_scale_shift_table", "audio_proj_out")
+        let audioOut = audioHidden.map {
+            outputBlock($0, audioEmbeddedTs, "audio_scale_shift_table", "audio_proj_out")
+        }
         return (videoOut, audioOut)
     }
 
     // MARK: - BasicAVTransformerBlock
 
-    private func block(_ i: Int, _ videoHidden0: MLXArray, _ audioHidden0: MLXArray, _ c: Cond) -> (MLXArray, MLXArray) {
+    /// `audioHidden0 == nil` ⇒ the audio-free block (oracle `run_ax`): the audio self-attn, audio
+    /// text cross-attn, BOTH AV-cross directions, and the audio FF are skipped. The video keeps its
+    /// self-attn, text cross-attn and FF but loses the A2V residual — deliberately, matching
+    /// upstream's `run_a2v` gate.
+    private func block(_ i: Int, _ videoHidden0: MLXArray, _ audioHidden0: MLXArray?, _ c: Cond) -> (MLXArray, MLXArray?) {
         let p = "transformer_blocks.\(i)"
         let vd = cfg.videoDim, ad = cfg.audioDim
         var videoHidden = videoHidden0, audioHidden = audioHidden0
@@ -244,8 +262,10 @@ public struct DiT {
         let vNormSA = rms0(videoHidden) * (1.0 + v[1]) + v[0]
         videoHidden = videoHidden + attention(vNormSA, prefix: "\(p).attn1", numHeads: cfg.videoNumHeads, headDim: cfg.videoHeadDim, rope: c.videoRope) * v[2]
         // 2. audio self-attn
-        let aNormSA = rms0(audioHidden) * (1.0 + a[1]) + a[0]
-        audioHidden = audioHidden + attention(aNormSA, prefix: "\(p).audio_attn1", numHeads: cfg.audioNumHeads, headDim: cfg.audioHeadDim, rope: c.audioRope) * a[2]
+        if let ah = audioHidden {
+            let aNormSA = rms0(ah) * (1.0 + a[1]) + a[0]
+            audioHidden = ah + attention(aNormSA, prefix: "\(p).audio_attn1", numHeads: cfg.audioNumHeads, headDim: cfg.audioHeadDim, rope: c.audioRope) * a[2]
+        }
         // 3. video text cross-attn (indices 6,7,8) + prompt table
         if let vText = c.videoText {
             let vNormCA = rms0(videoHidden) * (1.0 + v[7]) + v[6]
@@ -254,28 +274,35 @@ public struct DiT {
             videoHidden = videoHidden + attention(vNormCA, prefix: "\(p).attn2", numHeads: cfg.videoNumHeads, headDim: cfg.videoHeadDim, kv: textScaled, useRope: false) * v[8]
         }
         // 4. audio text cross-attn
-        if let aText = c.audioText {
-            let aNormCA = rms0(audioHidden) * (1.0 + a[7]) + a[6]
+        if let ah = audioHidden, let aText = c.audioText {
+            let aNormCA = rms0(ah) * (1.0 + a[7]) + a[6]
             let ap = unpackAdaln(c.audioPrompt, "\(p).audio_prompt_scale_shift_table", 2, ad)
             let textScaled = aText * (1.0 + ap[1]) + ap[0]
-            audioHidden = audioHidden + attention(aNormCA, prefix: "\(p).audio_attn2", numHeads: cfg.audioNumHeads, headDim: cfg.audioHeadDim, kv: textScaled, useRope: false) * a[8]
+            audioHidden = ah + attention(aNormCA, prefix: "\(p).audio_attn2", numHeads: cfg.audioNumHeads, headDim: cfg.audioHeadDim, kv: textScaled, useRope: false) * a[8]
         }
         // 5-6. AV cross-modal (norm both once; tables: 0=scale_a2v 1=shift_a2v 2=scale_v2a 3=shift_v2a)
-        let vNorm3 = rms0(videoHidden), aNorm3 = rms0(audioHidden)
-        let videoQa2v = vNorm3 * (1.0 + avV[0]) + avV[1]
-        let audioKVa2v = aNorm3 * (1.0 + avA[0]) + avA[1]
-        let a2v = attention(videoQa2v, prefix: "\(p).audio_to_video_attn", numHeads: cfg.avCrossNumHeads, headDim: cfg.avCrossHeadDim, kv: audioKVa2v, rope: c.videoCrossRope, ropeK: c.audioCrossRope) * avVGate
-        videoHidden = videoHidden + a2v
-        let audioQv2a = aNorm3 * (1.0 + avA[2]) + avA[3]
-        let videoKVv2a = vNorm3 * (1.0 + avV[2]) + avV[3]
-        let v2a = attention(audioQv2a, prefix: "\(p).video_to_audio_attn", numHeads: cfg.avCrossNumHeads, headDim: cfg.avCrossHeadDim, kv: videoKVv2a, rope: c.audioCrossRope, ropeK: c.videoCrossRope) * avAGate
-        audioHidden = audioHidden + v2a
+        // ⚠️ Both directions are skipped on the audio-free forward, so the VIDEO loses its A2V
+        // residual. That is upstream's behaviour (`run_a2v` false with no audio tokens), not an
+        // approximation — the video output genuinely differs from an audio-present forward.
+        if let ah = audioHidden {
+            let vNorm3 = rms0(videoHidden), aNorm3 = rms0(ah)
+            let videoQa2v = vNorm3 * (1.0 + avV[0]) + avV[1]
+            let audioKVa2v = aNorm3 * (1.0 + avA[0]) + avA[1]
+            let a2v = attention(videoQa2v, prefix: "\(p).audio_to_video_attn", numHeads: cfg.avCrossNumHeads, headDim: cfg.avCrossHeadDim, kv: audioKVa2v, rope: c.videoCrossRope, ropeK: c.audioCrossRope) * avVGate
+            let audioQv2a = aNorm3 * (1.0 + avA[2]) + avA[3]
+            let videoKVv2a = vNorm3 * (1.0 + avV[2]) + avV[3]
+            let v2a = attention(audioQv2a, prefix: "\(p).video_to_audio_attn", numHeads: cfg.avCrossNumHeads, headDim: cfg.avCrossHeadDim, kv: videoKVv2a, rope: c.audioCrossRope, ropeK: c.videoCrossRope) * avAGate
+            videoHidden = videoHidden + a2v
+            audioHidden = ah + v2a
+        }
         // 7. video FF (indices 3,4,5)
         let vNormFF = rms0(videoHidden) * (1.0 + v[4]) + v[3]
         videoHidden = videoHidden + feedForward(vNormFF, "\(p).ff") * v[5]
         // 8. audio FF
-        let aNormFF = rms0(audioHidden) * (1.0 + a[4]) + a[3]
-        audioHidden = audioHidden + feedForward(aNormFF, "\(p).audio_ff") * a[5]
+        if let ah = audioHidden {
+            let aNormFF = rms0(ah) * (1.0 + a[4]) + a[3]
+            audioHidden = ah + feedForward(aNormFF, "\(p).audio_ff") * a[5]
+        }
 
         return (videoHidden, audioHidden)
     }

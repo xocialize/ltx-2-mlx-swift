@@ -37,6 +37,20 @@ public struct GeneratedKeyframeLayout {
         let start = firstToken + i * tokensPerKeyframe
         return start ..< (start + tokensPerKeyframe)
     }
+
+    /// Pull each denoised slot out as its own (B, C, 1, H, W) latent — one per slot, deliberately,
+    /// so a caller cannot decode them as a K-frame clip (a K-frame causal decode would blend slots
+    /// that were never temporally adjacent).
+    ///
+    /// Lives on the LAYOUT, not the state: a caller that kept only the layout (DFR keeps one per
+    /// stage and per tile) can read its slots back without reconstructing the whole state.
+    public func extract(_ denoised: MLXArray, H: Int, W: Int) -> [MLXArray] {
+        (0 ..< pixelFrameIndices.count).map { i in
+            let toks = denoised[0..., slotSpan(i), 0...]
+            let B = toks.dim(0), C = toks.dim(2)
+            return toks.reshaped(B, H, W, C).transposed(0, 3, 1, 2).expandedDimensions(axis: 2)
+        }
+    }
 }
 
 /// A latent state extended with generated keyframe slots.
@@ -57,12 +71,7 @@ public struct KeyframeSlotState {
     /// Pull each denoised slot out as its own (B, C, 1, H, W) latent — one per slot,
     /// deliberately, so a caller cannot decode them as a K-frame clip.
     public func extract(_ denoised: MLXArray, H: Int, W: Int) -> [MLXArray] {
-        (0 ..< layout.pixelFrameIndices.count).map { i in
-            let span = layout.slotSpan(i)
-            let toks = denoised[0..., span, 0...]
-            let B = toks.dim(0), C = toks.dim(2)
-            return toks.reshaped(B, H, W, C).transposed(0, 3, 1, 2).expandedDimensions(axis: 2)
-        }
+        layout.extract(denoised, H: H, W: W)
     }
 }
 

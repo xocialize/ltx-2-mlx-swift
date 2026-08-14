@@ -21,14 +21,17 @@ import MLXProfiling
 
 /// The forward surface `DenoiseLoop` drives. `DiT` and `TiledDiT` both satisfy it, so the loop is
 /// agnostic to whether tiling is installed.
+///
+/// `audioLatent == nil` is the AUDIO-FREE forward (oracle `run_ax`) — see `DiT.callAsFunction`.
+/// The returned audio is nil exactly when the input was.
 public protocol LTXDenoiser {
     func callAsFunction(
-        videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
+        videoLatent: MLXArray, audioLatent: MLXArray?, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
-        videoPositions: MLXArray, audioPositions: MLXArray,
+        videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray?, audioTimesteps: MLXArray?,
         keyframesMask: MLXArray?
-    ) -> (video: MLXArray, audio: MLXArray)
+    ) -> (video: MLXArray, audio: MLXArray?)
 }
 
 extension DiT: LTXDenoiser {}
@@ -43,12 +46,12 @@ public struct TiledDiT: LTXDenoiser {
     }
 
     public func callAsFunction(
-        videoLatent: MLXArray, audioLatent: MLXArray, sigma: MLXArray,
+        videoLatent: MLXArray, audioLatent: MLXArray?, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
-        videoPositions: MLXArray, audioPositions: MLXArray,
+        videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
         keyframesMask: MLXArray? = nil
-    ) -> (video: MLXArray, audio: MLXArray) {
+    ) -> (video: MLXArray, audio: MLXArray?) {
         let B = videoLatent.dim(0), D = videoLatent.dim(2)
         var videoOut = MLXArray.zeros([B, videoLatent.dim(1), D]).asType(videoLatent.dtype)
         var audioParts: [MLXArray] = []
@@ -83,7 +86,7 @@ public struct TiledDiT: LTXDenoiser {
                 keyframesMask: tKeyframes)
 
             videoOut = tiler.blend(vOut, tile: tile, into: videoOut)
-            audioParts.append(aOut)
+            if let aOut { audioParts.append(aOut) }
             // Keep the pool tile-bound — the same cadence the VAE tilers use. Without it the lazy
             // graph holds every tile's activations and tiling buys nothing.
             eval(videoOut)
@@ -91,9 +94,9 @@ public struct TiledDiT: LTXDenoiser {
             MLXProfiler.shared.end(span)
         }
 
-        let audioOut = audioParts.count == 1
-            ? audioParts[0]
-            : MLX.mean(MLX.stacked(audioParts, axis: 0), axis: 0)
+        // Audio-free forward ⇒ no parts collected ⇒ nil out, same as the inner denoiser.
+        let audioOut: MLXArray? = audioParts.isEmpty ? nil
+            : (audioParts.count == 1 ? audioParts[0] : MLX.mean(MLX.stacked(audioParts, axis: 0), axis: 0))
         return (videoOut, audioOut)
     }
 }
