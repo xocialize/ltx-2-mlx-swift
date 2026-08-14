@@ -28,6 +28,7 @@ refactor touched every transformer block. Do not start new feature work on 2.3.
 | `--pipeline-25` | 2.5 detection against the REAL model dirs; 2.3 must read false |
 | `--gemma-tokenizer` | tokenization by INTEGER equality (was covered by nothing) |
 | `--gemma4-gate` | 49-state encoder parity, mean 0.999985 (needs the 23.8 GB encoder) |
+| **`--ltx25-package-gate`** | the ENGINE-side 2.5 surface, 20/20 — everything decided before any weight exists, where being wrong is silent. Load-bearing case: **2.5 int8 → `-ditq8`, NOT `-q8`** (on 2.5 that name is the int8 *text-encoder* sibling whose transformer symlinks back to bf16, so 2.3's rule declares int8 ≈23 GB and loads bf16 ≈40 GB). Case 05 READS both checkpoint headers rather than asserting the suffix. Mutation-tested ×3 — and the third mutation initially PASSED because the gate re-derived the coercion it was checking, hence `MLXLTX25Package.coerced` being exposed |
 
 ⚠️ Rows in the table below without a 2.5 marker were measured on 2.3. The doctrine carries;
 the numbers do not (2.5's encoder is a bf16 12B vs 2.3's 4-bit Gemma-3).
@@ -54,8 +55,15 @@ the numbers do not (2.5's encoder is a bf16 12B vs 2.3's 4-bit Gemma-3).
 | `Streaming/GranuleLayout.swift` + `Streaming/BlockStreamer.swift` | **HV2 weight streaming** (`LTX_DEV/STREAMING-PLAN.md`; sibling adaptation of wan-core `b45b879`, receipts `mlxengine-todo/probes/hv2_ltx_blockstreamer.out`): per-block granule files → two slot-backed groups, background pread refill, self-calibrating gate `N ≥ B·F/(2·S)` with output-invisible resident fallback. **LTX deltas:** dict-shaped bind (`DiTWeightStore` — the LoRAStore idiom), sub-256 B tensors are bind-time residents (⚠️ Swift `Data` inlines ≤14 B payloads — the alias seam silently misses them), plain params whose granule dtype ≠ computeDtype load resident WITH the cast (the six fp32 AdaLN tables), numGroups must be EVEN (slot parity), `warmup()` doubles as the S sweep (gate suspended), two-stage arms `gateEvaluationThresholdTokens` with stage-2's N. **Acceptance is per-quant:** memcmp where the resident path self-repeats bit-exactly (bf16, q8 in-process), the documented quant band (≥0.9999 + poison control) for q4. Opt-in: `LTX2Configuration.streamedBlocks` + `granuleRootDirectory` (Codable-excluded) or `LTX_STREAM_GRANULES=<dir>`; granules via `ltx-granule-layout` → `/Volumes/Satechi/Models/ltx-granules/{bf16,q8,q4}`. ⚠️ Any future hand-written block loop must route `acquireGroup`/`releaseGroup` or refuse-while-streamed (the bernini trap). | `--stream-tiny-gate` (synthetic, CI), `--stream-parity-gate [bf16\|q8\|q4]`, `--stream-auto-gate [quant] [videoN]` (ONE rung per process), `--stream-budget-gate [quant] [videoN] [GB] [steps]` |
 
 `Sources/MLXLTX2/` — the engine wrapper: `MLXLTX2Package` (ModelPackage, `.textToVideo` incl. i2v
-via `initImage`), `LTX2Configuration` (+ `WeightPrewarming` conformance), `FrameCodec` (frames→H.264
-+ AAC-muxed MP4), `ImageInput` (decode/preprocess the i2v init frame). `Sources/RunLTX2/` — the
+via `initImage`), **`MLXLTX25Package`** (the 2.5 sibling — a SEPARATE package under the same
+capability, owning no run logic and forwarding to the 2.3 one; the two share every line of
+behaviour and **no numbers**, so it exists for the manifest), `LTX2Configuration` (+ the
+**`LTXFamily`** axis and `WeightPrewarming` conformance), `FrameCodec` (frames→H.264
++ AAC-muxed MP4), `ImageInput` (decode/preprocess the i2v init frame).
+⚠️ **2.5's declared footprints make bf16 INADMISSIBLE on `standard64` — that is intended.** Charge
+46 GB vs a 44.8 budget, off a measured peak already at **96%** of budget at 121f, *below* the
+profile's own 161f cap. `standard64` runs **int8** (28 GB, 62%); **bf16 is a `max128` quant on 2.5**
+and stays the pick wherever bit-reproducibility matters, since q8 is a LEAN tier (AB-R-0038). `Sources/RunLTX2/` — the
 parity-gate CLI, plus **`--bench-e2e`** (`BenchE2E.swift`) — the protocol A/B harness for any
 timing/memory lever claim: ABBA arm alternation, excluded warmups, prewarm, cooldowns, 25 ms phys
 sampling, MEASURABLE/NOISE verdicts, receipts → `probes/`. **Any "X is faster/lighter" claim about
