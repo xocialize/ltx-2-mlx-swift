@@ -9,18 +9,18 @@ every arm: matched output spec, bf16, stock decoder, cache 2 GB, ABBA blocks ≥
 
 | arm | claim | needs | Swift status |
 |---|---|---|---|
-| **A** perf parity 2.3 vs 2.5 | §V item 1 | model axis on `--bench-e2e` | ✅ **RUN — see below** |
-| **B** DFR efficiency | C2 | `DFRPipeline` | ✅ ported + gated — runnable |
-| **C** decode triangle | C3 | **DiffVAE decoder** | ❌ **NOT PORTED** |
-| **D** duration honesty | C6 | **duration head** | ❌ **NOT PORTED** |
+| **A** perf parity 2.3 vs 2.5 | §V item 1 | model axis on `--bench-e2e` | ✅ **RUN — PARITY** |
+| **B** DFR efficiency | C2 | `dfr=` axis + `DFRPipeline` | ✅ **RUN — DFR DOMINATED** |
+| **C** decode triangle | C3 | DiffVAE decoder | ✅ ported + gated 2026-08-14 — runnable |
+| **D** duration honesty | C6 | duration head | ✅ ported + gated 2026-08-14 — runnable |
 | **E** enhancer overhead | C5 | `GemmaTextGenerator` | ✅ exists — runnable |
 | **F** multishot cost | C1 | keyframe slots | ✅ ported + gated — runnable |
 
-⚠️ **Task #7 is not fully executable as written.** Arms C and D need Swift ports that do not exist.
-Both weight files ship in the 2.5 tree — `vae_diffusion_decoder.safetensors` and
-`duration_head.safetensors` — and neither is referenced anywhere in `Sources/LTX2`. Both components
-ARE implemented in the Python-MLX oracle, so this is a port, not a research task. Spun out as its
-own work item; do not treat arms C/D as blocked-on-measurement.
+⚠️ **Arms C and D were BLOCKED when this matrix was first scoped** — the DiffVAE decoder and the
+duration head shipped in the 2.5 weight tree but had no Swift port at all, so task #7 was not
+executable as written. Both were ported and gated on 2026-08-14 (`--diffvae-gate`,
+`--duration-gate`), which unblocked them. Recorded because "blocked on a port" and "blocked on a
+measurement" are different states and the task description implied the latter.
 
 ---
 
@@ -80,3 +80,80 @@ reported a 0.53 cosine as catastrophic failure. Arm A compares **wall-clock only
 **Provenance note:** the receipt records git as `ef5b901+dirty`. The dirt is the harness's own
 output files being written during the run (`probes/armA-perf-parity.out` under `tee`), not source —
 source was committed clean at `ef5b901` immediately before launch.
+
+---
+
+## Arm B — C2 efficiency: 2.5-DFR-1-round vs 2.5-native ❌ DFR DOMINATED
+
+`RunLTX2 --bench-e2e --arm t25-native:model=ltx25,quant=bf16,cache=2
+--arm t25-dfr1:model=ltx25,quant=bf16,cache=2,dfr=1 --size 704x512 --frames 241 --fps 48
+--two-stage --blocks 2 --runs 2 --cooldown 30`
+
+**Matched output spec 241f@48**, reached two ways: native generates it directly; DFR generates
+121f@24 and densifies one temporal round. The request geometry is DERIVED from the single target
+(`BenchArm.request`) and the delivered frame count is verified per run, so matched output is a
+property of the harness rather than of the operator's arithmetic.
+
+Receipts: `probes/bench_e2e_armB-c2-dfr-vs-native_20260814-170202.{md,json}`, log
+`probes/armB-c2-dfr-vs-native.out`.
+
+| arm | median | range | peak (⚠️ UNEVICTED) |
+|---|---|---|---|
+| t25-native | **239.7 s** | 225.7–257.2 | 65.53 GB |
+| t25-dfr1 | **402.1 s** | 385.4–403.0 | 66.12 GB |
+
+**Δmed +162.3 s > spread 31.5 s — MEASURABLE. DFR at one round costs ×1.68 native.**
+
+### The claim does not survive, and it misses its own pre-registered bar
+
+§V item 2 pre-registered: *"FFN-side token-steps ≈ wash vs native at one round; the structural win
+is attention locality + no stage-2 refine on densified frames + it's trained-for … DFR beating
+352.7 s at matched output spec is the claim's honest test."*
+
+- Expected ≈ **wash** (+0%) at one round. Measured **+68%**.
+- The stated honest test was beating **352.7 s**. DFR runs **402.1 s** — and 2.5-native reaches the
+  same deliverable in **239.7 s**.
+
+🔑 **This CONFIRMS the oracle rather than discovering anything.** `ltx-2-mlx/docs/claims/C2-dfr.md`
+already concludes *"Temporal rounds DOMINATED — do not use"*, with native 2.8× cheaper for the
+identical deliverable AND the operator judging native better on quality — dominated on both axes.
+The Swift side now reproduces the cost half independently, at a different geometry
+(704×512×241f@48 vs the oracle's 512×768×97) and a different implementation. Swift measures **×1.68**
+where Python measured **×2.767**, so our DFR is *relatively* cheaper than the oracle's — but the
+direction and the verdict are identical. The port CLAUDE.md's standing note ("rounds are a
+QUALITY/parity feature, NOT a speed lever") is now Swift-measured, not inherited.
+
+### Confidence — why this one is not thermal
+
+Arm A established that this harness's noise is systematic (cold start, intra-block drift). None of
+it can account for this:
+
+- The delta is **5× the combined spread** (162.3 s vs 31.5 s).
+- **It survived order reversal.** DFR ran second in block 0 and FIRST in block 1 — its early-slot
+  time (401.6 s) is within ~1 s of its late-slot times (403.0 / 402.5). Slot position moves DFR by
+  ~1 s; the arm gap is 162 s.
+- Both arms self-reproduce at `cos(first)=1.000000` across blocks.
+- The one cold-start artifact is visible and excluded: native's block-0 warmup ran 149.8 s at
+  `nominal→fair` vs 197.0 s for its block-1 warmup at `fair→fair` — a 47 s within-arm swing that
+  never touches the statistics because warmups are excluded.
+
+### ✅ The memory half of the claim is clean
+
+**DFR costs +0.59 GB peak (66.12 vs 65.53).** The historical "+31 GB for DFR" figure was entirely
+the DiT staying resident under the decoder, not the feature — `dropDiTIfSequential` fixed it and
+this run confirms the fix at a 241f geometry. Consistent with the oracle's +0.90 GB at rounds=0.
+
+### Scope — what this does NOT settle
+
+⚠️ **One round only, one clip length.** The oracle names the untested regime explicitly: *"The one
+regime that could still favour them is longer clips, where native high-fps generation runs out of
+sequence length."* At 241f@48 native has no such trouble, so this measurement cannot speak to it.
+A round-2 arm (`dfr=2`, delivering 481f@96 from 121f@24) is the natural next probe and the harness
+now supports it directly.
+⚠️ **Cost only, not quality.** §V also asks for DFR-vs-native at matched WALL-CLOCK budget,
+operator-judged. That is a blinded A/B, not a bench arm. The oracle's operator already judged
+native better; the Swift side has not re-run that.
+⚠️ Peaks are **UNEVICTED** — not comparable to AB-R-0039/0041's shipping-regime footprints.
+⚠️ `output t25-dfr1 vs t25-native: cos=0.769262` is `divergent-by-design` and meaningless as a
+quality signal: different computation paths. `expectsIdenticalOutput` requires matching `dfrRounds`
+precisely so this is never read as a regression.
