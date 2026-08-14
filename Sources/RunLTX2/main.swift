@@ -1512,8 +1512,18 @@ final class PhysSampler: @unchecked Sendable {
     private let lock = NSLock()
     private var _max: UInt64 = 0
     private var _running = false
+    private var _t0 = Date()
+    /// `LTX_PHYS_TRACE=1` prints a line on every NEW high-water, timestamped from `start()`.
+    ///
+    /// This exists because the profiler's per-span `phys` is a POINT-IN-TIME snapshot taken at
+    /// `end()`, so a phase that peaks mid-span and frees before its boundary under-reports its own
+    /// peak — the encode phase does exactly that (Gemma loads ~24 GB, encodes, self-evicts). Reading
+    /// span rows alone would therefore "prove" the encoder never binds. Interleaving these lines with
+    /// the `[MLXPROF]` rows on stdout attributes each high-water to the span it lands inside, without
+    /// coupling the sampler to the pipeline or adding marks to the shipping path.
+    private let trace = ProcessInfo.processInfo.environment["LTX_PHYS_TRACE"] == "1"
     func start() {
-        lock.lock(); _running = true; lock.unlock()
+        lock.lock(); _running = true; _t0 = Date(); lock.unlock()
         let t = Thread { [weak self] in
             while self?.running == true {
                 let p = physFootprintBytes()
@@ -1525,8 +1535,17 @@ final class PhysSampler: @unchecked Sendable {
         t.start()
     }
     var running: Bool { lock.lock(); defer { lock.unlock() }; return _running }
-    func observe(_ p: UInt64) { lock.lock(); if p > _max { _max = p }; lock.unlock() }
-    func resetMax() { lock.lock(); _max = physFootprintBytes(); lock.unlock() }
+    func observe(_ p: UInt64) {
+        lock.lock()
+        var newHighWater = false
+        if p > _max { _max = p; newHighWater = true }
+        let elapsed = Date().timeIntervalSince(_t0)
+        lock.unlock()
+        if newHighWater && trace {
+            print(String(format: "[PHYS-HW] +%7.1fs  %.2f GB", elapsed, Double(p) / 1_000_000_000.0))
+        }
+    }
+    func resetMax() { lock.lock(); _max = physFootprintBytes(); _t0 = Date(); lock.unlock() }
     func maxBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _max }
     func stop() { lock.lock(); _running = false; lock.unlock() }
 }
@@ -1552,6 +1571,81 @@ func prewarmFiles(_ paths: [URL]) {
             }
         }
     }
+}
+
+/// LTX-2.5 footprint bench — the 2.5 lane of `memBenchGate`.
+///
+/// Separate from the 2.3 lane on purpose: on 2.5 the interesting quant axis is the TEXT ENCODER
+/// (bf16 12B vs the int8 g64 sibling), not the DiT — no quantized 2.5 DiT exists, and building one
+/// is the wrong lever anyway (weight-only int4 on a DiT is measurable quality damage that buys no
+/// speed, while eviction already wins more at bit-identical output).
+///
+/// Reports PER-PHASE attribution, which is the whole point: AB-D-0012 assumed the encode phase binds
+/// on low tiers from a PROJECTED int4-DiT floor that was never measured. Run with
+/// `MLX_PROFILE=1 LTX_PHYS_TRACE=1` and read the `[PHYS-HW]` lines against the `[MLXPROF]` span rows.
+///
+/// ⚠️ `LTX_CACHE_LIMIT_GB` matters for shipping relevance: the bare CLI lane is the only UNCAPPED
+/// path, and the engine ships `min(2 GB, 5% budget)` by default, so an uncapped CLI peak overstates
+/// the app path (measured up to ~11 GB at large geometry on 2.3). This prints which regime it ran in.
+func memBench25Gate(encoderQuant: String, width: Int, height: Int, frames: Int) async throws {
+    let base = "/Volumes/Satechi/Models/xocialize"
+    let treeName = (encoderQuant == "q8" || encoderQuant == "int8") ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    let ltxDir = URL(fileURLWithPath: "\(base)/\(treeName)")
+    guard FileManager.default.fileExists(atPath: ltxDir.path) else {
+        print("[mem-bench25] FAIL ❌ model dir not present: \(ltxDir.path)"); return
+    }
+    // Must resolve as 2.5 from the CHECKPOINT, or the run silently exercises the 2.3 path.
+    guard LTX2Pipeline.isLTX25(ltxDir: ltxDir) else {
+        print("[mem-bench25] FAIL ❌ 2.5 not detected in \(ltxDir.path) — the run would prove nothing")
+        return
+    }
+    let g4 = LTX2Pipeline.gemma4Dir(ltxDir: ltxDir)
+    let capEnv = ProcessInfo.processInfo.environment["LTX_CACHE_LIMIT_GB"]
+    let evictEnv = ProcessInfo.processInfo.environment["LTX_EVICT_DIT"]
+    print("[mem-bench25] tree=\(treeName)  encoder=\(encoderQuant)  envelope=\(width)×\(height)×\(frames)f  path=two-stage")
+    print("[mem-bench25] cache-cap=\(capEnv.map { "\($0) GB" } ?? "UNCAPPED (⚠️ overstates the app path)")  evict-dit=\(evictEnv ?? "pipeline default (false)")")
+
+    var warm = [ltxDir.appendingPathComponent("transformer-distilled.safetensors")]
+    for f in ["connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
+              "audio_vae.safetensors", "vocoder.safetensors", "spatial_upscaler_x2_v1_1.safetensors"] {
+        warm.append(ltxDir.appendingPathComponent(f))
+    }
+    warm.append(contentsOf: ((try? FileManager.default.contentsOfDirectory(at: g4, includingPropertiesForKeys: nil)) ?? [])
+        .filter { $0.pathExtension == "safetensors" })
+    let p0 = Date()
+    prewarmFiles(warm)
+    print(String(format: "[mem-bench25] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
+
+    let sampler = PhysSampler(); sampler.start()
+    let t0 = Date()
+    let pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: g4, transformerPath: nil)
+    let afterLoad = physFootprintBytes()
+    print(String(format: "[mem-bench25] load %.1fs  phys-after-load(DiT only)=%.2f GB",
+                 Date().timeIntervalSince(t0), gbOf(afterLoad)))
+
+    let prompt = "A lone lighthouse on a rocky headland during a storm, waves exploding "
+               + "against the rocks, the beam sweeping through sheets of rain. Cinematic."
+    // Warmup compiles size-specific kernels; excluded from the measured peak.
+    _ = try await pipeline.t2vTwoStage(prompt: prompt, height: height, width: width,
+                                       numFrames: frames, fps: 24, seed: 4242)
+    Memory.clearCache()
+    let floor = physFootprintBytes()
+    print(String(format: "[mem-bench25] resident floor (post-run + clearCache): %.2f GB", gbOf(floor)))
+
+    sampler.resetMax()
+    let r0 = Date()
+    let out = try await pipeline.t2vTwoStage(prompt: prompt, height: height, width: width,
+                                            numFrames: frames, fps: 24, seed: 4242)
+    eval(out.video); if let a = out.audio { eval(a) }
+    let peak = sampler.maxBytes()
+    sampler.stop()
+    let activation = peak > floor ? peak - floor : 0
+    print(String(format: "[mem-bench25] run %.1fs", Date().timeIntervalSince(r0)))
+    print(String(format: "[mem-bench25] PEAK phys_footprint: %.2f GB", gbOf(peak)))
+    print(String(format: "[mem-bench25] DECLARE → residentBytes ≈ %.2f GB (%llu)  peakActivationBytes ≈ %.2f GB (%llu)",
+                 gbOf(floor), floor, gbOf(activation), activation))
+    print(String(format: "[mem-bench25] SUMMARY tree=%@ encoder=%@ geom=%dx%dx%d resident=%llu peak=%llu activation=%llu",
+                 treeName as NSString, encoderQuant as NSString, width, height, frames, floor, peak, activation))
 }
 
 func memBenchGate(quant: String) async throws {
@@ -2250,6 +2344,12 @@ if args.contains("--connector-gate") {
     let n = positional.first.flatMap { Int($0) } ?? 41
     try await encodeStressGate(frames: n, software: args.contains("--software"), hog: args.contains("--hog"),
                                audio: args.contains("--audio"))
+} else if args.contains("--mem-bench25") {
+    // RunLTX2 --mem-bench25 [bf16|q8] [W H F]
+    try await memBench25Gate(encoderQuant: positional.first ?? "bf16",
+                             width: positional.dropFirst().first.flatMap { Int($0) } ?? 448,
+                             height: positional.dropFirst(2).first.flatMap { Int($0) } ?? 320,
+                             frames: positional.dropFirst(3).first.flatMap { Int($0) } ?? 9)
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
 } else if args.contains("--lora-fetch-gate") {
@@ -2320,7 +2420,10 @@ if args.contains("--connector-gate") {
                           frames: ints.count > 2 ? ints[2] : 481)
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
-    print("       RunLTX2 --mem-bench [bf16|int8|int4]   (efficiency-sweep footprint at 704×512×9f)")
+    print("       RunLTX2 --mem-bench [bf16|int8|int4]   (2.3 efficiency-sweep footprint at 704×512×9f)")
+    print("       RunLTX2 --mem-bench25 [bf16|q8] [W H F]  (2.5 footprint; encoder quant is the axis)")
+    print("            └ MLX_PROFILE=1 LTX_PHYS_TRACE=1 for per-phase attribution;")
+    print("              LTX_CACHE_LIMIT_GB=2 for the shipping-path (capped) regime")
     print("       RunLTX2 --speed-bench [bf16|int8|int4] [w] [h] [frames]   (SPEED-PLAN S6 quant ladder, default 704 512 121)")
     print("       RunLTX2 --bench-e2e --arm name:quant=bf16[,decoder=pruna][,cache=GB][,env.K=V] [--arm …]")
     print("                 [--blocks 2] [--runs 2] [--cooldown 45] [--size 704x512] [--frames 24] [--two-stage]")
