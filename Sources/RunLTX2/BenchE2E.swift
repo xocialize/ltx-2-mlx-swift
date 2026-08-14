@@ -20,6 +20,12 @@
 // q4 / pruna arms legitimately DIVERGE the sample — their cosine is recorded, never gated.
 //
 // Usage:
+//   model=<ltx23|ltx25>     which MODEL this arm runs (bench matrix arm A = the 2.3-vs-2.5
+//                           perf-parity gate, LTX25-PORT-PLAN §V). Selects the components tree,
+//                           the encoder root (2.5's Gemma-4 is IN-tree), and the quantized-DiT
+//                           sibling. ⚠️ Cross-MODEL arms compare WALL-CLOCK only — different
+//                           weights, so a cross-arm output cosine there is meaningless and
+//                           `expectsIdenticalOutput` refuses it.
 //   RunLTX2 --bench-e2e --arm base:quant=bf16 --arm lean:quant=bf16,decoder=pruna \
 //       [--blocks 2] [--runs 2] [--cooldown 45] [--size 704x512] [--frames 24] [--fps 24] \
 //       [--two-stage] [--prompt "..."] [--seed 42] [--label pruna-ab] [--out probes]
@@ -48,14 +54,45 @@ func benchGemma() -> String {
     ProcessInfo.processInfo.environment["LTX_BENCH_GEMMA"] ?? defaultGemma
 }
 
+/// The 2.5 trees live under a different namespace than the 2.3 ones (`xocialize` vs `dgrauet`),
+/// which is why `model=` carries a root rather than just a name.
+func benchBase25() -> String {
+    ProcessInfo.processInfo.environment["LTX_BENCH_BASE_25"] ?? "/Volumes/Satechi/Models/xocialize"
+}
+
 struct BenchArm {
     let name: String
+    let model: String          // ltx23 | ltx25 — the MODEL axis (bench matrix arm A, C2 arm B)
     let quant: String          // bf16 | q8 | q4
     let decoder: String        // stock | pruna
     let cacheGB: Int?
     let env: [String: String]
 
+    var is25: Bool { model == "ltx25" || model == "2.5" }
+
+    /// The components tree for this arm. 2.5's Gemma-4 encoder is IN this directory, so the
+    /// gemma root is derived from it rather than from `LTX_BENCH_GEMMA`.
+    var ltxDir: URL {
+        is25 ? URL(fileURLWithPath: "\(benchBase25())/ltx-2.5-mlx")
+             : URL(fileURLWithPath: "\(benchBase())/ltx-2.3-mlx")
+    }
+    var gemmaDir: URL {
+        is25 ? LTX2Pipeline.gemma4Dir(ltxDir: ltxDir) : URL(fileURLWithPath: benchGemma())
+    }
+
+    /// ⚠️ The quantized-DiT sibling suffix differs by model, and getting it wrong is SILENT.
+    /// On 2.5, `-q8` is the int8 TEXT-ENCODER tree whose `transformer-distilled.safetensors`
+    /// symlinks back to bf16 — an arm labelled q8 would benchmark bf16 and report a null delta as
+    /// a finding. The quantized 2.5 DiT is `-ditq8`; there is no q4 2.5 DiT (AB-D-0013/0015).
+    /// Same rule as `LTXFamily.transformerRepoSuffix`; kept in sync deliberately, and
+    /// `--bench-arm-gate` pins the two together.
     var transformerPath: URL? {
+        if is25 {
+            switch quant {
+            case "q8", "int8": return URL(fileURLWithPath: "\(benchBase25())/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+            default: return nil          // bf16 rides the components tree; q4 does not exist
+            }
+        }
         switch quant {
         case "q8", "int8": return URL(fileURLWithPath: "\(benchBase())/ltx-2.3-mlx-q8/transformer-distilled.safetensors")
         case "q4", "int4": return URL(fileURLWithPath: "\(benchBase())/ltx-2.3-mlx-q4/transformer-distilled.safetensors")
@@ -63,7 +100,8 @@ struct BenchArm {
         }
     }
     var vaeDecoderPath: URL? {
-        decoder == "pruna"
+        // PrunaVAED is an LTX-2.3 derivative; there is no 2.5 lean decoder.
+        decoder == "pruna" && !is25
             ? URL(fileURLWithPath: "\(benchBase())/ltx-2.3-mlx/vae_decoder_pruna.safetensors")
             : nil
     }
@@ -71,22 +109,27 @@ struct BenchArm {
     /// exactly-deterministic path (5-run spread 0). q8 is documented NONDETERMINISTIC (int8
     /// graph-order sensitivity, intra-arm spread ~3.5e-3 — the flaky-gate saga), so its cross-arm
     /// cosine is only meaningful against its own intra-arm spread; q4 and pruna diverge by design.
+    /// ⚠️ **Different MODELS never expect identical output** — 2.3 and 2.5 are different weights,
+    /// so a cross-arm cosine there is meaningless and must not be read as a reproducibility signal.
+    /// Bench matrix arm A compares WALL-CLOCK across models, never pixels.
     func expectsIdenticalOutput(to ref: BenchArm) -> Bool {
-        quant == ref.quant && decoder == ref.decoder && quant == "bf16"
+        model == ref.model && quant == ref.quant && decoder == ref.decoder && quant == "bf16"
     }
 
     static func parse(_ spec: String) throws -> BenchArm {
         guard let colon = spec.firstIndex(of: ":") else {
-            return BenchArm(name: spec, quant: "bf16", decoder: "stock", cacheGB: nil, env: [:])
+            return BenchArm(name: spec, model: "ltx23", quant: "bf16", decoder: "stock",
+                            cacheGB: nil, env: [:])
         }
         let name = String(spec[..<colon])
-        var quant = "bf16", decoder = "stock"
+        var model = "ltx23", quant = "bf16", decoder = "stock"
         var cacheGB: Int? = nil
         var env: [String: String] = [:]
         for kv in spec[spec.index(after: colon)...].split(separator: ",") {
             let parts = kv.split(separator: "=", maxSplits: 1).map(String.init)
             guard parts.count == 2 else { throw BenchError.badSpec("\(spec) → '\(kv)'") }
             switch parts[0] {
+            case "model": model = parts[1]
             case "quant": quant = parts[1]
             case "decoder": decoder = parts[1]
             case "cache": cacheGB = Int(parts[1])
@@ -95,7 +138,20 @@ struct BenchArm {
                 else { throw BenchError.badSpec("\(spec) → unknown key '\(parts[0])'") }
             }
         }
-        return BenchArm(name: name, quant: quant, decoder: decoder, cacheGB: cacheGB, env: env)
+        guard ["ltx23", "2.3", "ltx25", "2.5"].contains(model) else {
+            throw BenchError.badSpec("\(spec) → unknown model '\(model)' (ltx23 | ltx25)")
+        }
+        // Refuse a combination that would silently benchmark the wrong weights: 2.5 has no q4 DiT,
+        // and 2.5 + pruna would quietly fall back to the stock decoder and report a null delta.
+        let arm = BenchArm(name: name, model: model, quant: quant, decoder: decoder,
+                           cacheGB: cacheGB, env: env)
+        if arm.is25, quant == "q4" || quant == "int4" {
+            throw BenchError.badSpec("\(spec) → no q4 LTX-2.5 DiT exists (AB-D-0013)")
+        }
+        if arm.is25, decoder == "pruna" {
+            throw BenchError.badSpec("\(spec) → PrunaVAED is a 2.3 derivative; no 2.5 lean decoder")
+        }
+        return arm
     }
 }
 
@@ -235,8 +291,27 @@ func benchE2E() async throws {
     print("[bench-e2e] geometry=\(geometry) seed=\(seed) prompt=\"\(prompt)\"")
     print("[bench-e2e] host=\(hwModel) \(memGB)GB | \(osVer) | \(gitSHA)\(gitDirty)")
 
-    let ltxDir = URL(fileURLWithPath: "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx")
-    let gemmaDir = URL(fileURLWithPath: defaultGemma)
+    // Model roots are PER-ARM (bench matrix arm A compares 2.3 vs 2.5), so they are resolved
+    // inside the block loop from `arm.ltxDir` / `arm.gemmaDir` rather than pinned here.
+    // Fail fast and loudly: a missing tree partway through a multi-hour ABBA run is the worst
+    // possible time to find out, and a 2.5 arm pointed at a tree that reads as 2.3 would produce
+    // a perfectly plausible number for the wrong model.
+    for arm in arms {
+        guard FileManager.default.fileExists(atPath: arm.ltxDir.path) else {
+            print("[bench-e2e] FAIL ❌ arm '\(arm.name)': missing tree \(arm.ltxDir.path)"); return
+        }
+        guard LTX2Pipeline.isLTX25(ltxDir: arm.ltxDir) == arm.is25 else {
+            print("[bench-e2e] FAIL ❌ arm '\(arm.name)': model=\(arm.model) but "
+                  + "\(arm.ltxDir.path) resolves as \(LTX2Pipeline.isLTX25(ltxDir: arm.ltxDir) ? "2.5" : "2.3")")
+            return
+        }
+        if let t = arm.transformerPath, !FileManager.default.fileExists(atPath: t.path) {
+            print("[bench-e2e] FAIL ❌ arm '\(arm.name)': missing transformer \(t.path)"); return
+        }
+        print("[bench-e2e] arm '\(arm.name)' → model=\(arm.model) quant=\(arm.quant) "
+              + "decoder=\(arm.decoder) tree=\(arm.ltxDir.lastPathComponent) "
+              + "dit=\(arm.transformerPath?.deletingLastPathComponent().lastPathComponent ?? "in-tree")")
+    }
 
     // Every env key any arm sets gets cleared between blocks so state can never leak across arms.
     let allEnvKeys = Set(arms.flatMap { $0.env.keys })
@@ -275,7 +350,10 @@ func benchE2E() async throws {
             for (k, v) in arm.env { setenv(k, v, 1) }
             Memory.cacheLimit = arm.cacheGB.map { $0 * 1_000_000_000 } ?? baselineCacheLimit
 
-            // Prewarm exactly the files this arm will fault.
+            // Prewarm exactly the files this arm will fault — from THIS arm's tree (I9: a bf16
+            // working set faulting mid-command-buffer aborts, it does not merely run slow, so an
+            // arm prewarming another arm's tree would be measuring paging).
+            let ltxDir = arm.ltxDir, gemmaDir = arm.gemmaDir
             let p0 = Date()
             var warm = [arm.transformerPath ?? ltxDir.appendingPathComponent("transformer-distilled.safetensors"),
                         arm.vaeDecoderPath ?? ltxDir.appendingPathComponent("vae_decoder.safetensors"),
