@@ -1589,7 +1589,13 @@ func prewarmFiles(_ paths: [URL]) {
 /// the app path (measured up to ~11 GB at large geometry on 2.3). This prints which regime it ran in.
 func memBench25Gate(encoderQuant: String, width: Int, height: Int, frames: Int) async throws {
     let base = "/Volumes/Satechi/Models/xocialize"
-    let treeName = (encoderQuant == "q8" || encoderQuant == "int8") ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    // "q8" = int8 ENCODER sibling; "ditq8" = int8 DiT sibling (bf16 encoder); "bf16" = stock.
+    let treeName: String
+    switch encoderQuant {
+    case "q8", "int8": treeName = "ltx-2.5-mlx-q8"
+    case "ditq8":      treeName = "ltx-2.5-mlx-ditq8"
+    default:           treeName = "ltx-2.5-mlx"
+    }
     let ltxDir = URL(fileURLWithPath: "\(base)/\(treeName)")
     guard FileManager.default.fileExists(atPath: ltxDir.path) else {
         print("[mem-bench25] FAIL ❌ model dir not present: \(ltxDir.path)"); return
