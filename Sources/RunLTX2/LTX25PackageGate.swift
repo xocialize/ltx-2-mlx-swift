@@ -122,11 +122,16 @@ func ltx25PackageGate() {
           Set(quants) == [.bf16, .int8], "\(quants.map(\.rawValue))")
     let int8fp = m.requirements.footprints.first { $0.quant == .int8 }
     let bf16fp = m.requirements.footprints.first { $0.quant == .bf16 }
-    // Measured: bf16 phys-after-load 39.92 / peak 43.11; int8 22.09 / 25.60. Declared resident must
-    // cover phys-after-load, and resident + activation must cover the measured PEAK — that sum is
-    // exactly what the governor charges, so an under-sum is an admission bug.
+    // WORST measured value across the tested envelope (704×512 at 121f AND 161f — 161f being
+    // `standard64.maxFrames`, so this covers the profile's full frame range, not a point in it):
+    //   bf16 phys-after-load max(39.92, 39.89) = 39.92 · peak max(43.11, 43.26) = 43.26
+    //   int8 phys-after-load max(22.09, 22.09) = 22.09 · peak max(25.60, 25.55) = 25.60
+    // Declared resident must cover phys-after-load, and resident + activation must cover the
+    // measured PEAK — that sum is exactly what the governor charges, so an under-sum is an
+    // admission bug. NB these thresholds deliberately do NOT come from the bench's "resident floor"
+    // line, which swings 9 GB between these two geometries on both arms (AB-R-0041).
     let bf16Covers = (bf16fp.map { $0.residentBytes >= 39_920_000_000 } ?? false)
-        && (bf16fp.map { $0.residentBytes + $0.peakActivationBytes >= 43_110_000_000 } ?? false)
+        && (bf16fp.map { $0.residentBytes + $0.peakActivationBytes >= 43_260_000_000 } ?? false)
     let int8Covers = (int8fp.map { $0.residentBytes >= 22_090_000_000 } ?? false)
         && (int8fp.map { $0.residentBytes + $0.peakActivationBytes >= 25_600_000_000 } ?? false)
     check("15 declared resident+activation covers the MEASURED peak", bf16Covers && int8Covers,

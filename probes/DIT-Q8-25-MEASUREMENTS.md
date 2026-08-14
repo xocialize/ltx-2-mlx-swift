@@ -22,13 +22,16 @@ later 2.3 and small-N runs used the fixed harness throughout.
 `LTX_CACHE_LIMIT_GB=2 LTX_EVICT_DIT=1 RunLTX2 --mem-bench25 <tree> 704 512 121`
 (unprofiled / evicted / capped — the regime the engine actually runs).
 
-| 704×512 | 9f | 121f | Δ over 13.4× frames |
-|---|---|---|---|
-| bf16 DiT | 42.54 (AB-R-0036) | **43.11** | +0.57 GB (+1.3%) |
-| **q8 DiT** | 25.03 (AB-R-0037) | **25.60** | **+0.57 GB (+2.3%)** |
+| 704×512 PEAK | 9f | 121f | **161f** | 9f → 161f |
+|---|---|---|---|---|
+| bf16 DiT | 42.54 (AB-R-0036) | 43.11 | **43.26** | +0.72 GB (+1.7%) |
+| **q8 DiT** | 25.03 (AB-R-0037) | 25.60 | **25.55** | **+0.52 GB (+2.1%)** |
 
-**q8 is flat across frame count in exactly the way bf16 is.** The inference AB-R-0038 rested on
-now has a measurement under it.
+**q8 is flat across frame count in exactly the way bf16 is.** The inference AB-R-0038 rested on now
+has a measurement under it — and 161f is `standard64.maxFrames`, so the declaration covers that
+profile's **full frame range** rather than a point inside it. ⚠️ `max128.maxFrames` is **481** and
+remains UNMEASURED on 2.5; flatness over 9→161f is strong evidence but 481f is a 3× extension, and
+this document exists because that class of extrapolation was worth replacing with a measurement.
 
 ✅ **CONTROL — the bf16 arm was re-run at 121f on the SAME BINARY**, in the same session, before
 the binary was touched again. It read **43.11 GB against AB-R-0036's 43.10 GB**: the instrument
@@ -37,17 +40,23 @@ this identical geometry. So the +0.57 GB frame-count flatness is a real flat, no
 cannot discriminate — this project's recurring trap, and the reason AB-R-0036 demanded a
 must-fail control for its own flat curve.
 
-| 121f, same binary | PEAK | phys-after-load (DiT only) | resident floor |
-|---|---|---|---|
-| bf16 | 43.11 GB | 39.92 | 11.38 |
-| q8 | 25.60 GB | 22.09 | 11.39 |
+| same binary | PEAK 121f | PEAK 161f | phys-after-load 121f | 161f | "resident floor" 121f | 161f |
+|---|---|---|---|---|---|---|
+| bf16 | 43.11 | 43.26 | 39.92 | 39.89 | 11.38 | **2.34** |
+| q8 | 25.60 | 25.55 | 22.09 | 22.09 | 11.39 | **2.43** |
 
-⚠️ **Only PEAK is arm-attributable at 121f.** Both arms report a ~11.4 GB "resident floor", where
-the 9f runs read 4.01 (bf16) and 4.46 (q8). The floor is sampled once, post-warmup-run and
-post-`clearCache`, so under eviction it measures whatever mmap pages the OS happened to retain —
-and it lands on the same value for a 38 GB and a 20 GB checkpoint, which is the tell. The derived
-`activation = peak − floor` split inherits that contamination at 121f. **Declare from PEAK and
-`phys-after-load`; do not quote the 121f resident/activation split per arm.**
+🚨 **The "resident floor" line is not a resident floor — DO NOT DECLARE FROM IT.** It swings
+**~9 GB between two adjacent geometries, on both arms at once**, while `phys-after-load` moves
+0.00–0.03 GB over the same change. It is a single sample taken post-warmup-run and
+post-`clearCache`, so under eviction it measures whatever mmap pages the OS happened to retain.
+Two independent tells: at 121f it reads the *same* ~11.4 GB for a 38 GB and a 20 GB checkpoint, and
+at 161f it drops to ~2.4 GB for both.
+
+⚠️ **The harness actively invites this mistake.** Its `DECLARE → residentBytes ≈ …` line is computed
+from that floor, so at 161f it recommends **2.34 GB resident for the 40 GB bf16 DiT** — an ~17×
+under-declaration the memory governor would act on. `MLXLTX25Package` declares from
+**`phys-after-load`** (the quantity that is stable across geometry) and **PEAK**; the derived
+`activation = peak − floor` column is unusable at both geometries.
 
 ---
 

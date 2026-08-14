@@ -37,14 +37,17 @@ public final class MLXLTX25Package: ModelPackage {
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma-4 + connector + DiT + VAEs + vocoder)
             requirements: RequirementsManifest(
-                // SPLIT FOOTPRINT (contract 1.14.0) — MEASURED 2026-08-14 at the LARGEST shipping
-                // envelope, 704×512×121f two-stage, in the regime the engine actually runs:
-                // UNPROFILED + `LTX_EVICT_DIT=1` + `LTX_CACHE_LIMIT_GB=2`. Receipts AB-R-0039 /
-                // AB-R-0036 / AB-R-0037; harness `RunLTX2 --mem-bench25`.
+                // SPLIT FOOTPRINT (contract 1.14.0) — MEASURED 2026-08-14 at 704×512, two-stage,
+                // in the regime the engine actually runs: UNPROFILED + `LTX_EVICT_DIT=1` +
+                // `LTX_CACHE_LIMIT_GB=2`. Receipts AB-R-0039 / AB-R-0041; harness `--mem-bench25`.
                 //
-                //   quant   phys-after-load (DiT)   PEAK      → declared resident / activation
-                //   bf16    39.92 GB                43.11 GB    40 GB / 6 GB
-                //   int8    22.09 GB                25.60 GB    23 GB / 5 GB
+                //   quant   phys-after-load      PEAK              → declared resident / activation
+                //           121f     161f        121f     161f
+                //   bf16    39.92    39.89       43.11    43.26      40 GB / 6 GB
+                //   int8    22.09    22.09       25.60    25.55      23 GB / 5 GB
+                //
+                // 161f is `standard64.maxFrames`, so the declaration now covers that profile's FULL
+                // envelope rather than a point inside it.
                 //
                 // 🔑 **Declared in the EVICTED regime on purpose.** The footprint SHAPE INVERTS
                 // under eviction — unevicted, resident is 40.34 GB and activation 22.45; evicted it
@@ -52,24 +55,31 @@ public final class MLXLTX25Package: ModelPackage {
                 // (`LTX2Profile.evictDiTBeforeDecode`), so declaring from an unevicted run would
                 // overstate the resident floor ~19×. These numbers are the shipping regime.
                 //
-                // 🔑 **PEAK IS FLAT ACROSS THE TESTED ENVELOPE** — +0.57 GB from 9f to 121f on BOTH
-                // quants (13.4× frames), and +0.28 GB over a 2.4× area increase. 2.5 is
-                // weight-dominated, not activation-dominated, so the transient is small and the
-                // floor is the whole story. ⚠️ Tested envelope is ≤704×512×121f; 161f (the
-                // profile cap) and larger geometries are NOT covered — re-measure before extending.
+                // 🔑 **PEAK IS FLAT ACROSS THE WHOLE TESTED ENVELOPE** — 9f→121f is +0.57 GB on
+                // BOTH quants, 121f→161f is +0.15 (bf16) and −0.05 (int8), and a 2.4× area increase
+                // is +0.28. 2.5 is weight-dominated, not activation-dominated: the transient is
+                // small and the weight floor is the whole story.
+                // ⚠️ Tested envelope is ≤704×512×161f. **`max128.maxFrames` is 481 and is NOT
+                // covered** — flatness over 9→161f is strong evidence, but 481f is a 3× extension
+                // beyond anything measured on 2.5 and this file has just finished replacing exactly
+                // that kind of extrapolation with a measurement. bf16's charge leaves 62 GB of
+                // max128 headroom, so the risk is low; the CLAIM is still unmade.
                 //
-                // ⚠️ `residentBytes` comes from phys-after-load, NOT from the bench's "resident
-                // floor" line. At 121f that line reads ~11.4 GB for BOTH quants — a 38 GB and a
-                // 20 GB checkpoint cannot have the same floor; it is a single post-`clearCache`
-                // sample measuring retained mmap pages. Only PEAK and phys-after-load are
-                // arm-attributable there (AB-R-0039).
+                // 🚨 **`residentBytes` comes from phys-after-load, NOT from the bench's "resident
+                // floor" line — and that line is actively misleading.** It reads ~11.4 GB for BOTH
+                // quants at 121f and ~2.4 GB for both at 161f: a **9 GB swing between adjacent
+                // geometries**, on both arms, while phys-after-load moves 0.00–0.03 GB. It is one
+                // post-`clearCache` sample of retained mmap pages under eviction, not a floor. The
+                // harness's own `DECLARE →` line is computed from it, so following that suggestion
+                // would declare a 2.4 GB resident for a 40 GB checkpoint. Only PEAK and
+                // phys-after-load are arm-attributable (AB-R-0039, AB-R-0041).
                 //
                 // 🔑 **CONSEQUENCE, and it is intended: bf16 does NOT fit `standard64`.** The
                 // declared charge (resident + activation) is 46 GB against that tier's 44.8 GB
                 // budget, so the governor refuses it there. That is honest rather than unfortunate
-                // — the MEASURED peak is already 43.11 GB = **96% of budget** at 121f, which is
-                // BELOW the profile's own 161f cap, so "2.5 bf16 runs on 64 GB" was never true with
-                // margin. `standard64` runs the **int8** DiT (28 GB charge, 62%); bf16 is a
+                // — the MEASURED peak is **43.26 GB = 97% of budget at 161f**, the profile's own
+                // frame cap, so "2.5 bf16 runs on 64 GB" is not true with any margin. `standard64`
+                // runs the **int8** DiT (28 GB charge, 62%); bf16 is a
                 // `max128` quant on 2.5 and stays the choice wherever bit-reproducibility against
                 // bf16 is required (q8 is a LEAN tier — it diverges from bf16 and was judged
                 // equally good, AB-R-0038, not a faithful reproduction of it).

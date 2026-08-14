@@ -1,0 +1,20 @@
+===== arm=ditq8 geom=704x512x161 =====
+[mem-bench25] tree=ltx-2.5-mlx-ditq8  encoder=ditq8  envelope=704×512×161f  path=two-stage
+[mem-bench25] cache-cap=2 GB  evict-dit=1
+[mem-bench25] prewarm 9.0s (8 files)
+[mem-bench25] load 0.7s  phys-after-load(DiT only)=22.09 GB
+[mem-bench25] resident floor (post-run + clearCache): 2.43 GB
+[mem-bench25] run 110.6s
+[mem-bench25] PEAK phys_footprint: 25.55 GB
+[mem-bench25] DECLARE → residentBytes ≈ 2.43 GB (2425096208)  peakActivationBytes ≈ 23.12 GB (23120395144)
+[mem-bench25] SUMMARY tree=ltx-2.5-mlx-ditq8 encoder=ditq8 geom=704x512x161 resident=2425096208 peak=25545491352 activation=23120395144
+===== arm=bf16 geom=704x512x161 =====
+[mem-bench25] tree=ltx-2.5-mlx  encoder=bf16  envelope=704×512×161f  path=two-stage
+[mem-bench25] cache-cap=2 GB  evict-dit=1
+[mem-bench25] prewarm 7.6s (8 files)
+[mem-bench25] load 1.4s  phys-after-load(DiT only)=39.89 GB
+[mem-bench25] resident floor (post-run + clearCache): 2.34 GB
+[mem-bench25] run 163.9s
+[mem-bench25] PEAK phys_footprint: 43.26 GB
+[mem-bench25] DECLARE → residentBytes ≈ 2.34 GB (2336065336)  peakActivationBytes ≈ 40.93 GB (40928882120)
+[mem-bench25] SUMMARY tree=ltx-2.5-mlx encoder=bf16 geom=704x512x161 resident=2336065336 peak=43264947456 activation=40928882120
