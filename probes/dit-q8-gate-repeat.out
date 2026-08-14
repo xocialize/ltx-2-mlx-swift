@@ -1,0 +1,10 @@
+run1 [dit-q8-gate] VIDEO cosine=0.999904 maxAbs=0.1343  AUDIO cosine=0.999997 maxAbs=0.0123
+run1 [dit-q8-gate] PASS ✅
+run2 [dit-q8-gate] VIDEO cosine=0.999915 maxAbs=0.1133  AUDIO cosine=0.999997 maxAbs=0.0128
+run2 [dit-q8-gate] PASS ✅
+run3 [dit-q8-gate] VIDEO cosine=0.999895 maxAbs=0.1385  AUDIO cosine=0.999986 maxAbs=0.0252
+run3 [dit-q8-gate] PASS ✅
+run4 [dit-q8-gate] VIDEO cosine=0.999907 maxAbs=0.1289  AUDIO cosine=0.999997 maxAbs=0.0126
+run4 [dit-q8-gate] PASS ✅
+run5 [dit-q8-gate] VIDEO cosine=0.999869 maxAbs=0.1708  AUDIO cosine=0.999920 maxAbs=0.0687
+run5 [dit-q8-gate] PASS ✅

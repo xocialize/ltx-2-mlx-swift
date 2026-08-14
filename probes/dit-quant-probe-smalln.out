@@ -1,0 +1,341 @@
+[driver] reps=3  arms=bf16-23 q8-23 bf16 ditq8  geom=448 320 9  out=probes/dit25probe-smalln  binary=./.build/debug/RunLTX2
+[driver] === arm=bf16-23 rep=1 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 1.4s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-23-1.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-23-1.safetensors
+[driver] === arm=q8-23 rep=1 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 0.7s
+[dit25-probe] wrote probes/dit25probe-smalln/q8-23-1.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/q8-23-1.safetensors
+[driver] === arm=bf16 rep=1 ===
+[dit25-probe] arm=bf16 tree=ltx-2.5-mlx isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 6.4s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-1.safetensors
+[dit25-probe] SUMMARY arm=bf16 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-1.safetensors
+[driver] === arm=ditq8 rep=1 ===
+[dit25-probe] arm=ditq8 tree=ltx-2.5-mlx-ditq8 isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 3.6s
+[dit25-probe] wrote probes/dit25probe-smalln/ditq8-1.safetensors
+[dit25-probe] SUMMARY arm=ditq8 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/ditq8-1.safetensors
+[driver] === arm=bf16-23 rep=2 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 6.5s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-23-2.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-23-2.safetensors
+[driver] === arm=q8-23 rep=2 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 3.6s
+[dit25-probe] wrote probes/dit25probe-smalln/q8-23-2.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/q8-23-2.safetensors
+[driver] === arm=bf16 rep=2 ===
+[dit25-probe] arm=bf16 tree=ltx-2.5-mlx isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 6.4s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-2.safetensors
+[dit25-probe] SUMMARY arm=bf16 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-2.safetensors
+[driver] === arm=ditq8 rep=2 ===
+[dit25-probe] arm=ditq8 tree=ltx-2.5-mlx-ditq8 isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 3.6s
+[dit25-probe] wrote probes/dit25probe-smalln/ditq8-2.safetensors
+[dit25-probe] SUMMARY arm=ditq8 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/ditq8-2.safetensors
+[driver] === arm=bf16-23 rep=3 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 6.4s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-23-3.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-23-3.safetensors
+[driver] === arm=q8-23 rep=3 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 3.6s
+[dit25-probe] wrote probes/dit25probe-smalln/q8-23-3.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/q8-23-3.safetensors
+[driver] === arm=bf16 rep=3 ===
+[dit25-probe] arm=bf16 tree=ltx-2.5-mlx isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 6.4s
+[dit25-probe] wrote probes/dit25probe-smalln/bf16-3.safetensors
+[dit25-probe] SUMMARY arm=bf16 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/bf16-3.safetensors
+[driver] === arm=ditq8 rep=3 ===
+[dit25-probe] arm=ditq8 tree=ltx-2.5-mlx-ditq8 isLTX25=true
+[dit25-probe] geom=448x320x9f → latent 2x10x14  videoTokens=280 audioTokens=9 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 3.6s
+[dit25-probe] wrote probes/dit25probe-smalln/ditq8-3.safetensors
+[dit25-probe] SUMMARY arm=ditq8 videoTokens=280 audioTokens=9 sigma=0.909375 out=probes/dit25probe-smalln/ditq8-3.safetensors
+
+[driver] ================= ALL PAIRS =================
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999994 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-1.safetensors vs bf16-23-2.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999994 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-1.safetensors vs bf16-23-3.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99958420 maxAbs=0.497848   AUDIO cosine=0.99994326 maxAbs=0.058587
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99722171 maxAbs=1.341937   AUDIO cosine=0.96339369 maxAbs=1.578866
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99738711 maxAbs=1.295257   AUDIO cosine=0.96580821 maxAbs=1.503030
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999994 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-2.safetensors vs bf16-23-3.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99958420 maxAbs=0.497848   AUDIO cosine=0.99994326 maxAbs=0.058587
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99722171 maxAbs=1.341937   AUDIO cosine=0.96339369 maxAbs=1.578866
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99738711 maxAbs=1.295257   AUDIO cosine=0.96580821 maxAbs=1.503030
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99958420 maxAbs=0.497848   AUDIO cosine=0.99994326 maxAbs=0.058587
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99722171 maxAbs=1.341937   AUDIO cosine=0.96339369 maxAbs=1.578866
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99738711 maxAbs=1.295257   AUDIO cosine=0.96580821 maxAbs=1.503030
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99794078 maxAbs=0.863479   AUDIO cosine=0.96398753 maxAbs=1.564549
+[dit25-cmp] RESULT q8-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99794078 audioCos=0.96398753 videoMaxAbs=0.863479 audioMaxAbs=1.564549 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99808216 maxAbs=0.835986   AUDIO cosine=0.96634763 maxAbs=1.488713
+[dit25-cmp] RESULT q8-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99808216 audioCos=0.96634763 videoMaxAbs=0.835986 audioMaxAbs=1.488713 bitExact=no
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999124 maxAbs=0.046680   AUDIO cosine=0.99993622 maxAbs=0.075835
+[dit25-cmp] RESULT q8-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99999124 audioCos=0.99993622 videoMaxAbs=0.046680 audioMaxAbs=0.075835 bitExact=no
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] ⚠️ input in_video_text differs, maxAbs=4.575e+01
+[dit25-cmp] ⚠️ input in_audio_text differs, maxAbs=3.071e+01
+[dit25-cmp] FAIL ❌ input in_kf_mask present in only one file — these arms are not comparable
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-1.safetensors vs bf16-2.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-1.safetensors vs bf16-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99518871 maxAbs=1.071877   AUDIO cosine=0.99937767 maxAbs=0.264270
+[dit25-cmp] RESULT bf16-1.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99867451 maxAbs=0.619782   AUDIO cosine=0.99962574 maxAbs=0.179009
+[dit25-cmp] RESULT bf16-1.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99713171 maxAbs=0.545818   AUDIO cosine=0.99984151 maxAbs=0.146889
+[dit25-cmp] RESULT bf16-1.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-2.safetensors vs bf16-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99518871 maxAbs=1.071877   AUDIO cosine=0.99937767 maxAbs=0.264270
+[dit25-cmp] RESULT bf16-2.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99867451 maxAbs=0.619782   AUDIO cosine=0.99962574 maxAbs=0.179009
+[dit25-cmp] RESULT bf16-2.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99713171 maxAbs=0.545818   AUDIO cosine=0.99984151 maxAbs=0.146889
+[dit25-cmp] RESULT bf16-2.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99518871 maxAbs=1.071877   AUDIO cosine=0.99937767 maxAbs=0.264270
+[dit25-cmp] RESULT bf16-3.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99867451 maxAbs=0.619782   AUDIO cosine=0.99962574 maxAbs=0.179009
+[dit25-cmp] RESULT bf16-3.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99713171 maxAbs=0.545818   AUDIO cosine=0.99984151 maxAbs=0.146889
+[dit25-cmp] RESULT bf16-3.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99376428 maxAbs=1.189357   AUDIO cosine=0.99872583 maxAbs=0.418785
+[dit25-cmp] RESULT ditq8-1.safetensors vs ditq8-2.safetensors videoCos=0.99376428 audioCos=0.99872583 videoMaxAbs=1.189357 audioMaxAbs=0.418785 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99274635 maxAbs=1.266516   AUDIO cosine=0.99903625 maxAbs=0.391812
+[dit25-cmp] RESULT ditq8-1.safetensors vs ditq8-3.safetensors videoCos=0.99274635 audioCos=0.99903625 videoMaxAbs=1.266516 audioMaxAbs=0.391812 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99648815 maxAbs=0.597008   AUDIO cosine=0.99973041 maxAbs=0.259254
+[dit25-cmp] RESULT ditq8-2.safetensors vs ditq8-3.safetensors videoCos=0.99648815 audioCos=0.99973041 videoMaxAbs=0.597008 audioMaxAbs=0.259254 bitExact=no
+
+[driver] SPREAD SUMMARY
+bf16-23-1.safetensors vs bf16-23-2.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-1.safetensors vs bf16-23-3.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-1.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+bf16-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+bf16-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+bf16-23-2.safetensors vs bf16-23-3.safetensors videoCos=0.99999994 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-2.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+bf16-23-2.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+bf16-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+bf16-23-3.safetensors vs q8-23-1.safetensors videoCos=0.99958420 audioCos=0.99994326 videoMaxAbs=0.497848 audioMaxAbs=0.058587 bitExact=no
+bf16-23-3.safetensors vs q8-23-2.safetensors videoCos=0.99722171 audioCos=0.96339369 videoMaxAbs=1.341937 audioMaxAbs=1.578866 bitExact=no
+bf16-23-3.safetensors vs q8-23-3.safetensors videoCos=0.99738711 audioCos=0.96580821 videoMaxAbs=1.295257 audioMaxAbs=1.503030 bitExact=no
+q8-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99794078 audioCos=0.96398753 videoMaxAbs=0.863479 audioMaxAbs=1.564549 bitExact=no
+q8-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99808216 audioCos=0.96634763 videoMaxAbs=0.835986 audioMaxAbs=1.488713 bitExact=no
+q8-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99999124 audioCos=0.99993622 videoMaxAbs=0.046680 audioMaxAbs=0.075835 bitExact=no
+bf16-1.safetensors vs bf16-2.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-1.safetensors vs bf16-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-1.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+bf16-1.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+bf16-1.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+bf16-2.safetensors vs bf16-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-2.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+bf16-2.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+bf16-2.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+bf16-3.safetensors vs ditq8-1.safetensors videoCos=0.99518871 audioCos=0.99937767 videoMaxAbs=1.071877 audioMaxAbs=0.264270 bitExact=no
+bf16-3.safetensors vs ditq8-2.safetensors videoCos=0.99867451 audioCos=0.99962574 videoMaxAbs=0.619782 audioMaxAbs=0.179009 bitExact=no
+bf16-3.safetensors vs ditq8-3.safetensors videoCos=0.99713171 audioCos=0.99984151 videoMaxAbs=0.545818 audioMaxAbs=0.146889 bitExact=no
+ditq8-1.safetensors vs ditq8-2.safetensors videoCos=0.99376428 audioCos=0.99872583 videoMaxAbs=1.189357 audioMaxAbs=0.418785 bitExact=no
+ditq8-1.safetensors vs ditq8-3.safetensors videoCos=0.99274635 audioCos=0.99903625 videoMaxAbs=1.266516 audioMaxAbs=0.391812 bitExact=no
+ditq8-2.safetensors vs ditq8-3.safetensors videoCos=0.99648815 audioCos=0.99973041 videoMaxAbs=0.597008 audioMaxAbs=0.259254 bitExact=no

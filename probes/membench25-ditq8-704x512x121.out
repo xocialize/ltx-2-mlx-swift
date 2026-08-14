@@ -1,0 +1,9 @@
+[mem-bench25] tree=ltx-2.5-mlx-ditq8  encoder=ditq8  envelope=704×512×121f  path=two-stage
+[mem-bench25] cache-cap=2 GB  evict-dit=1
+[mem-bench25] prewarm 5.1s (8 files)
+[mem-bench25] load 0.7s  phys-after-load(DiT only)=22.09 GB
+[mem-bench25] resident floor (post-run + clearCache): 11.39 GB
+[mem-bench25] run 62.8s
+[mem-bench25] PEAK phys_footprint: 25.60 GB
+[mem-bench25] DECLARE → residentBytes ≈ 11.39 GB (11389519840)  peakActivationBytes ≈ 14.21 GB (14209104920)
+[mem-bench25] SUMMARY tree=ltx-2.5-mlx-ditq8 encoder=ditq8 geom=704x512x121 resident=11389519840 peak=25598624760 activation=14209104920

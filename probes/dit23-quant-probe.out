@@ -1,0 +1,119 @@
+[driver] reps=3  arms=bf16-23 q8-23  binary=./.build/debug/RunLTX2
+[driver] === arm=bf16-23 rep=1 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 8.8s
+[dit25-probe] wrote probes/dit25probe/bf16-23-1.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/bf16-23-1.safetensors
+[driver] === arm=q8-23 rep=1 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 8.7s
+[dit25-probe] wrote probes/dit25probe/q8-23-1.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/q8-23-1.safetensors
+[driver] === arm=bf16-23 rep=2 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.0s
+[dit25-probe] forward 9.6s
+[dit25-probe] wrote probes/dit25probe/bf16-23-2.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/bf16-23-2.safetensors
+[driver] === arm=q8-23 rep=2 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 9.2s
+[dit25-probe] wrote probes/dit25probe/q8-23-2.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/q8-23-2.safetensors
+[driver] === arm=bf16-23 rep=3 ===
+[dit25-probe] arm=bf16-23 tree=ltx-2.3-mlx isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 9.9s
+[dit25-probe] wrote probes/dit25probe/bf16-23-3.safetensors
+[dit25-probe] SUMMARY arm=bf16-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/bf16-23-3.safetensors
+[driver] === arm=q8-23 rep=3 ===
+[dit25-probe] arm=q8-23 tree=ltx-2.3-mlx-q8 isLTX25=false
+[dit25-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[dit25-probe] text embeds video [1, 1024, 4096] audio [1, 1024, 2048]
+[dit25-probe] loading DiT…
+[dit25-probe] load 0.1s
+[dit25-probe] forward 9.3s
+[dit25-probe] wrote probes/dit25probe/q8-23-3.safetensors
+[dit25-probe] SUMMARY arm=q8-23 videoTokens=5632 audioTokens=126 sigma=0.909375 out=probes/dit25probe/q8-23-3.safetensors
+
+[driver] ================= ALL PAIRS =================
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-1.safetensors vs bf16-23-2.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-1.safetensors vs bf16-23-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=1.00000012 maxAbs=0.000000   AUDIO cosine=1.00000000 maxAbs=0.000000
+[dit25-cmp] RESULT bf16-23-2.safetensors vs bf16-23-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99237692 maxAbs=3.342294   AUDIO cosine=0.99992329 maxAbs=0.103236
+[dit25-cmp] RESULT bf16-23-3.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999988 maxAbs=0.000000   AUDIO cosine=1.00000012 maxAbs=0.000000
+[dit25-cmp] RESULT q8-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999988 maxAbs=0.000000   AUDIO cosine=1.00000012 maxAbs=0.000000
+[dit25-cmp] RESULT q8-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+[dit25-cmp] inputs bit-identical ✅ (the cosine below is the arms, not the inputs)
+[dit25-cmp] VIDEO cosine=0.99999988 maxAbs=0.000000   AUDIO cosine=1.00000012 maxAbs=0.000000
+[dit25-cmp] RESULT q8-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+
+[driver] SPREAD SUMMARY
+bf16-23-1.safetensors vs bf16-23-2.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-1.safetensors vs bf16-23-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-1.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-2.safetensors vs bf16-23-3.safetensors videoCos=1.00000012 audioCos=1.00000000 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+bf16-23-2.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-2.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-3.safetensors vs q8-23-1.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-3.safetensors vs q8-23-2.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+bf16-23-3.safetensors vs q8-23-3.safetensors videoCos=0.99237692 audioCos=0.99992329 videoMaxAbs=3.342294 audioMaxAbs=0.103236 bitExact=no
+q8-23-1.safetensors vs q8-23-2.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+q8-23-1.safetensors vs q8-23-3.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes
+q8-23-2.safetensors vs q8-23-3.safetensors videoCos=0.99999988 audioCos=1.00000012 videoMaxAbs=0.000000 audioMaxAbs=0.000000 bitExact=yes

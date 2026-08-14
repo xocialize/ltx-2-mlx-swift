@@ -10,3 +10,8 @@ parity/goldens/
 # …including when a worktree symlinks it in (the trailing-slash pattern misses a symlink,
 # and these are LTX-2 weight-derivatives that must never be committed).
 parity/goldens
+
+# Probe forward-outputs (`--dit25-probe`): literal forward-outputs of the LTX-2 weights, i.e. the
+# same weight-derivative class as parity/goldens/ — never committed (license §3 habit).
+# The .out logs and the .md summaries beside them are OURS and DO get committed.
+probes/**/*.safetensors

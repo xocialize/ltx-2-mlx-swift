@@ -2299,6 +2299,19 @@ if args.contains("--connector-gate") {
     try ditTinyGate()
 } else if args.contains("--dit-q8-gate") {
     try ditQ8Gate()
+} else if args.contains("--dit25-probe") {
+    // RunLTX2 --dit25-probe <bf16|ditq8|bf16-23|q8-23> <out.safetensors> [W H F]
+    // ONE arm per process — see the file header.
+    try dit25QuantProbe(arm: positional.first ?? "bf16",
+                        outPath: positional.dropFirst().first ?? "/tmp/dit25-probe.safetensors",
+                        width: positional.dropFirst(2).first.flatMap { Int($0) },
+                        height: positional.dropFirst(3).first.flatMap { Int($0) },
+                        frames: positional.dropFirst(4).first.flatMap { Int($0) })
+} else if args.contains("--dit25-probe-compare") {
+    guard let a = positional.first, let b = positional.dropFirst().first else {
+        print("usage: RunLTX2 --dit25-probe-compare <a.safetensors> <b.safetensors>"); exit(2)
+    }
+    try dit25ProbeCompare(a, b)
 } else if args.contains("--dit-q4-gate") {
     try ditQ4Gate()
 } else if args.contains("--dit-pertoken-gate") {
@@ -2427,7 +2440,9 @@ if args.contains("--connector-gate") {
 } else {
     print("usage: RunLTX2 --connector-gate | --gemma-gate | --text-encode-gate | --dit-tiny-gate  [goldens.safetensors] [path]")
     print("       RunLTX2 --mem-bench [bf16|int8|int4]   (2.3 efficiency-sweep footprint at 704×512×9f)")
-    print("       RunLTX2 --mem-bench25 [bf16|q8] [W H F]  (2.5 footprint; encoder quant is the axis)")
+    print("       RunLTX2 --mem-bench25 [bf16|q8|ditq8] [W H F]  (2.5 footprint)")
+    print("       RunLTX2 --dit25-probe <bf16|ditq8> <out.safetensors>   (ONE arm per process)")
+    print("       RunLTX2 --dit25-probe-compare <a> <b>                  (inputs-identical control + cosine)")
     print("            └ MLX_PROFILE=1 LTX_PHYS_TRACE=1 for per-phase attribution;")
     print("              LTX_CACHE_LIMIT_GB=2 for the shipping-path (capped) regime")
     print("       RunLTX2 --speed-bench [bf16|int8|int4] [w] [h] [frames]   (SPEED-PLAN S6 quant ladder, default 704 512 121)")
