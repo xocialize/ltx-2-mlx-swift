@@ -2326,6 +2326,10 @@ if args.contains("--connector-gate") {
     try vaeDecodeGate()
 } else if args.contains("--vae-decode-pruna-gate") {
     try vaeDecodePrunaGate()
+} else if args.contains("--diffvae-gate") {
+    try diffVAEGate()          // DiffVAEGates.swift — claim C3 / bench arm C
+} else if args.contains("--duration-gate") {
+    try durationGate()         // DiffVAEGates.swift — claim C6 / bench arm D
 } else if args.contains("--vae-decode-bench") {
     try vaeDecodeBench()
 } else if args.contains("--vae-encode-gate") {
