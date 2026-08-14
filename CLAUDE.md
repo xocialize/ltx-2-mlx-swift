@@ -72,7 +72,17 @@ parity-gate CLI, plus **`--bench-e2e`** (`BenchE2E.swift`) — the protocol A/B 
 timing/memory lever claim: ABBA arm alternation, excluded warmups, prewarm, cooldowns, 25 ms phys
 sampling, MEASURABLE/NOISE verdicts, receipts → `probes/`. **Any "X is faster/lighter" claim about
 an e2e lever should cite one of its receipts — single-pair timings are how the ±15 s desktop drift
-manufactures findings (see `BENCH.md`).** `parity/` — Python golden dumpers + (gitignored) `goldens/`.
+manufactures findings (see `BENCH.md`).**
+Arm axes: `model=ltx23|ltx25` · `quant` · `decoder` · **`dfr=<rounds>`** · `cache` · `env.KEY`, plus
+**`--dry-run`** (resolve + print the whole plan, no weights, no GPU — use it before every real
+invocation). ⚠️ **The quant-sibling suffix is family-dependent and wrong silently**: 2.3 uses
+`-q8`/`-q4`, but on 2.5 `-q8` is the int8 TEXT-ENCODER tree whose transformer symlinks back to
+bf16, so an arm labelled q8 there benchmarks bf16 and reports the null delta as a finding — 2.5's
+quantized DiT is `-ditq8` and it has no q4. ⚠️ **Timing noise SCALES with geometry** — `BENCH.md`'s
+"≤8.5 s is noise" was taken at 9f; the cold-start artifact is ~30 s at 121f and 47–107 s at 241f, so
+a single-block arm at ≥121f is uninterpretable.
+Claim-bench arms A–F live in **`probes/CLAIMS-BENCH-MATRIX.md`** (A ✅ parity · B ✅ DFR dominated ·
+C–F reachable). `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 
 ## Conventions
 

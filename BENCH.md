@@ -58,6 +58,33 @@ code is the last stage's, and `libc++abi` aborts lose block-buffered stdout):
 .build/out/Products/Debug/RunLTX2 --bench-e2e … > probes/bench_<label>.log 2>&1
 ```
 
+✅ **`--dry-run` resolves and prints the full plan — every arm's tree, DiT, and derived request
+geometry — without loading a weight or touching the GPU.** Use it before every real invocation.
+Added 2026-08-14 after a "just check the spec parses" run started a real multi-minute generation on
+a busy machine: verifying a plan should never cost a run, and on a shared box it can corrupt someone
+else's measurement.
+
+### Arm axes (`--arm name:k=v,k=v`)
+
+| axis | values | notes |
+|---|---|---|
+| `model` | `ltx23` \| `ltx25` | selects components tree, encoder root and quantized-DiT sibling. 2.5's Gemma-4 is IN-tree, so its gemma root derives from `ltxDir`. ⚠️ **The quant sibling suffix is family-dependent**: 2.3 uses `-q8`/`-q4`, but on 2.5 `-q8` is the int8 **text-encoder** tree whose transformer symlinks back to bf16 — an arm labelled q8 there would benchmark bf16 and report the null delta as a finding. 2.5's quantized DiT is `-ditq8`; 2.5 has no q4 DiT. |
+| `quant` | `bf16` \| `q8` \| `q4` | q4 refused on `model=ltx25` (no such checkpoint) |
+| `decoder` | `stock` \| `pruna` | pruna refused on `model=ltx25` (PrunaVAED is a 2.3 derivative; it would silently fall back to stock and read as a null result) |
+| `dfr` | `0`–`4` | DFR temporal rounds. The harness takes ONE target output spec via `--frames`/`--fps`; a DFR arm derives the smaller request it needs to deliver it — `(target−1)/2^N+1` frames at `fps/2^N` — and the delivered frame count is VERIFIED per run. Requires `model=ltx25`. |
+| `cache` | GB | per-arm `Memory.cacheLimit` |
+| `env.KEY` | any | load-time levers (`LTX_UPSAMPLER`, `LTX_VAE_CHUNK`, `LTX_STREAM_GRANULES`, …), cleared between blocks |
+
+🔑 **Matched output is a property of the harness, not of the operator's arithmetic.** Deriving each
+arm's request from one target — rather than hand-specifying per-arm geometry — is what makes a
+cross-path comparison (native vs DFR) valid. An arm that quietly delivered a shorter clip would
+still produce a perfectly plausible wall-clock number, and a *faster* one.
+
+⚠️ **`expectsIdenticalOutput` requires matching `model` AND `dfrRounds`.** Different models or
+different computation paths diverge by design, so their cross-arm cosine is meaningless and is
+labelled `divergent-by-design`. Without those checks the harness would compare two bf16/stock arms,
+expect ≈1.0, and report a 0.53 (arm A) or 0.77 (arm B) cosine as catastrophic failure.
+
 A mid-run death keeps its evidence anyway: every run row is appended to
 `probes/bench_e2e_<label>_<stamp>.partial.jsonl` as it completes (deleted on clean exit, superseded
 by the final receipts).
@@ -153,6 +180,42 @@ per-arm spread (bf16: 37.3 s ≈ 21% of median) and pushes real deltas under the
 first-run-after-cooldown thermal slot. Also note which regime a session measured (S6 July: 5-min
 cooldowns ≈ *cooled/interactive*; 60 s cooldowns + multi-run blocks ≈ *sustained/batch* — the two
 regimes rank quants differently, see SPEED-PLAN S6).
+
+## ⚠️ The noise floor SCALES WITH GEOMETRY — the 8.5 s rule above is 9-FRAME-specific
+
+**Measured 2026-08-14 across the claims-matrix arms (`probes/CLAIMS-BENCH-MATRIX.md`, AB-R-0042 /
+AB-R-0044).** The null-floor section above was taken at 704×512×**9f**. Longer geometries do not
+inherit its numbers — the same thermal mechanisms produce proportionally similar but absolutely far
+larger effects:
+
+| geometry | cold-start effect (warmup or first measured run vs steady state) | steady-state intra-arm spread |
+|---|---|---|
+| 704×512×9f (null floor) | first two runs 16.6–17.8 s vs 22–31 s after | ~6 s |
+| 704×512×**121f** (arm A) | **67.7 s vs 95–107.5 s** — 30 s | 8–10 s |
+| 704×512×**241f** (arm B) | warmup **149.8 s** (`nominal→fair`) vs **197.0 s** (`fair→fair`) — 47 s; first measured run 257.2 s | 6 s (native), 17.6 s (DFR) |
+
+🔑 **Do not quote "≤8.5 s is noise" at a geometry it was not measured at.** Scale the expectation:
+the cold-start artifact was ~30 s at 121f and ~47–107 s at 241f. A lever claiming less than the
+local cold-start magnitude needs more blocks, not more confidence.
+
+🔑 **The thermal LABEL is too coarse — run POSITION within a block is its own confound.** At 121f,
+run 2 was 6–8 s slower than run 1 in *every* block while both read `fair→fair` (ltx25 95.3→101.8
+and 95.1→103.2; ltx23 100.5→107.5). The `fair` stratum spans a real performance range, so matching
+on the thermal label is NOT sufficient. ⚠️ The direction is not fixed either — at 241f the effect
+reversed (native run 2 was *faster*), consistent with the box saturating within a single long run
+rather than across runs. **Do not model this as a fixed per-run penalty; rely on ABBA to cancel it.**
+
+✅ **ABBA does cancel it, and the receipts show how to tell.** Arm A: each arm took the cold-start
+slot exactly once and the harness reported "sign flips between block sets" — that phrase IS the
+evidence the confound cancelled. Arm B: the DFR arm ran *second* in block 0 and *first* in block 1,
+and its early-slot time (401.6 s) landed within ~1 s of its late-slot times (403.0 / 402.5), which
+excludes ordering as an explanation for its +162.3 s gap. **When a delta is real, slot position
+barely moves the arm; when it is thermal, slot position is the whole story.**
+
+⚠️ **A single-block or single-run arm at ≥121f is uninterpretable.** This retroactively supports the
+existing warning on the 2.3 fps48 baselines (`LTX25-PORT-PLAN.md` §V: blocks=1/runs=1, "warmup
+244.5 s vs measured 399.0 s!") — that signature is exactly the cold-start artifact above, at
+241f-scale, and those 352.7 s / 399.0 s figures should not be quoted until re-run under ABBA.
 
 ## What this harness is NOT
 

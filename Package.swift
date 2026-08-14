@@ -1,9 +1,12 @@
 // swift-tools-version: 6.2
-// ltx-2-mlx-swift — Swift/MLX port of Lightricks LTX-2.3 (DiT-based joint
-// audio+video foundation model). Mirrors the Python oracle `ltx-2-mlx`
-// (github.com/dgrauet/ltx-2-mlx). Unlike the Wan family this is a STANDALONE
-// substrate (Gemma-3 text encoder, 128-ch VAE, joint-AV DiT, BigVGAN+BWE audio)
-// — NOT a wan-core consumer.
+// ltx-2-mlx-swift — Swift/MLX port of Lightricks LTX-2.5 (PRIMARY since
+// 2026-08-13) and LTX-2.3 (prior work, still loaded and gated), DiT-based joint
+// audio+video foundation models. Mirrors the Python oracle `ltx-2-mlx`
+// (github.com/dgrauet/ltx-2-mlx). Version is resolved from the CHECKPOINT
+// (`LTX2Pipeline.isLTX25` keys off the in-dir `gemma4-12b-ltx-v1/`), never a
+// path-name parse, so 2.3 output stays byte-identical. Unlike the Wan family
+// this is a STANDALONE substrate (Gemma-3 / Gemma-4 text encoder, 128-ch VAE,
+// joint-AV DiT, BigVGAN+BWE audio) — NOT a wan-core consumer.
 //
 // LICENSE POSTURE (reversed 2026-06-16 — permitted by default): TWO LAYERS.
 // Weights = LTX-2 Community License, on the engine `permissiveAllowlist` since
