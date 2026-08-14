@@ -1,4 +1,5 @@
 import Foundation
+import LTX2
 import MLXToolKit
 
 /// Memory-tier profile (LOW-TIER-PLAN T3): an envelope clamp + path policy + VAE decode window that
@@ -70,7 +71,46 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
 /// `ltxDirectory` holds the LTX safetensors (connector / transformer-distilled /
 /// vae_decoder). `gemmaDirectory` is the Gemma-3 MLX weights dir (mlx-community/
 /// gemma-3-12b-it-4bit). Both are environment-specific → excluded from Codable.
+/// Which LTX generation a configuration serves. The PIPELINE detects this from the checkpoint
+/// (`LTX2Pipeline.isLTX25` keys off the in-dir `gemma4-12b-ltx-v1/`, never a path-name parse) and
+/// that stays the authority at runtime. This axis exists for what has to be decided BEFORE any
+/// weights are on disk: default repos, which sibling repo carries a quantized transformer, and
+/// where the text encoder lives.
+///
+/// Defaults to `.ltx23`, and it is deliberately absent from `CodingKeys` fallbacks in a way that
+/// makes a config persisted before this existed decode as 2.3 — the generation it was written for.
+public enum LTXFamily: String, Codable, Sendable, CaseIterable {
+    case ltx23, ltx25
+
+    public var defaultRepo: String { self == .ltx25 ? "xocialize/ltx-2.5-mlx" : "xocialize/ltx-2.3-mlx" }
+
+    /// 2.5's text encoder ships INSIDE the components tree (`gemma4-12b-ltx-v1/`), so there is no
+    /// separate encoder repo to materialize — `LTX2Pipeline.gemma4Dir` derives it from `ltxDirectory`.
+    /// 2.3's is a normal external repo.
+    var defaultGemmaRepo: String? { self == .ltx25 ? nil : "mlx-community/gemma-3-12b-it-4bit" }
+
+    /// 🚨 **The suffix differs, and getting it wrong is SILENT.** On 2.3 the quantized-DiT siblings
+    /// are `<repo>-q8` / `-q4`. On 2.5 `<repo>-q8` is the int8 **TEXT-ENCODER** sibling (AB-D-0013):
+    /// it carries only `gemma4-12b-ltx-v1/` shards and SYMLINKS `transformer-distilled.safetensors`
+    /// back to the bf16 file. Deriving `-q8` there would register `.int8` — charging the engine
+    /// int8's ~22 GB resident footprint — while actually loading the 40 GB bf16 DiT, i.e. a ~18 GB
+    /// under-declaration that admits a run the governor should have refused. The 2.5 quantized DiT
+    /// is `-ditq8`. int4 has no 2.5 sibling at all (contraindicated, AB-D-0013/0014) → nil.
+    func transformerRepoSuffix(for quant: Quant) -> String? {
+        switch (self, quant) {
+        case (.ltx23, .int8): return "-q8"
+        case (.ltx23, .int4): return "-q4"
+        case (.ltx25, .int8): return "-ditq8"
+        case (.ltx25, .int4): return nil        // no q4 2.5 DiT exists; do NOT derive one
+        default: return nil                     // bf16 rides the components repo
+        }
+    }
+}
+
 public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfigured {
+    /// Which LTX generation this configuration serves — see `LTXFamily`. Affects only pre-download
+    /// resolution; the pipeline still detects the generation from the checkpoint at load.
+    public var family: LTXFamily = .ltx23
     /// The repo serving the LTX-2.3 MLX components.
     ///
     /// 🚨 **Weight-durability rule** (`mlx-porting` skill, Step 8): a shipped source never points
@@ -148,9 +188,10 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     }
 
     public init(
-        repo: String = "xocialize/ltx-2.3-mlx",
+        family: LTXFamily = .ltx23,
+        repo: String? = nil,
         revision: String? = nil,
-        gemmaRepo: String = "mlx-community/gemma-3-12b-it-4bit",
+        gemmaRepo: String? = nil,
         transformerRepo: String? = nil,
         quant: Quant = .bf16,
         ltxDirectory: URL? = nil,
@@ -160,9 +201,12 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         modelsRootDirectory: URL? = nil,
         profile: LTX2Profile? = nil
     ) {
-        self.repo = repo
+        self.family = family
+        self.repo = repo ?? family.defaultRepo
         self.revision = revision
-        self.gemmaRepo = gemmaRepo
+        // On 2.5 the encoder is in-tree, so there is no repo to name; the field keeps 2.3's value
+        // as an inert default rather than becoming Optional across every existing call site.
+        self.gemmaRepo = gemmaRepo ?? family.defaultGemmaRepo ?? "mlx-community/gemma-3-12b-it-4bit"
         self.transformerRepo = transformerRepo
         self.quant = quant
         self.ltxDirectory = ltxDirectory
@@ -174,15 +218,19 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     }
 
     private enum CodingKeys: String, CodingKey {
-        case repo, revision, gemmaRepo, transformerRepo, quant, profile
+        case family, repo, revision, gemmaRepo, transformerRepo, quant, profile
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Absent ⇒ `.ltx23`: a config persisted before this key existed was written for 2.3, and
+        // that is what it must keep decoding as (the bernini d02cfa1 pattern — a new key must never
+        // become mandatory for configs that predate it).
+        family = try c.decodeIfPresent(LTXFamily.self, forKey: .family) ?? .ltx23
         repo = try c.decode(String.self, forKey: .repo)
         revision = try c.decodeIfPresent(String.self, forKey: .revision)
         gemmaRepo = try c.decodeIfPresent(String.self, forKey: .gemmaRepo)
-            ?? "mlx-community/gemma-3-12b-it-4bit"
+            ?? family.defaultGemmaRepo ?? "mlx-community/gemma-3-12b-it-4bit"
         transformerRepo = try c.decodeIfPresent(String.self, forKey: .transformerRepo)
         quant = try c.decode(Quant.self, forKey: .quant)
         profile = try c.decodeIfPresent(LTX2Profile.self, forKey: .profile)
@@ -200,23 +248,39 @@ extension LTX2Configuration: WeightSourcing {
         "audio_vae.safetensors", "vocoder.safetensors", "spatial_upscaler_x2_v1_1.safetensors",
     ]
 
+    /// 2.5-only components, on top of `componentFiles`. The Gemma-4 encoder shards are matched by
+    /// directory glob because they live in-tree (`gemma4-12b-ltx-v1/`) rather than in their own
+    /// repo — which is also what `LTX2Pipeline.isLTX25` keys off, so a components fetch that
+    /// dropped them would make the tree resolve as 2.3 and silently run the wrong pipeline.
+    static let componentFiles25 = [
+        "gemma4-12b-ltx-v1/*",
+        "config.json", "embedded_config.json",
+        "temporal_upscaler_x2_v1_0.safetensors", "temporal_upscaler_x2_v1_0_config.json",
+        "spatial_upscaler_x2_v1_1_config.json",
+    ]
+
     /// The repo serving the quantized transformer; bf16 rides the components repo.
+    ///
+    /// ⚠️ The suffix is FAMILY-dependent — see `LTXFamily.transformerRepoSuffix`. On 2.5, `-q8` is
+    /// the text-encoder sibling and would silently serve a bf16 DiT under an int8 declaration.
     public var effectiveTransformerRepo: String? {
         if let transformerRepo { return transformerRepo }
-        switch quant {
-        case .int8: return repo + "-q8"
-        case .int4: return repo + "-q4"
-        default: return nil
-        }
+        guard let suffix = family.transformerRepoSuffix(for: quant) else { return nil }
+        return repo + suffix
     }
 
     public var weightSources: [WeightSource] {
         var componentGlobs = Self.componentFiles
+        if family == .ltx25 { componentGlobs.append(contentsOf: Self.componentFiles25) }
         if effectiveTransformerRepo == nil { componentGlobs.append(Self.defaultTransformerFile) }
         var sources = [
             WeightSource(role: "components", repo: repo, revision: revision, matching: componentGlobs),
-            WeightSource(role: "text-encoder", repo: gemmaRepo),
         ]
+        // 2.5's Gemma-4 encoder lives INSIDE the components tree, so it is not a separate source —
+        // declaring one would materialize an unrelated Gemma-3 repo the 2.5 pipeline never opens.
+        if family.defaultGemmaRepo != nil || family == .ltx23 {
+            sources.append(WeightSource(role: "text-encoder", repo: gemmaRepo))
+        }
         if let tRepo = effectiveTransformerRepo {
             sources.append(WeightSource(role: "transformer-\(quant.rawValue)", repo: tRepo,
                                         matching: [Self.defaultTransformerFile]))
@@ -234,8 +298,17 @@ extension LTX2Configuration: WeightSourcing {
             switch source.role {
             case "components":
                 if let dir = ltxDirectory,
-                   fm.fileExists(atPath: dir.appending(path: Self.componentFiles[0]).path) { return false }
-                return !storeHas(source.repo, files: source.matching ?? [])
+                   fm.fileExists(atPath: dir.appending(path: Self.componentFiles[0]).path) {
+                    // On 2.5 the encoder rides this source, and its absence is not cosmetic:
+                    // `isLTX25` keys off that directory, so a components tree missing it resolves
+                    // as 2.3 and silently runs the wrong pipeline. Treat it as still-missing.
+                    if family == .ltx25, !LTX2Pipeline.isLTX25(ltxDir: dir) { return true }
+                    return false
+                }
+                // `matching` carries globs on 2.5 (`gemma4-12b-ltx-v1/*`); a literal existence check
+                // on a glob never succeeds, so it would report the tree perpetually missing.
+                let literals = (source.matching ?? []).filter { !$0.contains("*") }
+                return !storeHas(source.repo, files: literals)
             case "text-encoder":
                 if let dir = gemmaDirectory,
                    fm.fileExists(atPath: dir.appending(path: "config.json").path) { return false }
@@ -253,7 +326,15 @@ extension LTX2Configuration: WeightSourcing {
         let store = ModelStore(root: storeRoot)
         var cfg = self
         if cfg.ltxDirectory == nil { cfg.ltxDirectory = store.directory(for: repo) }
-        if cfg.gemmaDirectory == nil { cfg.gemmaDirectory = store.directory(for: gemmaRepo) }
+        if cfg.gemmaDirectory == nil {
+            // 2.5's encoder is in-tree. `LTX2Pipeline` derives `gemma4Dir` from `ltxDir` and ignores
+            // whatever is passed, but `MLXLTX2Package.load` REQUIRES a non-nil gemmaDirectory — so
+            // resolving this to a Gemma-3 store path that 2.5 never materializes would leave it nil
+            // and throw `configurationMismatch` on a perfectly complete 2.5 tree.
+            cfg.gemmaDirectory = family == .ltx25
+                ? cfg.ltxDirectory.map { LTX2Pipeline.gemma4Dir(ltxDir: $0) }
+                : store.directory(for: gemmaRepo)
+        }
         if cfg.transformerPath == nil, let tRepo = effectiveTransformerRepo {
             cfg.transformerPath = store.directory(for: tRepo)?.appending(path: Self.defaultTransformerFile)
         }

@@ -2299,6 +2299,8 @@ if args.contains("--connector-gate") {
     try ditTinyGate()
 } else if args.contains("--dit-q8-gate") {
     try ditQ8Gate()
+} else if args.contains("--ltx25-package-gate") {
+    ltx25PackageGate()
 } else if args.contains("--dit25-probe") {
     // RunLTX2 --dit25-probe <bf16|ditq8|bf16-23|q8-23> <out.safetensors> [W H F]
     // ONE arm per process — see the file header.
