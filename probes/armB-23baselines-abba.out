@@ -1,0 +1,64 @@
+^D[bench-e2e] arms=t23-native,t23-temporal,t25-native blocks=2 runs=2/block cooldown=30s
+[bench-e2e] geometry=704x512x241f fps=48 two-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5406e) | 7c5a32f+dirty
+[bench-e2e] arm 't23-native' → model=ltx23 quant=bf16 decoder=stock dfr=0 tree=ltx-2.3-mlx dit=in-tree request=241f@48 → delivers 241f@48
+[bench-e2e] arm 't23-temporal' → model=ltx23 quant=bf16 decoder=stock dfr=0 tree=ltx-2.3-mlx dit=in-tree request=241f@48 → delivers 241f@48
+[bench-e2e] arm 't25-native' → model=ltx25 quant=bf16 decoder=stock dfr=0 tree=ltx-2.5-mlx dit=in-tree request=241f@48 → delivers 241f@48
+
+[bench-e2e] ═══ block 0 · arm t23-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 9.5s · load 1.3s
+[bench-e2e] t23-native · warmup (excluded): 140.8s · peak 56.61 GB · thermal nominal→fair
+[bench-e2e] t23-native · run 1: 213.4s · peak 56.42 GB · thermal fair→fair
+[bench-e2e] t23-native · run 2: 235.1s · peak 57.51 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 3.55 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 0 · arm t23-temporal (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 3.1s · load 1.2s
+[bench-e2e] t23-temporal · warmup (excluded): 341.7s · peak 57.59 GB · thermal fair→fair
+[bench-e2e] t23-temporal · run 1: 366.4s · peak 57.79 GB · thermal fair→fair
+[bench-e2e] t23-temporal · run 2: 368.2s · peak 58.85 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 7.82 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 0 · arm t25-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 11.8s · load 1.5s
+[bench-e2e] t25-native · warmup (excluded): 208.7s · peak 66.62 GB · thermal fair→fair
+[bench-e2e] t25-native · run 1: 234.0s · peak 66.09 GB · thermal fair→fair
+[bench-e2e] t25-native · run 2: 228.6s · peak 67.16 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 8.86 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm t25-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 6.1s · load 1.4s
+[bench-e2e] t25-native · warmup (excluded): 202.2s · peak 67.66 GB · thermal fair→fair
+[bench-e2e] t25-native · run 1: 229.1s · peak 67.14 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] t25-native · run 2: 231.8s · peak 67.13 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 5.74 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm t23-temporal (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 9.4s · load 1.2s
+[bench-e2e] t23-temporal · warmup (excluded): 328.0s · peak 59.50 GB · thermal fair→fair
+[bench-e2e] t23-temporal · run 1: 348.5s · peak 59.45 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] t23-temporal · run 2: 345.5s · peak 59.67 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 5.76 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm t23-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 7.5s · load 1.2s
+[bench-e2e] t23-native · warmup (excluded): 196.4s · peak 59.63 GB · thermal fair→fair
+[bench-e2e] t23-native · run 1: 223.8s · peak 59.87 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] t23-native · run 2: 225.1s · peak 59.63 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 8.91 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] t23-native  median 224.5s  (213.4–235.1)  peak 58.57 GB
+[bench-e2e] t23-temporal  median 357.4s  (345.5–368.2)  peak 59.15 GB
+[bench-e2e] t25-native  median 230.4s  (228.6–234.0)  peak 67.14 GB
+[bench-e2e] t23-temporal vs t23-native: Δmed +133.0s > spread 22.7s — MEASURABLE
+[bench-e2e] t25-native vs t23-native: Δmed +2.7s ≤ spread 22.5s — NOISE  ⚠ drift span -8.6s rivals Δ — decided on drift-adjusted Δ +2.7s
+[bench-e2e] output t23-temporal vs t23-native: cos=0.502494 maxAbs=1.76364 (same-weights)
+[bench-e2e] output t25-native vs t23-native: cos=0.642648 maxAbs=1.78666 (divergent-by-design)
+[bench-e2e] receipts: probes/bench_e2e_armB-23baselines-abba_20260815-054515.md + .json

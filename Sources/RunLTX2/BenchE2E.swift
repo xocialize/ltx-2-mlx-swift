@@ -159,9 +159,21 @@ struct BenchArm {
     /// Bench matrix arm A compares WALL-CLOCK across models, never pixels.
     /// ⚠️ Different PATHS never expect identical output either — a DFR arm and a native arm reach
     /// the same clip length by different computation, so their pixels differ by design.
+    /// ⚠️ **`env` counts.** This is the THIRD instance of the same defect class in this function
+    /// (first `model`, then `dfrRounds`, now this): an axis that changes the computation was not
+    /// in the identity predicate, so the harness asserted "same-weights (expect ≈1)" for arms that
+    /// diverge by construction. Caught 2026-08-15 by the 2.3 temporal-x2 arm, which differs from
+    /// 2.3-native ONLY by `env.LTX_UPSAMPLER` — a different upsampler checkpoint AND a different
+    /// stage-1 geometry — and was reported as `same-weights` at cos 0.502494.
+    ///
+    /// `env` is an open-ended escape hatch (`LTX_UPSAMPLER`, `LTX_VAE_DECODER`, `LTX_VAE_CHUNK`,
+    /// `LTX_STREAM_GRANULES`, …), so it cannot be allowlisted safely — a future key would silently
+    /// re-open the hole. **Any env difference forfeits the identity expectation.** Over-conservative
+    /// by design: the cost is losing a reproducibility check on arms that happen to be equivalent
+    /// (e.g. a pure cache-size env), which is strictly better than asserting identity that is false.
     func expectsIdenticalOutput(to ref: BenchArm) -> Bool {
         model == ref.model && quant == ref.quant && decoder == ref.decoder
-            && dfrRounds == ref.dfrRounds && quant == "bf16"
+            && dfrRounds == ref.dfrRounds && env == ref.env && quant == "bf16"
     }
 
     static func parse(_ spec: String) throws -> BenchArm {

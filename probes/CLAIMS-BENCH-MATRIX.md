@@ -157,3 +157,69 @@ native better; the Swift side has not re-run that.
 ⚠️ `output t25-dfr1 vs t25-native: cos=0.769262` is `divergent-by-design` and meaningless as a
 quality signal: different computation paths. `expectsIdenticalOutput` requires matching `dfrRounds`
 precisely so this is never read as a regression.
+
+---
+
+## Arm B (completion) — the 2.3 baselines, finally under ABBA ✅ CLAIM'S OWN BAR WAS CORRUPTED
+
+Run on a **fresh boot, otherwise-idle box** (2026-08-15), same 241f@48 matched output spec, 3 arms
+× 2 ABBA blocks × (1 warmup + 2 measured). Receipts:
+`probes/bench_e2e_armB-23baselines-abba_20260815-054515.{md,json}`, log
+`probes/armB-23baselines-abba.out`.
+
+| arm | median | range | spread | peak (⚠️ UNEVICTED) |
+|---|---|---|---|---|
+| t23-native | **224.5 s** | 213.4–235.1 | 21.7 | 58.57 GB |
+| t25-native | **230.4 s** | 228.6–234.0 | **5.4** | 67.14 GB |
+| t23-temporal-x2 | **357.4 s** | 345.5–368.2 | 22.7 | 59.15 GB |
+
+- `t25-native` vs `t23-native`: **Δmed +2.7 s ≤ spread 22.5 s — NOISE** (drift-adjusted; the v2
+  detector flagged an −8.6 s session drift rivalling Δ and decided on the adjusted figure).
+- `t23-temporal` vs `t23-native`: **Δmed +133.0 s > spread 22.7 s — MEASURABLE, ×1.59.**
+
+### 🚨 The 2.3 baselines the C2 claim was stated against were BOTH wrong
+
+|  | old single (blocks=1/runs=1) | ABBA median | error |
+|---|---|---|---|
+| 2.3-native 241f | 352.7 s | **224.5 s** | **+57% inflated** |
+| 2.3-temporal-x2 | 399.0 s | **357.4 s** | +12% inflated |
+| implied ratio | ×1.131 | **×1.592** | **understated the cost of densification by 1.41×** |
+
+🔑 **They were wrong in a DIRECTIONAL way, not merely noisy.** Because native was inflated far more
+than temporal, the old pair made densification look nearly free (×1.13) when it actually costs
+×1.59. That is very likely why C2 looked plausible enough to be worth testing at all. §V named
+*"DFR beating 352.7 s at matched output spec"* as the claim's honest test — **that bar was itself an
+artifact**; the real bar is ~225 s, and DFR's 402.1 s misses it by ×1.8 rather than by 50 s.
+
+### 🔑 Being TRAINED-FOR bought nothing on cost
+
+| generation | native | densified | ratio |
+|---|---|---|---|
+| 2.3 — hand-wired temporal-x2 | 224.5 s | 357.4 s | **×1.59** |
+| 2.5 — trained-for DFR (AB-R-0044) | 239.7 s | 402.1 s | **×1.68** |
+
+Densification costs essentially the same relative price on both generations. §V item 2's structural
+argument for C2 rested substantially on 2.5's rounds being *trained-for* (keyframe-slot SFT +
+distilled LoRA) where 2.3's was our hand wiring — **that distinction does not show up in cost.**
+
+### Parity extends from 121f to 241f
+
+Arm A found 2.3 ≈ 2.5 at 121f (Δ −0.4 s). This finds the same at 241f (Δ +2.7 s, ×1.027) — so 2.5
+does **not** scale better with frame count, and the apparent 352.7-vs-239.7 advantage was entirely
+the corrupted baseline. One consistent story across a 2× frame increase.
+
+### Method notes
+
+✅ **Cross-session reproducibility, measured.** `t25-native` was re-run here as an anchor: 230.4 s
+median vs **239.7 s** last session (Δ 3.9%), with peaks matching to the decimal (66.62 GB warmup
+both sessions). Arm B's +162.3 s DFR result was internal to one session; this shows the anchor does
+not drift between them.
+✅ **A quiet box tightens the spread 4×** — `t25-native` spread 5.4 s here vs 31.5 s last session,
+same arm, same geometry. Worth scheduling long timing arms onto a fresh boot.
+⚠️ **HARNESS DEFECT FOUND AND FIXED — third instance of the same class.** The receipt line
+`output t23-temporal vs t23-native: cos=0.502494 (same-weights)` asserts these arms should be
+identical. They differ only by `env.LTX_UPSAMPLER`, which selects a different upsampler checkpoint
+AND a different stage-1 geometry. `expectsIdenticalOutput` did not consider `env` — after `model`
+(arm A) and `dfrRounds` (arm B), this is the third axis found missing from that predicate. `env` is
+an open-ended escape hatch and cannot be allowlisted safely, so **any env difference now forfeits
+the identity expectation.** The timing result is unaffected; the quality label was wrong.
