@@ -1,0 +1,22 @@
+^D[duration-battery] tree=ltx-2.5-mlx cases=10
+[duration-battery] loading Gemma-4 encoder (~24 GB, once)…
+[duration-battery] encoder ready 6.0s
+[duration-battery] pacing very short →   4.09s    97f@24  | A quick glance at a coffee cup on a table.
+[duration-battery] pacing very short →   4.23s   105f@24  | A camera flash goes off, one instant.
+[duration-battery] pacing medium →   4.56s   113f@24  | A woman walks across a room and sits down in a chair.
+[duration-battery] pacing medium →   4.69s   113f@24  | A cat jumps onto a windowsill and looks outside.
+[duration-battery] pacing long →   4.91s   121f@24  | A slow, sweeping pan across a wide mountain valley at da
+[duration-battery] pacing long →   5.65s   137f@24  | An extended, lingering shot of waves rolling slowly onto
+[duration-battery] explicit 3 s stated →   4.08s    97f@24  | A 3 second clip of a dog running through grass.
+[duration-battery] explicit 15 s stated →   3.88s    97f@24  | A 15 second clip of a dog running through grass.
+[duration-battery] explicit 20 s stated →   4.60s   113f@24  | A twenty second continuous shot of a city street at nigh
+[duration-battery] neutral none →   4.77s   113f@24  | A lighthouse on a rocky headland.
+
+[duration-battery] ───── shape ─────
+[duration-battery] pacing  short 4.16s · medium 4.63s · long 5.28s
+[duration-battery] responds to PACING (long > short by >15%): YES  (long/short = 1.270×)
+[duration-battery] short vs medium separation: 11.3% (separated)
+[duration-battery] EXPLICIT '3 second' 4.08s vs '15 second' 3.88s → 0.952× — IGNORES stated duration (matches the oracle)
+[duration-battery] range 3.88–5.65s over 10 prompts
+[duration-battery] cases hitting the [1,20]s clamp: 0
+[duration-battery] DONE — C6's verdict is the oracle's (AB-R-0015, PARTIAL); this reports whether the Swift port reproduces that SHAPE.

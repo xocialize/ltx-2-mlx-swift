@@ -176,6 +176,13 @@ struct BenchArm {
             && dfrRounds == ref.dfrRounds && env == ref.env && quant == "bf16"
     }
 
+    /// Fourth axis, same class as the three above — a per-arm prompt changes the conditioning, so
+    /// arms with different prompts cannot be expected to agree. Kept OUT of `expectsIdenticalOutput`
+    /// only because prompts live outside `BenchArm`; the caller ANDs this in.
+    static func promptsMatch(_ a: String?, _ b: String?, default d: String) -> Bool {
+        (a ?? d) == (b ?? d)
+    }
+
     static func parse(_ spec: String) throws -> BenchArm {
         guard let colon = spec.firstIndex(of: ":") else {
             return BenchArm(name: spec, model: "ltx23", quant: "bf16", decoder: "stock",
@@ -333,6 +340,22 @@ func benchE2E() async throws {
     let fps = value("--fps").flatMap(Double.init) ?? 24
     let twoStage = flag("--two-stage")
     let prompt = value("--prompt") ?? "a cat playing piano"
+    // Per-arm prompt override (bench matrix arm F / claim C1): `--arm-prompt <arm>=<text>`.
+    // ⚠️ Deliberately NOT an `--arm name:prompt=…` axis — the arm spec is comma-separated and
+    // prompts contain commas, so folding it in there would truncate silently at the first comma
+    // and benchmark a different prompt than the operator wrote.
+    var armPrompts: [String: String] = [:]
+    for spec in values("--arm-prompt") {
+        guard let eq = spec.firstIndex(of: "=") else {
+            print("[bench-e2e] FAIL ❌ --arm-prompt needs <arm>=<text>, got '\(spec)'"); return
+        }
+        armPrompts[String(spec[..<eq])] = String(spec[spec.index(after: eq)...])
+    }
+    if let unknown = armPrompts.keys.first(where: { name in !arms.contains { $0.name == name } }) {
+        print("[bench-e2e] FAIL ❌ --arm-prompt names unknown arm '\(unknown)' "
+              + "(arms: \(arms.map(\.name).joined(separator: ", ")))")
+        return
+    }
     let seed = value("--seed").flatMap(UInt64.init) ?? 42
     let label = value("--label") ?? "run"
     let outDir = value("--out") ?? "probes"
@@ -469,17 +492,18 @@ func benchE2E() async throws {
             // Request geometry is PER-ARM: a DFR arm asks for fewer frames at half the fps and
             // densifies up to the same delivered clip (see `BenchArm.request`).
             let (reqFrames, reqFps) = arm.request(targetFrames: frames, targetFps: fps)
+            let armPrompt = armPrompts[arm.name] ?? prompt
             func generate() async throws -> LTX2Pipeline.Output {
                 let out: LTX2Pipeline.Output
                 if arm.dfrRounds > 0 {
-                    out = try await pipeline.dfr(prompt: prompt, height: height, width: width,
+                    out = try await pipeline.dfr(prompt: armPrompt, height: height, width: width,
                                                  numFrames: reqFrames, fps: reqFps, seed: seed,
                                                  temporalUpsampleRounds: arm.dfrRounds).output
                 } else if twoStage {
-                    out = try await pipeline.t2vTwoStage(prompt: prompt, height: height, width: width,
+                    out = try await pipeline.t2vTwoStage(prompt: armPrompt, height: height, width: width,
                                                         numFrames: reqFrames, fps: reqFps, seed: seed)
                 } else {
-                    out = try await pipeline.t2v(prompt: prompt, height: height, width: width,
+                    out = try await pipeline.t2v(prompt: armPrompt, height: height, width: width,
                                                  numFrames: reqFrames, fps: reqFps, seed: seed)
                 }
                 eval(out.video); if let a = out.audio { eval(a) }
@@ -560,7 +584,11 @@ func benchE2E() async throws {
         for arm in arms.dropFirst() {
             guard let out = firstOutput[arm.name] else { continue }
             let (cos, mad) = compareOutputs(refOut, out)
-            crossArm.append((arm.name, cos, mad, arm.expectsIdenticalOutput(to: refArm)))
+            crossArm.append((arm.name, cos, mad,
+                             arm.expectsIdenticalOutput(to: refArm)
+                                 && BenchArm.promptsMatch(armPrompts[arm.name],
+                                                          armPrompts[refArm.name],
+                                                          default: prompt)))
         }
     }
 

@@ -223,3 +223,61 @@ AND a different stage-1 geometry. `expectsIdenticalOutput` did not consider `env
 (arm A) and `dfrRounds` (arm B), this is the third axis found missing from that predicate. `env` is
 an open-ended escape hatch and cannot be allowlisted safely, so **any env difference now forfeits
 the identity expectation.** The timing result is unaffected; the quality label was wrong.
+
+---
+
+## Arm D — duration honesty (C6) ✅ SWIFT REPRODUCES THE ORACLE'S SHAPE
+
+`RunLTX2 --duration-battery` — 10 prompts encoded FRESH through the real chain (Gemma-4 → connector
+→ duration head). Distinct from `--duration-gate`, which is a parity check on banked encodings: a
+parity gate would pass just as green on a head that returned a constant. Log:
+`probes/armD-duration-battery.out`.
+
+| axis | Swift (arm D) | oracle (AB-R-0015) | agrees? |
+|---|---|---|---|
+| responds to pacing | **YES** — long/short **×1.270** | YES, ~+37% | ✅ |
+| explicit stated duration | **IGNORED** — "3 second" 4.08 s vs "15 second" **3.88 s** (×0.952) | IGNORED — 4.56 vs 4.28 s | ✅ |
+| range | 3.88–5.65 s | 3.4–6.4 s | ✅ |
+| short vs medium | 11.3% apart | TIED | ⚠️ marginal |
+
+🔑 **The explicit-duration inversion reproduces.** Asking for *15 seconds* yields a SHORTER
+prediction than asking for *3 seconds* — on both stacks. A head that merely ignored the number would
+give ~equal values; getting the same inversion is strong evidence the Swift port is faithful rather
+than coincidentally near.
+
+⚠️ **C6's verdict is the ORACLE's (PARTIAL) and is not re-litigated here.** This battery asks only
+whether the Swift port reproduces that shape. A Swift result that *disagreed* — e.g. suddenly
+responding to explicit durations — would indicate a PORT bug, not a better model.
+⚠️ The short-vs-medium row is the one non-match: 11.3% apart where the oracle found a tie. Different
+prompt sets, so not a contradiction — recorded rather than smoothed over.
+⚠️ 0 of 10 cases hit the [1,20]s clamp. The oracle exercised it via a `video_only` case predicting
+24.8 s; every prompt here is both-modality, so the clamp is untested by this battery.
+
+---
+
+## Arm F — multishot cost (C1) ✅ FREE, and it doubles as the 121f NULL FLOOR
+
+`--arm-prompt <arm>=<text>` (new): two arms identical in every axis except prompt text.
+Receipts: `probes/bench_e2e_armF-c1-multishot-cost_20260815-141705.{md,json}`.
+
+| arm | median | range | spread |
+|---|---|---|---|
+| f-single | 83.7 s | 66.7–100.4 | 33.7 |
+| f-multishot | 92.9 s | 80.1–102.9 | 22.8 |
+
+**Δmed +9.3 s — NOISE (sign flips between block sets).**
+
+🔑 **C1 answered: multishot prompting costs NOTHING at inference.** This was mechanically expected —
+prompts pad to 1024 tokens, so both arms do identical work — which is exactly why the arm is
+valuable: a MEASURABLE result would have indicated a harness artifact, not a model finding. Combined
+with the oracle's C1 (slots are the real multishot surface, +10.7% for 3 slots), the picture is:
+**shot-holding is learned behaviour, not an inference cost.**
+
+🔑 **It is also a genuine NULL PAIR at 121f** — identical compute, so any delta is pure noise. That
+retires an inference: the "noise scales with geometry" section of `BENCH.md` had extrapolated the
+121f floor from cold-start artifacts. Measured: **Δmed ≤ ~10 s is NOISE at 121f, with within-arm
+spreads to ~34 s.** See `BENCH.md` for the fresh-boot ramp finding this produced.
+
+⚠️ `output f-multishot vs f-single: cos=0.877864 (divergent-by-design)` — correct, and only because
+the identity predicate now accounts for prompt. Different prompts = different conditioning = different
+video. This is the FOURTH axis added to that predicate (`model`, `dfrRounds`, `env`, now prompt).

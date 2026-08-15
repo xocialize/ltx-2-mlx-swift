@@ -217,6 +217,42 @@ existing warning on the 2.3 fps48 baselines (`LTX25-PORT-PLAN.md` §V: blocks=1/
 244.5 s vs measured 399.0 s!") — that signature is exactly the cold-start artifact above, at
 241f-scale, and those 352.7 s / 399.0 s figures should not be quoted until re-run under ABBA.
 
+## ✅ NULL FLOOR AT 121f — measured 2026-08-15, and a FRESH BOOT MAKES IT WORSE
+
+The 9f null floor above was the only one on record; the geometry-scaling section was otherwise
+inferred from cold-start artifacts. **Bench matrix arm F is a genuine null pair at 121f** — its two
+arms differ only by PROMPT TEXT, and prompts are padded to 1024 tokens, so both arms perform
+*identical* compute (same encode shape, connector, DiT, denoise).
+
+    f-single     median 83.7s  (66.7–100.4)   spread 33.7
+    f-multishot  median 92.9s  (80.1–102.9)   spread 22.8
+    Δmed +9.3s — NOISE (sign flips between block sets)  ✅ correctly called
+
+**Operative rule at 121f: treat any Δmedian ≤ ~10 s as NOISE, and expect within-arm spreads up to
+~34 s (40% of median).** Note the v1 sign-flip rule *passed* here where it produced a FALSE POSITIVE
+at 9f — because this session's confound was strong enough to flip the sign, rather than biasing one
+arm consistently.
+
+🚨 **A FRESH BOOT IS THE WORST CASE FOR TIMING STABILITY, and that is not obvious.** In session
+order the runs were monotonic — **68.8 → 66.7 → 80.1 → 92.9 → 93.0 → 102.9 → 98.5 → 100.4** — a cold
+box warming continuously through the whole session. `f-single` held the two coldest slots AND the two
+hottest, so its own runs span 66.7→100.4 s, **50% variation within a single arm on identical work**.
+**ABBA cancels SYMMETRIC drift; a one-way ramp is exactly what it cannot cancel** (the same mechanism
+that produced the 9f false positive).
+
+🔑 **Protocol: reboot for MEMORY safety, then BURN THE BOX IN before the measured arms.** A fresh
+boot is worth it when the working set is large (I9 is a paging-triggered *abort*, not a slowdown),
+but go straight from boot into measurement and the first arm gets a systematically cold machine. Run
+a couple of throwaway generations first, or accept that only the sign-flip/drift detectors stand
+between you and a manufactured delta. The per-block warmup does NOT cover this — the ramp spans the
+session, not the block.
+
+⚠️ **Absolute wall-clock is NOT comparable across sessions; only within.** The same 121f 2.5-native
+work read **95.3–103.2 s** in arm A (box contended by a concurrent gate session) and **66.7 s** here
+at its coldest — ~30% apart. Arm A's *comparison* is unaffected (both arms equally contended,
+ABBA-alternated), but its absolute numbers are not this machine's 121f time. Quote deltas, not
+absolutes, unless the session state is stated.
+
 ## What this harness is NOT
 
 - **Not a stage profiler.** Totals are end-to-end by design. For the split, run the same arm once
