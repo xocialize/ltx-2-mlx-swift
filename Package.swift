@@ -87,9 +87,10 @@ let package = Package(
         .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.32.0"),
         // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
         // extracted from this package's in-tree implementation (and wan-core's) once the
-        // second consumer pinned the seam. Path dep like ../mlx-swift-lm (sibling checkout);
-        // flips to a versioned dep when the kit repo publishes + tags.
-        .package(path: "../mlx-block-stream-swift"),
+        // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo
+        // went public + tagged v0.5.0, which is the condition the old path dep was
+        // waiting on (a URL dep on a private repo needs git creds at SPM resolve).
+        .package(url: "https://github.com/xocialize/mlx-block-stream-swift", from: "0.5.0"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
