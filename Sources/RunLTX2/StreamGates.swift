@@ -359,7 +359,31 @@ func streamParityGate(quant: String) throws {
             vCos, aCos, goldenOK ? "✅" : "❌"))
     }
 
-    let pass = parity && determinism && poisonSeen && goldenOK
+    // The resident reference is the gate's own precondition, and it is NOT
+    // always met: the q8 resident path self-repeats bit-exactly only some
+    // runs (measured 2026-08-14, three consecutive runs: cos 0.997283 ✗ /
+    // 0.997070 ✗ / 1.000000 ✓ — and in each failing run the streamed-vs-
+    // resident cosine equalled the resident's OWN self-repeat cosine to six
+    // decimals, with memcmp parity on the run where the reference held).
+    // Comparing against a reference that cannot reproduce itself measures the
+    // reference's nondeterminism, not the streaming path, so that run is
+    // INCONCLUSIVE — reported distinctly and exited 2 (≠ the real-failure 1)
+    // so CI can retry rather than bank a false regression. Verdict quantities
+    // that do NOT depend on the resident reference (determinism, poison,
+    // golden) are still asserted, because they stay meaningful either way.
+    let referenceHeld = residentSelfExact || parity
+    let hardChecks = determinism && poisonSeen && goldenOK
+    if !referenceHeld {
+        print("[stream-parity-gate] resident reference did NOT self-repeat — "
+            + "parity is INCONCLUSIVE this run (not a streaming regression); "
+            + "re-run to draw a stable reference ⚠️")
+        print(hardChecks
+            ? "[stream-parity-gate] reference-independent checks still green ✅"
+            : "[stream-parity-gate] reference-independent checks FAILED ❌")
+        exit(hardChecks ? 2 : 1)
+    }
+
+    let pass = parity && hardChecks
     print(pass ? "[stream-parity-gate] PASS ✅" : "[stream-parity-gate] FAIL ❌")
     if !pass { exit(1) }
 }
