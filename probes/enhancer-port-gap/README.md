@@ -1,3 +1,22 @@
+> # ⛔ SUPERSEDED — 2026-08-16, same day. See **AB-R-0085**.
+> **The conclusion below is wrong.** There is no systemic mlx-swift-lm gap: its model compute is at
+> **parity** with Python `mlx_lm` (prefill 0.62 s vs 0.71 s — Swift faster; decode 61 vs 65 tok/s).
+> The 2.6× was two unrelated costs:
+> 1. **a DEBUG build** — `RunLTX2` is `swift build`, and mlx-swift's `Cmlx` target sets no
+>    optimization flags, so libmlx's CPU path compiles at `-O0`. ABBA release↔debug: decode
+>    **26.4 → 61 tok/s (2.31×)**. That is the whole decode half.
+> 2. **a fixed 1.30 s per-pass chat-template + tokenize cost with no model forward** (1.14 s of it
+>    tokenization; Python does the same string in 0.45 ms). The "1.90 s prefill" below is
+>    `1.30 s prepare + 0.62 s prefill`.
+>
+> 🔑 **Why the method below produced a false finding:** it split the phases with two *wall-clock*
+> runs and subtracted, which charges all fixed per-pass overhead to prefill and the remainder to
+> decode — mismeasuring both in the same direction and manufacturing the "uniform factor" that made
+> one systemic cause look compelling. Take the split from the generator's own
+> `GenerateCompletionInfo.promptTime`/`generateTime` instead (`RunLTX2 --gen-gap-probe`).
+>
+> Kept unedited below as the record of how the wrong answer was reached.
+
 # The ~2.6× Swift-vs-oracle generation gap — measured, same machine
 
 Arm E (AB-R-0075) recorded that Swift's enhancer pass was ~2× slower per word than the oracle's and

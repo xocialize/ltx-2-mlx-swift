@@ -2343,6 +2343,15 @@ if args.contains("--connector-gate") {
         seed: positional.dropFirst(2).first.flatMap { UInt64($0) } ?? 10,
         greedy: args.contains("--greedy"),
         runSeam: !args.contains("--no-seam"))
+} else if args.contains("--gen-gap-probe") {
+    // DIAGNOSTIC arm for AB-R-0080 / AB-A-0010 — decomposes prefill vs decode from ONE generation
+    // and sweeps the prefill chunk size. Changes no shipping default; see GenGapProbe.swift.
+    // RunLTX2 --gen-gap-probe [gemmaGenerativeDir] [maxTokens] [rounds] [seed]
+    try await genGapProbeRun(
+        gemmaDir: positional.first,
+        maxTokens: positional.dropFirst().first.flatMap { Int($0) } ?? 160,
+        rounds: positional.dropFirst(2).first.flatMap { Int($0) } ?? 2,
+        seed: positional.dropFirst(3).first.flatMap { UInt64($0) } ?? 10)
 } else if args.contains("--enhancer-seed-gate") {
     // AB-R-0075 follow-up — the enhancement seam's `seed:` binds: same (prompt, seed) reproduces
     // byte-identically across reloads, and a different seed diverges. BOTH halves required.
