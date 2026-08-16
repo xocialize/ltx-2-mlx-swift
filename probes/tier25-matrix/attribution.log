@@ -1,0 +1,234 @@
+[t2v-spot25] request 704×512×161f int8 · tier=compact24 · DiT lane: STREAMED
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 3.5s (11 files, transformer excluded by streamedBlocks)
+[PHYS-HW] +    0.0s  0.11 GB
+[PHYS-HW] +    0.0s  0.13 GB
+[MLXPROF] DiT.load done (lazy) · phys=0.13 GB
+[PHYS-HW] +    0.1s  0.88 GB
+[PHYS-HW] +    0.1s  2.39 GB
+[PHYS-HW] +    0.1s  3.65 GB
+[PHYS-HW] +    0.1s  4.66 GB
+[PHYS-HW] +    0.2s  5.74 GB
+[PHYS-HW] +    0.2s  6.99 GB
+[PHYS-HW] +    0.2s  8.24 GB
+[PHYS-HW] +    0.3s  9.28 GB
+[PHYS-HW] +    0.3s  10.44 GB
+[PHYS-HW] +    0.3s  11.64 GB
+[PHYS-HW] +    0.3s  12.59 GB
+[PHYS-HW] +    0.4s  13.84 GB
+[PHYS-HW] +    0.4s  15.04 GB
+[PHYS-HW] +    0.4s  16.07 GB
+[PHYS-HW] +    0.5s  17.20 GB
+[PHYS-HW] +    0.5s  18.38 GB
+[PHYS-HW] +    0.5s  19.30 GB
+[PHYS-HW] +    0.5s  20.40 GB
+[PHYS-HW] +    0.6s  21.65 GB
+[MLXPROF] DiT kernel warmup: 0.5s · phys=22.14 GB · pool=1.25 GB
+[MLXPROF] ===== t2v(one-stage) 512x288 9f fps=24 | fLat=2 nv=288 audioT=9 | steps=8 =====
+[MLXPROF] workingSet(recommended)=115.4 GB  cacheLimit=130.6 GB  (phys past workingSet ⇒ paging)
+[PHYS-HW] +    2.1s  21.82 GB
+[PHYS-HW] +    2.1s  22.01 GB
+[PHYS-HW] +    2.2s  22.17 GB
+[PHYS-HW] +    2.2s  22.35 GB
+[PHYS-HW] +    2.2s  22.53 GB
+[PHYS-HW] +    2.3s  22.71 GB
+[PHYS-HW] +    2.3s  22.89 GB
+[PHYS-HW] +    2.3s  23.07 GB
+[PHYS-HW] +    2.3s  23.24 GB
+[PHYS-HW] +    2.4s  23.43 GB
+[PHYS-HW] +    2.4s  23.60 GB
+[PHYS-HW] +    2.4s  23.79 GB
+[PHYS-HW] +    2.4s  23.95 GB
+[PHYS-HW] +    2.5s  24.13 GB
+[PHYS-HW] +    2.5s  24.33 GB
+[PHYS-HW] +    2.5s  24.35 GB
+[PHYS-HW] +    2.6s  24.44 GB
+[PHYS-HW] +    2.6s  24.47 GB
+[PHYS-HW] +    2.6s  24.49 GB
+[PHYS-HW] +    2.7s  24.51 GB
+[PHYS-HW] +    2.7s  24.54 GB
+[PHYS-HW] +    2.7s  24.55 GB
+[PHYS-HW] +    2.7s  24.58 GB
+[PHYS-HW] +    2.8s  24.59 GB
+[PHYS-HW] +    2.8s  24.62 GB
+[PHYS-HW] +    2.8s  24.63 GB
+[PHYS-HW] +    2.9s  24.65 GB
+[PHYS-HW] +    2.9s  24.67 GB
+[PHYS-HW] +    2.9s  24.68 GB
+[PHYS-HW] +    2.9s  24.69 GB
+[PHYS-HW] +    3.0s  24.71 GB
+[PHYS-HW] +    3.0s  24.73 GB
+[PHYS-HW] +    3.0s  24.74 GB
+[PHYS-HW] +    3.1s  24.76 GB
+[PHYS-HW] +    3.1s  24.77 GB
+[MLXPROF] encode/gemma   2473.1ms  act=24.2 cache=0.2 phys=24.8/115 GB  gemma4-12b-ltx-v1 bf16
+[PHYS-HW] +    3.1s  24.77 GB
+[MLXPROF] encode/connector   1085.4ms  act=4.0 cache=7.9 phys=12.3/115 GB  
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[MLXPROF] load/dit-reload    306.5ms  act=2.5 cache=0.4 phys=3.3/115 GB  
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=297 · S=4.48 GiB/s vs C(N)=31.47 GiB/s → N_min≈2085 → FALL BACK (resident)
+[BlockStreamer] fell back resident: 18.38 GiB in 5.3s (3.46 GiB/s)
+[MLXPROF] denoise/step0   9592.8ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=1.000
+[MLXPROF] denoise/step1    477.9ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.994
+[MLXPROF] denoise/step2    492.6ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.988
+[MLXPROF] denoise/step3    521.2ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.981
+[MLXPROF] denoise/step4    551.9ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.975
+[MLXPROF] denoise/step5    589.0ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.909
+[MLXPROF] denoise/step6    636.2ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.725
+[MLXPROF] denoise/step7    682.9ms  act=20.6 cache=3.6 phys=24.7/115 GB  vN=288 aN=9 σ=0.422
+[MLXPROF] vae-decode/up0     17.8ms  act=21.7 cache=0.0 phys=24.0/115 GB  in=[1, 2, 9, 16, 1024]
+[MLXPROF] vae-decode/up1     26.4ms  act=22.2 cache=0.0 phys=24.6/115 GB  in=[1, 2, 9, 16, 1024]
+[MLXPROF] vae-decode/up2     13.9ms  act=22.3 cache=0.0 phys=24.6/115 GB  in=[1, 3, 18, 32, 512]
+[MLXPROF] vae-decode/up3     28.6ms  act=22.6 cache=0.0 phys=24.7/115 GB  in=[1, 3, 18, 32, 512]
+[PHYS-HW] +   18.3s  24.99 GB
+[PHYS-HW] +   18.3s  25.88 GB
+[MLXPROF] vae-decode/up4    141.4ms  act=22.8 cache=0.0 phys=25.0/115 GB  in=[1, 5, 36, 64, 512]
+[MLXPROF] vae-decode/up5     20.7ms  act=22.9 cache=0.0 phys=25.1/115 GB  in=[1, 5, 36, 64, 512]
+[PHYS-HW] +   18.5s  26.11 GB
+[MLXPROF] vae-decode/up6    101.9ms  act=22.9 cache=0.0 phys=25.5/115 GB  in=[1, 9, 36, 64, 256]
+[MLXPROF] vae-decode/up7     19.4ms  act=23.0 cache=0.0 phys=25.2/115 GB  in=[1, 9, 36, 64, 256]
+[PHYS-HW] +   18.6s  26.30 GB
+[MLXPROF] vae-decode/up8     73.0ms  act=23.1 cache=0.0 phys=26.3/115 GB  in=[1, 9, 72, 128, 128]
+[MLXPROF] vae-decode/out+unpatchify      8.7ms  act=23.1 cache=0.0 phys=25.9/115 GB  
+[MLXPROF] vae-decode/video    456.6ms  act=22.9 cache=0.1 phys=25.9/115 GB  9f
+[MLXPROF] ---------- summary (ms per group) ----------
+[MLXPROF]   encode    3558.5ms  (  2 region(s), 19.4%)  worstPhys=24.8 GB
+[MLXPROF]   load     306.5ms  (  1 region(s),  1.7%)  worstPhys=3.3 GB
+[MLXPROF]   denoise   13544.6ms  (  8 region(s), 73.9%)  worstPhys=24.7 GB
+[MLXPROF]   vae-decode     908.5ms  ( 11 region(s),  5.0%)  worstPhys=26.3 GB
+[MLXPROF]   TOTAL   18318.1ms  (18.3s total)
+[MLXPROF] encode-mp4 using HARDWARE H.264 encoder (default; audio-first interleave fix in place)
+[MLXPROF] encode-mp4 frame 0/9
+[MLXPROF] encode-mp4 frame 8/9
+[MLXPROF] encode-mp4/h264+aac    202.7ms  act=0.0 cache=0.0 phys=1.6/115 GB  9 frames
+[t2v-spot25] resident floor (post-warmup + clearCache): 1.55 GB
+[MLXPROF] ===== t2v(one-stage) 512x288 121f fps=24 | fLat=16 nv=2304 audioT=126 | steps=8 =====
+[MLXPROF] workingSet(recommended)=115.4 GB  cacheLimit=130.6 GB  (phys past workingSet ⇒ paging)
+[PHYS-HW] +    0.1s  2.79 GB
+[PHYS-HW] +    0.1s  4.45 GB
+[PHYS-HW] +    0.1s  5.90 GB
+[PHYS-HW] +    0.2s  7.73 GB
+[PHYS-HW] +    0.2s  9.56 GB
+[PHYS-HW] +    0.2s  11.39 GB
+[PHYS-HW] +    0.3s  13.17 GB
+[PHYS-HW] +    0.3s  14.92 GB
+[PHYS-HW] +    0.4s  16.41 GB
+[PHYS-HW] +    0.4s  16.59 GB
+[PHYS-HW] +    0.4s  16.78 GB
+[PHYS-HW] +    0.4s  16.95 GB
+[PHYS-HW] +    0.5s  17.15 GB
+[PHYS-HW] +    0.5s  17.37 GB
+[PHYS-HW] +    0.5s  17.56 GB
+[PHYS-HW] +    0.6s  17.76 GB
+[PHYS-HW] +    0.6s  17.98 GB
+[PHYS-HW] +    0.6s  19.40 GB
+[PHYS-HW] +    0.7s  20.94 GB
+[PHYS-HW] +    0.7s  22.50 GB
+[PHYS-HW] +    0.7s  23.69 GB
+[PHYS-HW] +    0.8s  24.41 GB
+[PHYS-HW] +    1.0s  24.41 GB
+[PHYS-HW] +    1.0s  24.41 GB
+[PHYS-HW] +    1.2s  24.51 GB
+[PHYS-HW] +    1.2s  24.53 GB
+[PHYS-HW] +    1.2s  24.55 GB
+[PHYS-HW] +    1.3s  24.57 GB
+[PHYS-HW] +    1.3s  24.60 GB
+[PHYS-HW] +    1.3s  24.62 GB
+[PHYS-HW] +    1.4s  24.64 GB
+[PHYS-HW] +    1.4s  24.66 GB
+[PHYS-HW] +    1.4s  24.68 GB
+[PHYS-HW] +    1.5s  24.71 GB
+[PHYS-HW] +    1.5s  24.72 GB
+[PHYS-HW] +    1.6s  24.74 GB
+[PHYS-HW] +    1.6s  24.75 GB
+[PHYS-HW] +    1.6s  24.78 GB
+[PHYS-HW] +    1.7s  24.79 GB
+[MLXPROF] encode/gemma   1688.5ms  act=24.2 cache=0.2 phys=24.8/115 GB  gemma4-12b-ltx-v1 bf16
+[PHYS-HW] +    1.7s  24.80 GB
+[MLXPROF] encode/connector    706.5ms  act=4.0 cache=7.9 phys=12.3/115 GB  
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[MLXPROF] load/dit-reload    274.4ms  act=2.5 cache=0.4 phys=3.3/115 GB  
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=2430 · S=4.46 GiB/s vs C(N)=3.74 GiB/s → N_min≈2037 → STREAM (hidden)
+[MLXPROF] denoise/step0   5241.6ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=1.000
+[MLXPROF] denoise/step1   4988.8ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.994
+[MLXPROF] denoise/step2   5015.7ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.988
+[MLXPROF] denoise/step3   5017.6ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.981
+[MLXPROF] denoise/step4   5069.2ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.975
+[MLXPROF] denoise/step5   5059.4ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.909
+[MLXPROF] denoise/step6   5072.6ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.725
+[MLXPROF] denoise/step7   5100.9ms  act=2.6 cache=3.3 phys=6.2/115 GB  vN=2304 aN=126 σ=0.422
+[MLXPROF] vae-decode/up0     52.5ms  act=3.7 cache=0.0 phys=5.0/115 GB  in=[1, 9, 9, 16, 1024]
+[MLXPROF] vae-decode/up1     68.5ms  act=4.1 cache=0.0 phys=4.8/115 GB  in=[1, 9, 9, 16, 1024]
+[MLXPROF] vae-decode/up2     79.6ms  act=4.4 cache=0.0 phys=5.0/115 GB  in=[1, 17, 18, 32, 512]
+[MLXPROF] vae-decode/up3    162.1ms  act=4.8 cache=0.0 phys=5.2/115 GB  in=[1, 17, 18, 32, 512]
+[MLXPROF] vae-decode/up4   1224.0ms  act=5.0 cache=0.0 phys=5.5/115 GB  in=[1, 33, 36, 64, 512]
+[MLXPROF] vae-decode/up5    145.1ms  act=5.0 cache=0.0 phys=5.5/115 GB  in=[1, 33, 36, 64, 512]
+[MLXPROF] vae-decode/up6    802.9ms  act=5.1 cache=0.0 phys=7.2/115 GB  in=[1, 65, 36, 64, 256]
+[MLXPROF] vae-decode/up7    137.5ms  act=5.4 cache=0.0 phys=5.9/115 GB  in=[1, 65, 36, 64, 256]
+[MLXPROF] vae-decode/up8    545.4ms  act=5.4 cache=0.0 phys=7.7/115 GB  in=[1, 65, 72, 128, 128]
+[MLXPROF] vae-decode/out+unpatchify     49.8ms  act=5.0 cache=0.0 phys=5.7/115 GB  
+[MLXPROF] vae-decode/chunk[0,4)   3287.3ms  act=4.9 cache=0.0 phys=5.7/115 GB  window[0,9) halo(0,5)
+[MLXPROF] vae-decode/up0     62.1ms  act=5.0 cache=0.0 phys=5.4/115 GB  in=[1, 13, 9, 16, 1024]
+[MLXPROF] vae-decode/up1     65.1ms  act=5.0 cache=0.0 phys=5.4/115 GB  in=[1, 13, 9, 16, 1024]
+[MLXPROF] vae-decode/up2    100.6ms  act=5.0 cache=0.0 phys=5.8/115 GB  in=[1, 25, 18, 32, 512]
+[MLXPROF] vae-decode/up3    193.2ms  act=5.4 cache=0.0 phys=5.8/115 GB  in=[1, 25, 18, 32, 512]
+[MLXPROF] vae-decode/up4   1550.4ms  act=5.4 cache=0.0 phys=6.0/115 GB  in=[1, 49, 36, 64, 512]
+[MLXPROF] vae-decode/up5    200.0ms  act=5.4 cache=0.0 phys=6.0/115 GB  in=[1, 49, 36, 64, 512]
+[MLXPROF] vae-decode/up6   1162.7ms  act=5.4 cache=0.0 phys=6.0/115 GB  in=[1, 97, 36, 64, 256]
+[MLXPROF] vae-decode/up7    198.1ms  act=5.8 cache=0.0 phys=6.4/115 GB  in=[1, 97, 36, 64, 256]
+[MLXPROF] vae-decode/up8    813.8ms  act=5.8 cache=0.0 phys=7.6/115 GB  in=[1, 97, 72, 128, 128]
+[MLXPROF] vae-decode/out+unpatchify     70.4ms  act=5.3 cache=0.0 phys=6.1/115 GB  
+[MLXPROF] vae-decode/chunk[4,8)   4417.0ms  act=5.1 cache=0.0 phys=6.1/115 GB  window[0,13) halo(4,5)
+[MLXPROF] vae-decode/up0     62.8ms  act=5.1 cache=0.0 phys=5.6/115 GB  in=[1, 13, 9, 16, 1024]
+[MLXPROF] vae-decode/up1     69.3ms  act=5.2 cache=0.0 phys=5.5/115 GB  in=[1, 13, 9, 16, 1024]
+[MLXPROF] vae-decode/up2    101.7ms  act=5.2 cache=0.0 phys=5.9/115 GB  in=[1, 25, 18, 32, 512]
+[MLXPROF] vae-decode/up3    195.4ms  act=5.6 cache=0.0 phys=6.0/115 GB  in=[1, 25, 18, 32, 512]
+[MLXPROF] vae-decode/up4   1566.4ms  act=5.6 cache=0.0 phys=6.2/115 GB  in=[1, 49, 36, 64, 512]
+[MLXPROF] vae-decode/up5    200.3ms  act=5.6 cache=0.0 phys=6.2/115 GB  in=[1, 49, 36, 64, 512]
+[MLXPROF] vae-decode/up6   1161.6ms  act=5.6 cache=0.0 phys=6.9/115 GB  in=[1, 97, 36, 64, 256]
+[MLXPROF] vae-decode/up7    201.3ms  act=6.0 cache=0.0 phys=6.6/115 GB  in=[1, 97, 36, 64, 256]
+[MLXPROF] vae-decode/up8    813.3ms  act=6.0 cache=0.0 phys=8.3/115 GB  in=[1, 97, 72, 128, 128]
+[MLXPROF] vae-decode/out+unpatchify     71.4ms  act=5.4 cache=0.0 phys=6.3/115 GB  
+[MLXPROF] vae-decode/chunk[8,12)   4444.2ms  act=5.3 cache=0.0 phys=6.3/115 GB  window[3,16) halo(5,4)
+[MLXPROF] vae-decode/up0     45.3ms  act=5.3 cache=0.0 phys=5.7/115 GB  in=[1, 9, 9, 16, 1024]
+[MLXPROF] vae-decode/up1     47.0ms  act=5.3 cache=0.0 phys=5.7/115 GB  in=[1, 9, 9, 16, 1024]
+[MLXPROF] vae-decode/up2     72.1ms  act=5.4 cache=0.0 phys=6.0/115 GB  in=[1, 17, 18, 32, 512]
+[MLXPROF] vae-decode/up3    132.6ms  act=5.6 cache=0.0 phys=6.0/115 GB  in=[1, 17, 18, 32, 512]
+[MLXPROF] vae-decode/up4   1050.4ms  act=5.6 cache=0.0 phys=6.1/115 GB  in=[1, 33, 36, 64, 512]
+[MLXPROF] vae-decode/up5    138.9ms  act=5.6 cache=0.0 phys=6.4/115 GB  in=[1, 33, 36, 64, 512]
+[MLXPROF] vae-decode/up6    786.8ms  act=5.6 cache=0.0 phys=7.7/115 GB  in=[1, 65, 36, 64, 256]
+[MLXPROF] vae-decode/up7    142.5ms  act=5.9 cache=0.0 phys=6.7/115 GB  in=[1, 65, 36, 64, 256]
+[MLXPROF] vae-decode/up8    546.7ms  act=5.9 cache=0.0 phys=7.5/115 GB  in=[1, 65, 72, 128, 128]
+[MLXPROF] vae-decode/out+unpatchify     49.4ms  act=5.5 cache=0.0 phys=6.2/115 GB  
+[MLXPROF] vae-decode/chunk[12,16)   3012.4ms  act=5.4 cache=0.0 phys=6.2/115 GB  window[7,16) halo(5,0)
+[MLXPROF] vae-decode/video  15170.3ms  act=5.6 cache=0.0 phys=6.0/115 GB  121f
+[MLXPROF] ---------- summary (ms per group) ----------
+[MLXPROF]   encode    2395.0ms  (  2 region(s),  2.7%)  worstPhys=24.8 GB
+[MLXPROF]   load     274.4ms  (  1 region(s),  0.3%)  worstPhys=3.3 GB
+[MLXPROF]   denoise   40565.8ms  (  8 region(s), 45.7%)  worstPhys=6.2 GB
+[MLXPROF]   vae-decode   45470.3ms  ( 45 region(s), 51.3%)  worstPhys=8.3 GB
+[MLXPROF]   TOTAL   88705.4ms  (88.7s total)
+[MLXPROF] encode-mp4 using HARDWARE H.264 encoder (default; audio-first interleave fix in place)
+[MLXPROF] encode-mp4 frame 0/121
+[MLXPROF] encode-mp4 frame 8/121
+[MLXPROF] encode-mp4 frame 16/121
+[MLXPROF] encode-mp4 frame 24/121
+[MLXPROF] encode-mp4 frame 32/121
+[MLXPROF] encode-mp4 frame 40/121
+[MLXPROF] encode-mp4 frame 48/121
+[MLXPROF] encode-mp4 frame 56/121
+[MLXPROF] encode-mp4 frame 64/121
+[MLXPROF] encode-mp4 frame 72/121
+[MLXPROF] encode-mp4 frame 80/121
+[MLXPROF] encode-mp4 frame 88/121
+[MLXPROF] encode-mp4 frame 96/121
+[MLXPROF] encode-mp4 frame 104/121
+[MLXPROF] encode-mp4 frame 112/121
+[MLXPROF] encode-mp4 frame 120/121
+[MLXPROF] encode-mp4/h264+aac     89.9ms  act=0.2 cache=0.0 phys=1.1/115 GB  121 frames
+[t2v-spot25] run 59.4s  mp4 0.8 MB
+[t2v-spot25] SPLIT lane=STREAMED quant=int8 floor=1.55 GB peak=24.80 GB act=23.25 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=16.80 GB · measured stage-max 24.80 GB → ❌ OVER
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

@@ -1,103 +1,90 @@
 # RESUME — next session starts here
 
-> ✅ **UPDATE 2026-08-16 — the `dfr=2` run below is DONE (AB-R-0073): C2's last open regime is
-> CLOSED.** DFR r=2 costs **×1.756** native at 481f@96 (`max128.maxFrames`); no supported geometry
-> favours temporal rounds. **Remaining arms: C (decode triangle) and E (enhancer overhead).**
-> The burn-in protocol below is VALIDATED — spreads were 0.8–2.8% vs a 50% cold-start swing — so
-> keep using it for any long timing run.
+> ✅ **2026-08-16 — the tier matrix is DONE (AB-R-0090). LTX-2.5 reaches `compact24` and
+> `balanced32`, but only with BOTH levers: DiT streaming AND the int8 text encoder.**
+> Everything is committed, pushed and gate-green. The single thing standing between that
+> measurement and a tier expansion is the **perceptual A/B on the int8 encoder** — below.
 
-Everything is committed, pushed and gate-green. This file exists so the next session does not
-rediscover the protocol or re-derive what is already measured.
+Previous entries (all closed): the `dfr=2` probe → AB-R-0073 (C2 finished on cost, ×1.756 at the
+481f frame cap); the claims matrix → 6/6 complete, `probes/CLAIMS-BENCH-MATRIX.md`.
 
-## The next run: bench matrix `dfr=2` (the last open C2 regime)
+## Where things stand
 
-The ONLY regime `ltx-2-mlx/docs/claims/C2-dfr.md` leaves open for temporal rounds: *"longer clips,
-where native high-fps generation runs out of sequence length."* Arm B tested r=1 at 241f@48, where
-native is comfortable, and DFR lost (×1.68). r=2 is where the comparison could invert.
+| | |
+|---|---|
+| **Granule trees** | `/Volumes/Satechi/Models/ltx-granules-25/{bf16,q8}` — 54 GB, on disk, survive reboot. Not in git. |
+| **Gate board** | 2.5 streaming green: `--stream-parity-gate 25-{bf16,ditq8}` memcmp-exact, `--stream-auto-gate` 0.0% stall at real N. 2.3 arms unregressed. |
+| **Raw receipts** | `probes/tier25-matrix/` (committed — the originals were in `/private/tmp`, which a reboot clears). |
+| **Records** | AB-R-0087 (kit 0.5.0 re-verify) · AB-R-0088/0089 (2.5 streams) · AB-R-0090 (tier matrix) · AB-T-0042 done. |
+
+The measured tier picture, so it is not re-derived:
+
+| tier | budget | resident | streamed only | **streamed + int8 enc** |
+|---|---|---|---|---|
+| compact24 | 16.8 | 31.92 ❌ | 24.79 ❌ | **14.57 ✅** |
+| balanced32 | 22.4 | 33.13 ❌ | 24.81 ❌ | **15.38 ✅** |
+| standard64 | 44.8 | int8 27.31 ✅ / **bf16 45.27 ❌** | 24.81 ✅ | — |
+
+## The next run: perceptual A/B on the int8 Gemma-4 encoder
+
+**Why it is the blocker.** `AB-D-0014` scoped 2.5 to `standard64` + `max128`. The matrix above
+reopens that on memory evidence — but the int8 encoder is **gated on numbers only** and its sample
+MOVES (mean −0.1421/std 0.4253 vs bf16 −0.1274/0.4222). CLAUDE.md has flagged "perceptual A/B is
+NOT done" since 2026-08-13. No tier declaration can rest on it until an operator has looked.
+
+### 🚨 THE TRAP: this is NOT the pruna A/B, and SSIM/PSNR is the WRONG metric here
+
+The PrunaVAED A/B swapped a **decoder**: same latents in, so both arms encode the *same content* and
+SSIM 0.9825 / PSNR 39.87 dB meant "faithful reconstruction". **Swapping the text ENCODER changes the
+conditioning**, which changes the denoise trajectory, which produces a **legitimately different
+video**. A low SSIM between these two arms would mean nothing at all — and reporting one as a
+fidelity failure would be a category error.
+
+**Acceptance is therefore operator preference, not a threshold**: is the int8 arm's output as *good*
+— prompt adherence, coherence, artifacts — not as *similar*. Judge several prompts, not one, because
+a single pair cannot distinguish "int8 is worse" from "this seed suited bf16".
+
+### Commands
 
 ```bash
 cd LTX_DEV/ltx-2-mlx-swift
 export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-xcrun swift build --product RunLTX2
+xcrun swift build -c release --product RunLTX2
 
-# 1. ALWAYS dry-run first — resolves every arm, loads no weights, touches no GPU
-./.build/debug/RunLTX2 --bench-e2e \
-  --arm t25-native:model=ltx25,quant=bf16,cache=2 \
-  --arm t25-dfr2:model=ltx25,quant=bf16,cache=2,dfr=2 \
-  --size 704x512 --frames 481 --fps 96 --two-stage --blocks 2 --runs 2 --dry-run
-
-# expected: t25-native request=481f@96 → delivers 481f@96
-#           t25-dfr2   request=121f@24 → delivers 481f@96
+# Same seed, same geometry, same DiT — ONLY the encoder differs.
+for enc in "" q8; do
+  for p in "a fox running down a beach at sunset, waves rolling in" \
+           "a woman's face in close-up, soft window light, she turns and smiles" \
+           "a busy night market, neon reflections in wet pavement, handheld camera"; do
+    LTX_ENC=$enc LTX_TIER=standard64 LTX_QUANT=int8 LTX_STREAM_25=1 \
+      LTX_T2V_PROMPT="$p" LTX_T2V_SAVE=~/Desktop/ltx25-ab/$(echo "${enc:-bf16}-${p:0:20}" | tr ' ,' '__').mp4 \
+      ./.build/release/RunLTX2 --t2v-spot25 704 512 121
+  done
+done
 ```
 
-### 🚨 BURN THE BOX IN FIRST — this is the step that is easy to skip after a reboot
+Include a **face prompt** — that is what caught the pruna decoder's worst case, and it is where
+conditioning error shows first.
 
-A fresh boot is right for MEMORY safety (this is the largest working set yet, and I9 is a
-paging-triggered **abort**, not a slowdown) but it is the **worst case for timing stability**: a
-cold box warms monotonically through the session, and **ABBA cancels symmetric drift, not a one-way
-ramp** (AB-R-0067; measured at 121f, one arm spanned 66.7→100.4 s on identical work).
+### Protocol notes (earned, do not rediscover)
 
-**Run 2–3 throwaway generations before the measured arms.** The per-block warmup does NOT cover
-this — the ramp spans the session, not the block. Something like:
+- **Burn the box in** with 2–3 throwaway generations before any *timing* claim; a fresh boot is the
+  worst case for timing stability (AB-R-0067). Memory numbers are fine cold.
+- **Never run two streaming gates at once** — S is a shared-resource measurement (a q4 arm read
+  S=2.15 vs its clean 3.56 GiB/s under overlap; verdicts survive, S/stall numbers do not).
+- **Never use `MLX_PROFILE=1` for an acceptance number** — it breaks fusion and inflated
+  `vae-decode/up8` to 26.3 GB, *above* the clean run's whole-run peak. Attribution only.
+- **`LTX_ENC=q8` swaps the ENCODER, not the DiT.** `ltx-2.5-mlx-q8`'s transformer symlinks back to
+  bf16, which is why that tree is a trap for a DiT arm and correct for an encoder arm.
 
-```bash
-for i in 1 2; do ./.build/debug/RunLTX2 --e2e25 704 512 121 >/dev/null 2>&1; done
-```
+## If the A/B passes
 
-Then launch the real thing (drop `--dry-run`, add `--cooldown 30 --label armB-dfr2 --out probes`).
-Budget **2.5–3 h**: ~12 generations, native ~500–600 s and DFR-2 possibly ~1000 s each.
+Then — and only then — AB-D-0014's two-tier scope is reopenable. That needs, beyond the A/B:
+repeats at each profile's own envelope (these were single runs), plus DFR and i2v under the
+streamed+int8-encoder config, neither of which has been measured.
 
-### Pre-registered expectation (written BEFORE the run — do not quietly revise it after)
+## If it fails
 
-> **DFR-2 should lose by MORE than DFR-1 did.** Each round roughly doubles the tile count so rounds
-> compound superlinearly, while native scales ~linearly in tokens (481f@96 = 21,472 video tokens vs
-> 241f@48's 10,912). Rough decomposition from arm B: DFR-1 = 402 s ≈ ~100 s base + ~300 s round;
-> round 2 densifies 241→481 at twice the tiles, so ≈ +600 s → **DFR-2 ≈ 1000 s vs native ≈ 500–600 s.**
->
-> If that holds, the "long clips could favour rounds" regime requires native to be **infeasible**
-> (out of sequence length / memory), not merely slower — and at 481f@96 on 128 GB native is
-> comfortable. **That would close C2's last open regime** rather than leave it hanging.
-
-⚠️ A result that *contradicts* this (DFR-2 winning) is the interesting one and must not be explained
-away — but check the delivered frame count first (the harness verifies it per run and aborts on a
-mismatch, so a passing run genuinely delivered 481f).
-
-## Matrix status — 5 of 6 arms run
-
-| arm | claim | status |
-|---|---|---|
-| A | §V item 1 | ✅ PARITY (Δmed −0.4 s at 121f; confirmed again at 241f, Δ +2.7 s) |
-| B | C2 | ✅ DFR r=1 DOMINATED ×1.68 · 2.3 baselines corrected (AB-R-0066) |
-| C | C3 | ⬜ **UNRUN** — decode triangle, conv vs DiffVAE |
-| D | C6 | ✅ Swift reproduces the oracle's shape (AB-R-0067) |
-| E | C5 | ⬜ UNRUN — enhancer overhead |
-| F | C1 | ✅ multishot is FREE (AB-R-0067) |
-
-**Arm C no longer needs clips staged locally** — the "AVFoundation can't read off /Volumes/Satechi"
-claim was measured FALSE and withdrawn (AB-L-0041; probe in `probes/avfoundation-volume-probe/`).
-Read the corpus in place.
-
-## Protocol reminders that cost real time to learn
-
-- **`--dry-run` before every real invocation.** Verifying a plan should never cost a run; it exists
-  because a "just check the spec parses" invocation once started a multi-minute generation on a
-  busy machine.
-- **Absolute wall-clock is NOT comparable across sessions, only within.** The same 121f work read
-  95–103 s contended vs 66.7 s cold. Quote deltas, not absolutes.
-- **Noise floors are geometry-specific**: ≤8.5 s at 9f, ≤~10 s at 121f (measured, with within-arm
-  spreads to ~34 s). Do not carry the 9f figure to longer geometries. See `BENCH.md`.
-- **`--bench-e2e` runs UNEVICTED.** Its peaks are not comparable to the footprint receipts
-  (AB-R-0039/0041), which are evicted + cache-capped.
-- **Adding an arm axis? Update `expectsIdenticalOutput`.** It has been missing an axis four times
-  now (`model`, `dfrRounds`, `env`, prompt). That is this harness's most repeatable defect.
-- **Never `pkill -f RunLTX2`** — it matches other sessions' gate runs. Kill by PID.
-
-## Other open threads (not blocking the above)
-
-- **AB-T-0009** — BlockStreamKit drift; partly addressed already (the swift repo moved to a
-  versioned URL dep at `7c5a32f`), consumers may still need the sweep.
-- **`--mem-bench25`'s `DECLARE →` line** still derives `residentBytes` from the post-run floor,
-  which is an artifact (AB-R-0041). It should emit the post-load floor plus a separate `retain=`,
-  per `mlx-swift-integration`'s `references/package-efficiency.md`. Ignore that line until then.
-- **mlx-swift-lm PR #530** — drop the `gemma4-encoder-spi` fork when it lands.
-- **Encoder publish** — operator-cleared, encoder-only, intentionally on hold (AB-D-0013).
+The `compact24`/`balanced32` result does not survive: streaming alone leaves the ~24.8 GB
+geometry-independent encoder floor, which is over both budgets. `standard64` bf16 (45.27 ❌ →
+24.81 ✅ on streaming alone) is unaffected either way and stands on its own.

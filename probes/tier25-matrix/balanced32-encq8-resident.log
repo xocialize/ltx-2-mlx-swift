@@ -1,0 +1,7 @@
+[t2v-spot25] request 704×512×161f int8 · tier=balanced32 · DiT lane: RESIDENT · encoder: ltx-2.5-mlx-q8
+[t2v-spot25] prewarm 3.2s (12 files)
+[t2v-spot25] resident floor (post-warmup + clearCache): 0.45 GB
+[t2v-spot25] run 114.1s  mp4 1.2 MB
+[t2v-spot25] SPLIT lane=RESIDENT quant=int8 floor=0.45 GB peak=33.46 GB act=33.01 GB
+[t2v-spot25] ACCEPTANCE tier=balanced32 budget=22.40 GB · measured stage-max 33.46 GB → ❌ OVER
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

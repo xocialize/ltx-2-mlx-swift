@@ -1,0 +1,7 @@
+[t2v-spot25] request 704×512×161f bf16 · tier=standard64 · DiT lane: RESIDENT
+[t2v-spot25] prewarm 8.9s (12 files)
+[t2v-spot25] resident floor (post-warmup + clearCache): 0.47 GB
+[t2v-spot25] run 137.3s  mp4 2.2 MB
+[t2v-spot25] SPLIT lane=RESIDENT quant=bf16 floor=0.47 GB peak=45.27 GB act=44.80 GB
+[t2v-spot25] ACCEPTANCE tier=standard64 budget=44.80 GB · measured stage-max 45.27 GB → ❌ OVER
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point
