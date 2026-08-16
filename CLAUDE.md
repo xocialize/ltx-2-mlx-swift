@@ -81,6 +81,18 @@ bf16, so an arm labelled q8 there benchmarks bf16 and reports the null delta as 
 quantized DiT is `-ditq8` and it has no q4. ⚠️ **Timing noise SCALES with geometry** — `BENCH.md`'s
 "≤8.5 s is noise" was taken at 9f; the cold-start artifact is ~30 s at 121f and 47–107 s at 241f, so
 a single-block arm at ≥121f is uninterpretable.
+**`--gen-gap-probe`** (`GenGapProbe.swift`) is the enhancer/port diagnostic arm. Two settled results
+live there, both of which began as WRONG claims of mine: AB-R-0080's "2.6× mlx-swift-lm gap" was a
+debug build plus a tokenizer cost summing to a convincing uniform factor (retracted, AB-L-0046 —
+release Swift is at parity: decode 61.6 vs 65 tok/s, prefill 0.56 s vs 0.71 s), and the tokenizer
+half is **not** a general `swift-transformers` slowness. `Tokenizer.encode` is **quadratic in a
+checkpoint's added-token count** (one `NSRegularExpression` capture group per added token,
+`Tokenizer.swift:517-523`), charged once per input character that can BEGIN an added token — so
+Gemma-3's 6,415 added tokens cost ~29 ms per newline, and the enhancer prompt's 39 newlines are its
+whole 1.14 s. ⚠️ **LTX-2.5 does not pay this**: `gemma4-12b-ltx-v1` has 24 added tokens and prices
+`\n` at 0.003 ms, so only the Gemma-3 **prompt enhancer** is affected. Filed upstream with a verified
+behaviour-preserving fix (huggingface/swift-transformers#383; 40-line prompt 1123 → 1.89 ms, token
+IDs identical). Receipts AB-R-0086, method trap AB-L-0047 — don't re-derive either.
 Claim-bench arms A–F live in **`probes/CLAIMS-BENCH-MATRIX.md`** (A ✅ parity · B ✅ DFR dominated ·
 C–F reachable). `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 
