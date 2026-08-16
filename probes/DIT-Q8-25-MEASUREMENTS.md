@@ -64,9 +64,17 @@ under-declaration the memory governor would act on. `MLXLTX25Package` declares f
 
 `RunLTX2 --dit25-probe <arm> <out>` — **one arm per process, 3 processes per arm.** That is the
 design, not an accident of scripting: 2.3's `--dit-q8-gate` spread appeared ACROSS process
-invocations, while in-process the int8 path self-repeats bit-exactly (the HV2 streaming acceptance
-memcmp depends on that). A gate loading both arms in one process would have reported a spread of
-exactly zero and proved nothing.
+invocations, while in-process the int8 path *usually* self-repeats bit-exactly. A gate loading both
+arms in one process would have reported a spread of exactly zero and proved nothing.
+
+⟲ **CORRECTED 2026-08-16 (AB-T-0042).** This paragraph previously said the int8 path "self-repeats
+bit-exactly (the HV2 streaming acceptance memcmp depends on that)" — stated unconditionally, and
+false. AB-R-0052 measured the 2.3 q8 **resident** reference failing to self-repeat **in 3 of 7
+in-process runs** (cos 0.9971–1.0000). The one-arm-per-process design above is unaffected and still
+right — a same-process comparison genuinely cannot see cross-process spread — but the reason given
+for it was wrong, and the HV2 acceptance does **not** depend on in-process bit-exactness: the
+streaming gate measures the resident self-repeat each run and picks its bar from that
+(`StreamGates.swift:321`), rather than assuming it. See `../CLAUDE.md`'s streaming row.
 
 Inputs are in-distribution and **saved into every output file**, so "both arms saw the same input"
 is a *checked* control (`inputs bit-identical ✅`), not an assumption about RNG: real Gemma-4
