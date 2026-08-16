@@ -1486,9 +1486,12 @@ func loraGate(loraPath: String) throws {
 // MARK: - Memory bench (efficiency-sweep harness, contract 1.14.0 split footprint)
 //
 // Runs the FULL staged pipeline at the declared 704×512×9f two-stage envelope and reports the
-// OS `phys_footprint` resident floor (post-run + clearCache = DiT-only, the stages self-evict) and
-// the peak high-water across the run. The split footprint is declared from THESE: residentBytes =
-// floor, peakActivationBytes = peak − floor. We sample `phys_footprint` (NOT `Memory.peakMemory`,
+// OS `phys_footprint` and the peak high-water across the run.
+// 🚨 **DO NOT DECLARE `residentBytes` FROM THE POST-RUN FLOOR** (corrected 2026-08-15, AB-R-0041).
+// Under DiT eviction the weights are GONE post-run, so that sample measures whatever mmap pages the
+// OS retained — it read 11.4 GB at 121f and 2.4 GB at 161f for the SAME arm, a ~9 GB swing between
+// adjacent geometries, while `phys-after-load` moved 0.00–0.03 GB. Declare from **phys-after-load**
+// (stable, and what the weights actually cost) and **PEAK**; `peak − floor` is unusable. We sample `phys_footprint` (NOT `Memory.peakMemory`,
 // which counts cumulative allocations and misleads under the cache cap — the Wan profiler lesson).
 
 func gbOf(_ b: UInt64) -> Double { Double(b) / 1_000_000_000.0 }
@@ -1648,10 +1651,21 @@ func memBench25Gate(encoderQuant: String, width: Int, height: Int, frames: Int) 
     let activation = peak > floor ? peak - floor : 0
     print(String(format: "[mem-bench25] run %.1fs", Date().timeIntervalSince(r0)))
     print(String(format: "[mem-bench25] PEAK phys_footprint: %.2f GB", gbOf(peak)))
-    print(String(format: "[mem-bench25] DECLARE → residentBytes ≈ %.2f GB (%llu)  peakActivationBytes ≈ %.2f GB (%llu)",
-                 gbOf(floor), floor, gbOf(activation), activation))
-    print(String(format: "[mem-bench25] SUMMARY tree=%@ encoder=%@ geom=%dx%dx%d resident=%llu peak=%llu activation=%llu",
-                 treeName as NSString, encoderQuant as NSString, width, height, frames, floor, peak, activation))
+    // The 0.17.0 shape (mlx-swift-integration → references/package-efficiency.md): report the
+    // POST-LOAD floor as the declarable resident, and post-run residency SEPARATELY as `retain=`,
+    // instead of conflating them. The old line here derived residentBytes from `floor` and so
+    // actively recommended a wrong declaration — at 161f it suggested 2.34 GB resident for a 40 GB
+    // bf16 DiT (AB-R-0041). `MLXLTX25Package` never consumed it; nothing else should either.
+    print(String(format: "[mem-bench25] DECLARE → residentBytes ≈ %.2f GB (%llu)  [= phys-after-load]",
+                 gbOf(afterLoad), afterLoad))
+    print(String(format: "[mem-bench25] DECLARE → peakActivationBytes ≈ %.2f GB (%llu)  [= peak − phys-after-load]",
+                 gbOf(peak > afterLoad ? peak - afterLoad : 0), peak > afterLoad ? peak - afterLoad : 0))
+    print(String(format: "[mem-bench25] retain=%.2f GB (post-run + clearCache) — NOT the resident floor; "
+                 + "under eviction it measures retained mmap pages and swings with geometry (AB-R-0041)",
+                 gbOf(floor)))
+    print(String(format: "[mem-bench25] SUMMARY tree=%@ encoder=%@ geom=%dx%dx%d afterLoad=%llu peak=%llu activation=%llu retain=%llu",
+                 treeName as NSString, encoderQuant as NSString, width, height, frames,
+                 afterLoad, peak, peak > afterLoad ? peak - afterLoad : 0, floor))
 }
 
 func memBenchGate(quant: String) async throws {
