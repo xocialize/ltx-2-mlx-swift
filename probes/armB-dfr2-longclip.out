@@ -1,0 +1,44 @@
+^D[bench-e2e] arms=t25-native,t25-dfr2 blocks=2 runs=2/block cooldown=30s
+[bench-e2e] geometry=704x512x481f fps=96 two-stage seed=42 prompt="a cat playing piano"
+[bench-e2e] host=Mac17,7 137GB | Version 27.0 (Build 26A5406e) | b9eebae+dirty
+[bench-e2e] arm 't25-native' → model=ltx25 quant=bf16 decoder=stock dfr=0 tree=ltx-2.5-mlx dit=in-tree request=481f@96 → delivers 481f@96
+[bench-e2e] arm 't25-dfr2' → model=ltx25 quant=bf16 decoder=stock dfr=2 tree=ltx-2.5-mlx dit=in-tree request=121f@24 → delivers 481f@96
+
+[bench-e2e] ═══ block 0 · arm t25-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 4.6s · load 1.3s
+[bench-e2e] t25-native · warmup (excluded): 515.3s · peak 64.35 GB · thermal fair→fair
+[bench-e2e] t25-native · run 1: 534.3s · peak 62.74 GB · thermal fair→fair
+[bench-e2e] t25-native · run 2: 521.8s · peak 64.89 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 4.54 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 0 · arm t25-dfr2 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 5.5s · load 1.2s
+[bench-e2e] t25-dfr2 · warmup (excluded): 894.8s · peak 66.68 GB · thermal fair→fair
+[bench-e2e] t25-dfr2 · run 1: 940.8s · peak 65.07 GB · thermal fair→fair
+[bench-e2e] t25-dfr2 · run 2: 934.1s · peak 67.15 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 6.78 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm t25-dfr2 (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 7.7s · load 1.2s
+[bench-e2e] t25-dfr2 · warmup (excluded): 890.1s · peak 68.76 GB · thermal fair→fair
+[bench-e2e] t25-dfr2 · run 1: 933.6s · peak 67.15 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] t25-dfr2 · run 2: 938.2s · peak 67.14 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 6.78 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ═══ block 1 · arm t25-native (quant=bf16 decoder=stock) ═══
+[bench-e2e] prewarm 7.7s · load 1.3s
+[bench-e2e] t25-native · warmup (excluded): 502.2s · peak 68.70 GB · thermal fair→fair
+[bench-e2e] t25-native · run 1: 532.0s · peak 67.14 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] t25-native · run 2: 537.0s · peak 67.15 GB · thermal fair→fair · cos(first)=1.000000
+[bench-e2e] block floor after drop+clearCache: 6.78 GB
+[bench-e2e] cooldown 30s…
+
+[bench-e2e] ───────── summary ─────────
+[bench-e2e] t25-native  median 533.1s  (521.8–537.0)  peak 66.01 GB
+[bench-e2e] t25-dfr2  median 936.2s  (933.6–940.8)  peak 67.15 GB
+[bench-e2e] t25-dfr2 vs t25-native: Δmed +403.0s > spread 15.1s — MEASURABLE
+[bench-e2e] output t25-dfr2 vs t25-native: cos=0.213226 maxAbs=2.28981 (divergent-by-design)
+[bench-e2e] receipts: probes/bench_e2e_armB-dfr2-longclip_20260816-043520.md + .json

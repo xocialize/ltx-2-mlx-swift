@@ -1,4 +1,10 @@
-# RESUME — next session starts here (written 2026-08-15, before a planned reboot)
+# RESUME — next session starts here
+
+> ✅ **UPDATE 2026-08-16 — the `dfr=2` run below is DONE (AB-R-0073): C2's last open regime is
+> CLOSED.** DFR r=2 costs **×1.756** native at 481f@96 (`max128.maxFrames`); no supported geometry
+> favours temporal rounds. **Remaining arms: C (decode triangle) and E (enhancer overhead).**
+> The burn-in protocol below is VALIDATED — spreads were 0.8–2.8% vs a 50% cold-start swing — so
+> keep using it for any long timing run.
 
 Everything is committed, pushed and gate-green. This file exists so the next session does not
 rediscover the protocol or re-derive what is already measured.

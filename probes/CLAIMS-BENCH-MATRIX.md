@@ -281,3 +281,77 @@ spreads to ~34 s.** See `BENCH.md` for the fresh-boot ramp finding this produced
 ⚠️ `output f-multishot vs f-single: cos=0.877864 (divergent-by-design)` — correct, and only because
 the identity predicate now accounts for prompt. Different prompts = different conditioning = different
 video. This is the FOURTH axis added to that predicate (`model`, `dfrRounds`, `env`, now prompt).
+
+---
+
+## Arm B (dfr=2) — C2's LAST OPEN REGIME, CLOSED ❌ no crossover exists in the envelope
+
+Fresh boot + **3 burn-in generations** before measuring (see `BENCH.md`), 704×512×**481f@96**
+matched output, 2 ABBA blocks × (1 warmup + 2 measured). Receipts:
+`probes/bench_e2e_armB-dfr2-longclip_20260816-043520.{md,json}`, log `probes/armB-dfr2-longclip.out`.
+
+Native generates 481f@96 directly (**21,472 video tokens**); DFR-2 generates the same 121f@24 base
+as r=1 and densifies **twice**.
+
+| arm | median | range | spread | peak (⚠️ UNEVICTED) |
+|---|---|---|---|---|
+| t25-native | **533.1 s** | 521.8–537.0 | 15.1 (2.8%) | 66.01 GB |
+| t25-dfr2 | **936.2 s** | 933.6–940.8 | **7.2 (0.8%)** | 67.15 GB |
+
+**Δmed +403.0 s > spread 15.1 s — MEASURABLE. ×1.756 native.**
+
+### 🔑 The regime is closed, not merely unfavourable
+
+`C2-dfr.md` left exactly one escape hatch: *"the one regime that could still favour them is longer
+clips, where native high-fps generation runs out of sequence length."* **481f@96 IS
+`max128.maxFrames` — the longest clip any shipping tier supports** — and native handles it
+comfortably (66.01 GB peak, 533 s, spread 2.8%). It does not run out of anything.
+
+**There is no supported geometry where temporal rounds win on time.** The hypothetical crossover
+would need a clip longer than the product can request.
+
+### Pre-registration scored honestly
+
+Predicted before the run: *"DFR-2 ≈ 1000 s vs native ≈ 500–600 s → ~×1.9, losing by MORE than r=1,
+because rounds compound superlinearly while native scales ~linearly in tokens."*
+
+| | predicted | measured | verdict |
+|---|---|---|---|
+| direction (worse than r=1) | worse | ×1.756 vs ×1.678 | ✅ correct |
+| DFR-2 wall-clock | ~1000 s | 936.2 s | ⚠️ over by 7% |
+| ratio | ~×1.9 | ×1.756 | ⚠️ over |
+| mechanism | rounds compound, native ~linear | native ×2.224 (241f→481f), DFR ×2.328 (r1→r2) | ❌ **mostly wrong** |
+
+🔑 **The mechanism claim does not survive.** Native did NOT scale linearly — it more than doubled
+(×2.224) for 2× the tokens, essentially matching DFR's ×2.328. DFR grows *slightly* faster, which is
+why the ratio crept from 1.678 → 1.756, but that is a **+4.6% drift per round**, not the compounding
+I described. Recorded because the directional call being right does not make the reasoning right,
+and the reasoning is what would have been reused.
+
+### 🔑 The real finding: a stable densification tax
+
+| configuration | native | densified | ratio |
+|---|---|---|---|
+| 2.3 hand-wired temporal-x2 @241f | 224.5 s | 357.4 s | **×1.592** |
+| 2.5 trained-for DFR r=1 @241f | 239.7 s | 402.1 s | **×1.678** |
+| 2.5 trained-for DFR r=2 @481f | 533.1 s | 936.2 s | **×1.756** |
+
+**Densification costs ~1.6–1.8× native across two generations, two mechanisms (hand-wired vs
+trained-for) and two round counts.** That stability is a stronger result than any single ratio: the
+penalty is a property of densification itself, not of a particular implementation or clip length.
+
+### Method notes
+
+✅ **Burn-in works, and the receipt shows it.** Both warmups ran `fair→fair` (not `nominal→fair`),
+and spreads were **0.8–2.8%** against the 50% within-arm swing a cold-start session produced at 121f
+(AB-R-0067). Three throwaway generations before measuring is cheap and decisive.
+✅ **Ordering excluded again.** DFR-2 ran second in block 0 and FIRST in block 1; its early-slot time
+(933.6 s) sits within ~7 s of its late-slot times (940.8 / 934.1), against a 403 s arm gap.
+✅ **Memory half stays clean:** DFR-2 costs **+1.14 GB** peak for TWO rounds (67.15 vs 66.01),
+consistent with r=1's +0.59 GB. The historical "+31 GB for DFR" remains fully explained as the DiT
+sitting resident under the decoder.
+🔑 **Peak is FLAT to 481f** — native reads 66.01 GB at 481f@96 vs ~64–65 GB at 241f@48 for 2× the
+tokens. This is also the **first 2.5 measurement at `max128.maxFrames`**, previously flagged as
+extrapolated (AB-R-0041). ⚠️ UNEVICTED, so it is not the shipping-regime figure — but it bounds it.
+⚠️ `cos=0.213226 (divergent-by-design)` — two rounds of densification diverge the sample far more
+than one (r=1 read 0.769). Correct and expected; not a quality signal.
