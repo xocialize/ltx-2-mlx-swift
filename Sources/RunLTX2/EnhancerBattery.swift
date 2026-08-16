@@ -469,16 +469,45 @@ func enhancerSeedGate(gemmaDir: String?, maxTokens: Int, seedA: UInt64, seedB: U
             + "check that `seed:` reaches `GenerateParameters` and that temperature is still 0.7.")
     }
 
+    // ───────── THIRD case: seed = nil, i.e. what an UNPINNED caller actually gets ─────────
+    // The first two halves prove the pin BINDS. This one proves the pin is NECESSARY — that without
+    // it the same request really does drift. AB-R-0079 audited the app's governed path and found no
+    // seed anywhere in it, but explicitly could not confirm divergence empirically ("it follows from
+    // temperature 0.7 plus an entropy-seeded sampler"). It follows — but this program does not
+    // accept "it follows" where a measurement is available, so: measured.
+    print("[enhancer-seed-gate] — unpinned control: same prompt twice with seed=nil …"); fflush(stdout)
+    let n1 = try await GemmaTextGenerator(gemmaDirectory: genDir)
+        .generate(system: system, user: user, maxTokens: maxTokens, temperature: temperature, seed: nil)
+    let n2 = try await GemmaTextGenerator(gemmaDirectory: genDir)
+        .generate(system: system, user: user, maxTokens: maxTokens, temperature: temperature, seed: nil)
+    let unpinnedDrifts = n1 != n2
+    if unpinnedDrifts {
+        let at = zip(n1, n2).enumerated().first(where: { $0.element.0 != $0.element.1 })?.offset ?? min(n1.count, n2.count)
+        print("[enhancer-seed-gate] ✅ UNPINNED DRIFTS — seed=nil produced two DIFFERENT strings "
+            + "(first divergence at char \(at), \(n1.count) vs \(n2.count) chars). An unpinned "
+            + "caller — which is every caller of the app's governed path today, AB-R-0079 — cannot "
+            + "reproduce its own enhancement, so it cannot reproduce the video that prompt produces.")
+    } else {
+        print("[enhancer-seed-gate] ⚠️ UNPINNED did NOT drift across two runs. Sampling at "
+            + "temperature \(temperature) should diverge; agreeing twice is possible but unlikely. "
+            + "Do NOT read this as 'unpinned is safe' on one pair — re-run before concluding.")
+    }
+
     print("\n[enhancer-seed-gate] A1 → \(a1)")
     if !reproducible { print("[enhancer-seed-gate] A2 → \(a2)") }
     print("[enhancer-seed-gate] B  → \(b)")
 
+    // `unpinnedDrifts` is REPORTED, not gated: a sampler is allowed to coincide, and failing the
+    // build on an unlucky-but-legal repeat would make the gate flaky. The two halves that gate are
+    // the ones that must always hold.
     let pass_ = reproducible && discriminates
     print(String(format: "\n[enhancer-seed-gate] SUMMARY reproducible=%@ discriminates=%@ seedA=%llu "
                         + "seedB=%llu maxTokens=%d temperature=%.1f",
                  (reproducible ? "yes" : "NO") as NSString,
                  (discriminates ? "yes" : "NO") as NSString,
                  seedA, seedB, maxTokens, temperature))
+    print("[enhancer-seed-gate] unpinned(seed=nil) drifts across two runs: "
+          + (unpinnedDrifts ? "YES — the pin is necessary, not cosmetic" : "no (see caveat above)"))
     print(pass_ ? "[enhancer-seed-gate] PASS ✅ the enhancement seam is pinnable — same (prompt, seed) "
                     + "reproduces, different seeds diverge"
                 : "[enhancer-seed-gate] FAIL ❌")
