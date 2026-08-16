@@ -31,7 +31,15 @@
 //   env: LTX_TIER=compact24|balanced32|standard64|max128   (default: standard64)
 //        LTX_QUANT=int8|bf16                                (default: the tier's recommendation)
 //        LTX_STREAM_25=1|0                                  (default: 1 — stream the DiT blocks)
+//        LTX_ENC=q8                                         (int8 TEXT encoder — 13 GB vs 22)
 //        LTX_T2V_SAVE=<path>                                (optional MP4 write)
+//
+// 🔑 MEASURED 2026-08-16 — NEITHER LEVER WORKS ALONE, and that is the whole finding. At
+// compact24 (512x288x121): baseline 31.92 GB ❌ · streaming only 24.79 ❌ · int8 encoder only
+// 31.88 ❌ · BOTH 14.57 ✅ (budget 16.8). Resident is DiT-bound at ~31.9 so the encoder swap is
+// invisible there; streaming removes the DiT floor and exposes the ENCODER floor at ~24.8, which
+// is geometry-INDEPENDENT (256x256x9 and 512x288x121 agree to 0.01 GB — that constancy is what
+// identifies it as the bf16 12B encoder rather than the decode window).
 
 import Foundation
 import MLX
@@ -69,9 +77,17 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
         exit(2)
     }
 
+    // 🔑 LTX_ENC=q8 swaps the TEXT ENCODER, not the DiT. `ltx-2.5-mlx-q8` is the int8
+    // text-encoder sibling — 13 GB of gemma4 vs the bf16 tree's 22 GB — and its transformer
+    // symlinks back to bf16, which is why it is a trap for a DiT arm and the right tree for an
+    // ENCODER arm. `transformerPath` below still points at `-ditq8`, so the DiT is unaffected.
+    // Measured 2026-08-16: 2.5's whole-run peak is geometry-INDEPENDENT at ~24.8 GB (256×256×9
+    // and 512×288×121 agree to 0.01 GB), i.e. it is the encoder, not the decode window — so this
+    // is the only knob that can move 2.5 below balanced32.
+    let encTree = env["LTX_ENC"] == "q8" ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
     var cfg = LTX2Configuration(
         quant: quant,
-        ltxDirectory: URL(fileURLWithPath: "\(base)/ltx-2.5-mlx"),
+        ltxDirectory: URL(fileURLWithPath: "\(base)/\(encTree)"),
         transformerPath: transformerPath,
         gemmaDirectory: nil,          // 2.5's Gemma-4 encoder lives INSIDE the components tree
         modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
@@ -83,7 +99,7 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
 
     let lane = streamed ? "STREAMED" : "RESIDENT"
     print("[t2v-spot25] request \(width)×\(height)×\(frames)f \(quantName) · tier=\(profile.rawValue)"
-        + " · DiT lane: \(lane)")
+        + " · DiT lane: \(lane) · encoder: \(encTree)")
     if streamed { print("[t2v-spot25] granules \(granuleTree.path)") }
 
     // Prewarm off the config's OWN prewarmPaths — which, when streamedBlocks is set, deliberately
