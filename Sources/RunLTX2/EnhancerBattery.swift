@@ -39,13 +39,16 @@
 // flipped sampled token changes the whole continuation. `--greedy` runs the temp-0 (ArgMax) arm,
 // which is the official recipe's sampling mode. Whichever ran is echoed in the header.
 //
-// ⚠️ SEAM CAVEAT, and it is a real one: the SHIPPING seam `GemmaTextGenerator.generate(system:
-// user:maxTokens:temperature:)` exposes **no seed** — it builds `GenerateParameters` without one,
-// so the sampler is seeded from system entropy and the app's enhancement is NOT reproducible even
-// though the field exists one line away. The battery arm therefore drives `GemmaEncoder` +
-// `ChatSession` directly so it can pin the seed; the last phase then runs the real seam once,
-// unseeded, to price what the app actually pays (load → generate → release) and to confirm the
-// ~7.5 GB comes back. Both are labeled in the output — do not read the seam row as a seeded one.
+// SEAM NOTE (was a caveat; FIXED 2026-08-16): when this harness was written the shipping seam
+// `GemmaTextGenerator.generate(system:user:maxTokens:temperature:)` exposed **no seed** — it built
+// `GenerateParameters` without one, so the sampler was seeded from system entropy and the app's
+// enhancement was not reproducible even though the field existed one line away. That is what arm E
+// found (AB-R-0075). The seam now takes `seed:` (default `nil` = the old entropy behaviour, so
+// unseeded callers are unchanged) and the seam arm below passes the same seed as the battery, so
+// the two rows are now comparable. The battery arm still drives `GemmaEncoder` + `ChatSession`
+// directly, because it must load the model ONCE for five cases; the seam arm still runs the real
+// transient path to price what the app pays per enhancement (load → generate → release) and to
+// confirm the ~7.5 GB comes back. `--enhancer-seed-gate` (below) is the standing check on the pin.
 //
 // NOT COVERED HERE (deliberate): arm E's "same run ± enhancement pass" half. Comparing two full
 // generations belongs to `--bench-e2e`'s ABBA protocol, and at ≥121f a single-block arm is
@@ -306,12 +309,14 @@ func enhancerBatteryRun(gemmaDir: String?, maxTokens: Int, seed: UInt64,
         let s0 = Date()
         let generator = GemmaTextGenerator(gemmaDirectory: genDir)
         let out = try await generator.generate(system: system, user: userMessage(enhancerBattery[0].prompt),
-                                               maxTokens: maxTokens, temperature: temperature)
+                                               maxTokens: maxTokens, temperature: temperature,
+                                               seed: greedy ? nil : seed)
         seamSeconds = Date().timeIntervalSince(s0)
         seamPeak = seamSampler.maxBytes()
         seamSampler.stop()
         print(String(format: "\n[enhancer-bench] SEAM GemmaTextGenerator.generate (load→generate→release, "
-                            + "UNSEEDED): %.2fs, %d words, peak %.2f GB",
+                            + "%@): %.2fs, %d words, peak %.2f GB",
+                     (greedy ? "greedy" : "seed=\(seed)") as NSString,
                      seamSeconds, wordCount(out), gbOf(seamPeak)))
         Memory.clearCache()
         print(String(format: "[enhancer-bench] SEAM phys after: %.2f GB — the transient design returns the model",
@@ -370,4 +375,112 @@ func enhancerBatteryRun(gemmaDir: String?, maxTokens: Int, seed: UInt64,
     }
     print("[enhancer-bench] DONE — C5's verdict is the ORACLE's (AB-R-0018, SUPPORTED); this arm "
         + "reproduces the Swift-side timing and prices the second resident 12B.")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// MARK: - `--enhancer-seed-gate` — the standing check that the enhancement seed actually binds
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// Gate for `GemmaTextGenerator.generate(..., seed:)` (AB-R-0075). PASS requires BOTH halves:
+///
+///   1. **REPRODUCIBILITY** — the same `(prompt, seed)` returns a byte-identical string twice.
+///   2. **DISCRIMINATION** — a DIFFERENT seed returns a different string.
+///
+/// Half 2 is not padding. A gate that only checked half 1 would pass on a seam that ignored the
+/// seed entirely and returned a constant, and would also pass if someone quietly dropped the
+/// temperature to 0 — i.e. it would pass on exactly the bug class this parameter exists to close.
+/// Together the two halves say the seed is *read* and *is the thing that varies*.
+///
+/// Every pass goes through the SHIPPING seam, not a directly-driven `ChatSession`: that costs three
+/// full load→generate→release cycles (~10 s each, arm E) but it is the only way to prove the
+/// property the app needs — reproducibility ACROSS model reloads, since the transient seam reloads
+/// the 12B on every enhancement. A ChatSession-level check would prove something the app never does.
+///
+/// Sampling defaults are NOT touched: temperature stays 0.7, the shipping value. This gate asserts
+/// that the existing behaviour is *pinnable*, not that it changed.
+///
+/// usage: RunLTX2 --enhancer-seed-gate [gemmaGenerativeDir] [maxTokens] [seedA] [seedB]
+func enhancerSeedGate(gemmaDir: String?, maxTokens: Int, seedA: UInt64, seedB: UInt64) async throws {
+    let genDir = URL(fileURLWithPath: gemmaDir ?? defaultGemma)
+    guard FileManager.default.fileExists(atPath: genDir.path) else {
+        print("[enhancer-seed-gate] FAIL ❌ generative checkpoint not present: \(genDir.path)")
+        exit(2)
+    }
+    guard seedA != seedB else {
+        print("[enhancer-seed-gate] FAIL ❌ seedA and seedB are both \(seedA) — the discrimination "
+            + "half is vacuous with one seed.")
+        exit(2)
+    }
+
+    // OUR system prompt, deliberately: a gate must not depend on the oracle repo being on disk
+    // (the bench's `systemSource` fallback is a measurement caveat there, a flake source here).
+    let system = fallbackSystemPrompt
+    let prompt = enhancerBattery[0].prompt              // "a lighthouse keeper climbing the spiral stairs"
+    let user = "user prompt: \(prompt)"
+    let temperature: Float = 0.7                        // SHIPPING default — not a gate knob
+
+    print("[enhancer-seed-gate] gemma      = \(genDir.path)")
+    print("[enhancer-seed-gate] prompt     = « \(prompt) »")
+    print(String(format: "[enhancer-seed-gate] sampling   = temperature %.1f (shipping default) maxTokens=%d",
+                 temperature, maxTokens))
+    print("[enhancer-seed-gate] seeds      = A=\(seedA) (twice) · B=\(seedB) (once)")
+    print("[enhancer-seed-gate] path       = GemmaTextGenerator.generate — the SHIPPING seam, so each "
+        + "pass is a full load→generate→release and reproducibility is proven ACROSS reloads")
+
+    let generator = GemmaTextGenerator(gemmaDirectory: genDir)
+    func pass(_ label: String, seed: UInt64) async throws -> String {
+        let t = Date()
+        let out = try await generator.generate(system: system, user: user,
+                                               maxTokens: maxTokens, temperature: temperature,
+                                               seed: seed)
+        print(String(format: "[enhancer-seed-gate] %@ seed=%llu  %6.2fs  %d chars, %d words",
+                     label as NSString, seed, Date().timeIntervalSince(t), out.count, wordCount(out)))
+        fflush(stdout)
+        return out
+    }
+
+    let a1 = try await pass("A1", seed: seedA)
+    let a2 = try await pass("A2", seed: seedA)
+    let b  = try await pass("B ", seed: seedB)
+
+    // ───────── half 1: reproducibility ─────────
+    let reproducible = a1 == a2
+    if reproducible {
+        print("[enhancer-seed-gate] ✅ REPRODUCIBLE — seed \(seedA) produced a byte-identical string "
+            + "twice, across two separate model loads")
+    } else {
+        let at = zip(a1, a2).prefix { $0 == $1 }.count
+        print("[enhancer-seed-gate] ❌ NOT reproducible — seed \(seedA) diverged at char \(at) "
+            + "(\(a1.count) vs \(a2.count) chars). The seed is not reaching the sampler, or "
+            + "something upstream of it is nondeterministic.")
+    }
+
+    // ───────── half 2: discrimination ─────────
+    let discriminates = a1 != b
+    if discriminates {
+        let at = zip(a1, b).prefix { $0 == $1 }.count
+        print("[enhancer-seed-gate] ✅ DISCRIMINATES — seed \(seedB) produced a different string "
+            + "(first divergence at char \(at), \(a1.count) vs \(b.count) chars)")
+    } else {
+        print("[enhancer-seed-gate] ❌ NO DISCRIMINATION — seeds \(seedA) and \(seedB) produced the "
+            + "SAME string. The seed is being ignored (or sampling is effectively greedy), and the "
+            + "reproducibility half above is worthless. Two distinct seeds agreeing by chance over "
+            + "\(a1.count) sampled chars at temperature \(temperature) is not a credible reading; "
+            + "check that `seed:` reaches `GenerateParameters` and that temperature is still 0.7.")
+    }
+
+    print("\n[enhancer-seed-gate] A1 → \(a1)")
+    if !reproducible { print("[enhancer-seed-gate] A2 → \(a2)") }
+    print("[enhancer-seed-gate] B  → \(b)")
+
+    let pass_ = reproducible && discriminates
+    print(String(format: "\n[enhancer-seed-gate] SUMMARY reproducible=%@ discriminates=%@ seedA=%llu "
+                        + "seedB=%llu maxTokens=%d temperature=%.1f",
+                 (reproducible ? "yes" : "NO") as NSString,
+                 (discriminates ? "yes" : "NO") as NSString,
+                 seedA, seedB, maxTokens, temperature))
+    print(pass_ ? "[enhancer-seed-gate] PASS ✅ the enhancement seam is pinnable — same (prompt, seed) "
+                    + "reproduces, different seeds diverge"
+                : "[enhancer-seed-gate] FAIL ❌")
+    if !pass_ { exit(1) }
 }

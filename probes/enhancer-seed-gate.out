@@ -1,0 +1,16 @@
+[enhancer-seed-gate] gemma      = /Volumes/Satechi/Models/mlx-community/gemma-3-12b-it-4bit
+[enhancer-seed-gate] prompt     = « a lighthouse keeper climbing the spiral stairs »
+[enhancer-seed-gate] sampling   = temperature 0.7 (shipping default) maxTokens=128
+[enhancer-seed-gate] seeds      = A=10 (twice) · B=4242 (once)
+[enhancer-seed-gate] path       = GemmaTextGenerator.generate — the SHIPPING seam, so each pass is a full load→generate→release and reproducibility is proven ACROSS reloads
+[enhancer-seed-gate] A1 seed=10    6.37s  613 chars, 96 words
+[enhancer-seed-gate] A2 seed=10    6.22s  613 chars, 96 words
+[enhancer-seed-gate] B  seed=4242    5.99s  576 chars, 87 words
+[enhancer-seed-gate] ✅ REPRODUCIBLE — seed 10 produced a byte-identical string twice, across two separate model loads
+[enhancer-seed-gate] ✅ DISCRIMINATES — seed 4242 produced a different string (first divergence at char 12, 613 vs 576 chars)
+
+[enhancer-seed-gate] A1 → The camera slowly ascends a weathered, spiral staircase within a towering lighthouse, following a solitary lighthouse keeper who steadily climbs, his movements deliberate and rhythmic against the stone steps; dust motes dance in the shafts of light filtering through the narrow windows, highlighting the texture of the aged walls as the camera subtly tilts to maintain focus on the keeper's silhouette, accompanied by the echoing, almost meditative, sound of his boots on the stone, punctuated by the distant, mournful cry of a foghorn and the gentle, consistent whoosh of the lighthouse lamp rotating at the top.
+[enhancer-seed-gate] B  → The camera steadily tracks a solitary lighthouse keeper, weathered and determined, as he ascends the worn, spiral staircase within a towering, historic lighthouse; the shot begins wide, establishing the height of the structure, then smoothly zooms in to capture the rhythmic rise and fall of his shoulders with each step, highlighting the dust motes dancing in the shafts of light filtering through the narrow windows, while a melancholic, echoing soundtrack of creaking wood, distant foghorns, and the keeper's measured breathing builds a sense of isolation and perseverance.
+
+[enhancer-seed-gate] SUMMARY reproducible=yes discriminates=yes seedA=10 seedB=4242 maxTokens=128 temperature=0.7
+[enhancer-seed-gate] PASS ✅ the enhancement seam is pinnable — same (prompt, seed) reproduces, different seeds diverge

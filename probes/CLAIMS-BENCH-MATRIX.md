@@ -478,6 +478,19 @@ unseeded and is labelled so. **Consequence: two identical enhancement requests i
 different prompts, hence different videos, with no way for a caller to fix it.** Spun out as its own
 work item — it is a one-parameter fix, not a research question.
 
+> **RESOLVED 2026-08-16** (the measured record above stands; this is the follow-up, not a revision).
+> `GemmaTextGenerator.generate` now takes `seed: UInt64? = nil` and passes it to
+> `GenerateParameters`. The default stays `nil` = the old entropy behaviour, so nothing an existing
+> caller generates changes; enhancement is not reachable from a `T2VRequest` (`MLXLTX2Package` never
+> enhances), so there is no request seed to inherit — a caller that wants one number to reproduce a
+> whole run passes the same seed to `generate(...)` and to `t2v(...)`. Standing check:
+> `RunLTX2 --enhancer-seed-gate`, log `probes/enhancer-seed-gate.out`, which drives the **shipping
+> seam** (not a directly-driven `ChatSession`) and requires BOTH halves — seed 10 twice → byte-
+> identical across two full load→generate→release cycles; seed 4242 → diverges at char 12. The
+> discrimination half is load-bearing: a reproducibility-only gate would pass on a seam that ignored
+> the seed. Sampling defaults untouched (temperature 0.7). The bench's seam arm is now seeded too,
+> so its row is comparable to the battery's.
+
 ### Also worth keeping
 
 - The battery loads the model ONCE, so a row is the *pass* — comparable to the oracle's 3.1 s. The

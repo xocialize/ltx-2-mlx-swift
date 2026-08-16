@@ -2326,6 +2326,15 @@ if args.contains("--connector-gate") {
         seed: positional.dropFirst(2).first.flatMap { UInt64($0) } ?? 10,
         greedy: args.contains("--greedy"),
         runSeam: !args.contains("--no-seam"))
+} else if args.contains("--enhancer-seed-gate") {
+    // AB-R-0075 follow-up — the enhancement seam's `seed:` binds: same (prompt, seed) reproduces
+    // byte-identically across reloads, and a different seed diverges. BOTH halves required.
+    // RunLTX2 --enhancer-seed-gate [gemmaGenerativeDir] [maxTokens] [seedA] [seedB]
+    try await enhancerSeedGate(
+        gemmaDir: positional.first,
+        maxTokens: positional.dropFirst().first.flatMap { Int($0) } ?? 128,
+        seedA: positional.dropFirst(2).first.flatMap { UInt64($0) } ?? 10,
+        seedB: positional.dropFirst(3).first.flatMap { UInt64($0) } ?? 4242)
 } else if args.contains("--dit25-probe") {
     // RunLTX2 --dit25-probe <bf16|ditq8|bf16-23|q8-23> <out.safetensors> [W H F]
     // ONE arm per process — see the file header.

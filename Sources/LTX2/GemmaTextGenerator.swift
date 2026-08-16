@@ -33,9 +33,29 @@ public struct GemmaTextGenerator: Sendable {
     /// (mirroring the engine's `WeightPrewarmer`) because this load happens OUTSIDE an engine
     /// `prepare`, where a cold read off a slow/external volume would otherwise trip the Metal
     /// command-buffer watchdog (`kIOGPUCommandBufferCallbackErrorTimeout`).
+    ///
+    /// - Parameter seed: pins the sampler. Generation here SAMPLES (temperature 0.7 by default), so
+    ///   without a seed two identical requests can return different text — different enhanced
+    ///   prompts, hence different videos, with nothing a caller can do about it (measured, arm E /
+    ///   AB-R-0075: the field existed one line away and was simply never set). Passing a seed makes
+    ///   the pass byte-reproducible ACROSS the transient load→generate→release cycle, which is the
+    ///   property the app needs, since every call reloads the model.
+    ///
+    ///   **DECISION — the default stays `nil`, i.e. system entropy, not the caller's generation
+    ///   seed and not the oracle's `enhance_t2v` default of 10.** Two reasons. (1) There is no
+    ///   request object to inherit from at this layer: `GemmaTextGenerator` is the ungoverned
+    ///   engine-less seam (see the file header) and enhancement is NOT reachable from a
+    ///   `T2VRequest` — `MLXLTX2Package` never enhances, so `t2v.seed` is not in scope here and
+    ///   there is no plumbing to make "one number reproduces the whole run" automatic. (2) A
+    ///   non-nil default would silently change what every existing caller generates. The seam is
+    ///   now *pinnable*, which is what was missing; making a run reproducible from one number is
+    ///   the caller's job — **pass the same seed you pass to `t2v(...)`** and the enhancement and
+    ///   the generation move together. `RunLTX2 --enhancer-seed-gate` is the standing check that
+    ///   the pin actually holds (and that different seeds actually diverge).
     public func generate(system: String, user: String,
                          maxTokens: Int = 512,
-                         temperature: Float = 0.7) async throws -> String {
+                         temperature: Float = 0.7,
+                         seed: UInt64? = nil) async throws -> String {
         defer { Memory.clearCache() }   // runs after the do-scope releases the model
         let text: String
         do {
@@ -45,7 +65,8 @@ public struct GemmaTextGenerator: Sendable {
                 encoder.context,
                 instructions: system,
                 generateParameters: GenerateParameters(maxTokens: maxTokens,
-                                                       temperature: temperature))
+                                                       temperature: temperature,
+                                                       seed: seed))
             text = try await session.respond(to: user)
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
