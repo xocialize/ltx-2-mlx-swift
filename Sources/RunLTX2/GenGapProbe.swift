@@ -31,6 +31,29 @@
 // the arm list forward, round 1 walks it backward, so a one-way thermal ramp cancels instead of
 // landing on whichever arm ran last. Medians are reported, not single runs.
 //
+// 🔑 **THE TOKENIZE ARM'S 1.14 s IS NOW ROOT-CAUSED, AND THE FIRST FRAMING WAS WRONG.** TOKZ
+// priced `Tokenizer.encode` on the enhancer's system prompt at 1.14 s vs 0.543 ms for Python
+// `tokenizers`, and AB-A-0011 reported that as "swift-transformers is ~2100× slower". It is not a
+// general slowness. The five probes below (`tokenizeScaling` → `tokenizeInstanceVsProcess`) narrow
+// it to: **swift-transformers builds the added-token splitter as ONE `NSRegularExpression` with a
+// capture group PER added token** (`Tokenizer.swift:517-523`), and ICU pays O(total capture groups)
+// per match attempt — so cost is **quadratic in the added-token count**, charged once per input
+// character that can begin an added token. Gemma-3 ships 6,415 added tokens (6,322 starting `<`,
+// 31 starting `\n`), hence ~29 ms per newline; the prompt's 39 newlines ARE the 1.14 s.
+//
+// ⚠️ **SCOPE: this does NOT touch the LTX-2.5 text encoder.** `gemma4-12b-ltx-v1` has 24 added
+// tokens and prices `\n` at 0.003 ms. Only the Gemma-3 prompt enhancer pays it. Filed upstream as
+// huggingface/swift-transformers#383 with a verified behaviour-preserving fix (emit `(?:…)` when
+// neither `lstrip` nor `rstrip` is set: 1123 ms → 1.89 ms on a 40-line prompt, token IDs identical).
+//
+// 🔑 **THE METHOD TRAP, worth more than the bug.** The first standalone reproducer did NOT
+// reproduce — because it loaded `gemma4-12b-ltx-v1` while the probe's slow path used the
+// *generative* checkpoint. Same API, same library revision, different tokenizer, 10⁴× apart. A
+// "cannot reproduce standalone" result nearly became "it's our process, not the library"; what
+// saved it was `tokenizeInstanceVsProcess` showing a FRESH tokenizer was equally slow in-process,
+// which forced the question of what else differed. **Check the reproducer consumes the same input
+// as the thing it is reproducing before believing a negative.**
+//
 // usage: RunLTX2 --gen-gap-probe [gemmaGenerativeDir] [maxTokens] [rounds] [seed]
 
 import Foundation
@@ -197,6 +220,168 @@ func genGapProbeRun(gemmaDir: String?, maxTokens: Int, rounds: Int, seed: UInt64
                      wallSeconds: wall)
     }
 
+    /// Scaling sweep: is `encode` LINEAR in input length, or worse? A constant factor and a
+    /// superlinear curve are very different bug reports — the second is actionable upstream in a
+    /// way the first is not. Reports µs/token, which is flat iff the cost is linear.
+    func tokenizeScaling() {
+        let unit = "The quick brown fox jumps over the lazy dog. "
+        _ = encoder.context.tokenizer.encode(text: "warm up")
+        print("[gen-gap] ───── tokenizer scaling (swift-transformers encode, no model) ─────")
+        var prev: (n: Int, s: Double)? = nil
+        for reps in [8, 16, 32, 64, 128, 256] {
+            let text = String(repeating: unit, count: reps)
+            let n = encoder.context.tokenizer.encode(text: text).count
+            var best = Double.infinity
+            for _ in 0 ..< 3 {
+                let t = Date(); _ = encoder.context.tokenizer.encode(text: text)
+                best = min(best, Date().timeIntervalSince(t))
+            }
+            var note = ""
+            if let p = prev {
+                let tokRatio = Double(n) / Double(p.n), timeRatio = best / p.s
+                note = String(format: "   ×%.2f tokens → ×%.2f time", tokRatio, timeRatio)
+            }
+            print(String(format: "[gen-gap] tokens=%5d  encode=%9.2f ms   µs/token=%8.1f%@",
+                         n, best * 1000, best * 1e6 / Double(n), note as NSString))
+            prev = (n, best)
+        }
+        print("[gen-gap] ⇒ flat µs/token = linear; rising = superlinear (the actionable case).")
+    }
+
+    /// Bisect: the scaling sweep says encode is LINEAR at ~3 µs/token, so 927 tokens should cost
+    /// ~3 ms — yet TOKZ on the real system prompt costs ~1.14 s. Same call, same size, 400× apart.
+    /// So the cost is CONTENT-dependent, not length-dependent. This narrows it to a substring.
+    func tokenizeBisect() {
+        let tk = encoder.context.tokenizer
+        func ms(_ text: String) -> Double {
+            var best = Double.infinity
+            for _ in 0 ..< 3 {
+                let t = Date(); _ = tk.encode(text: text)
+                best = min(best, Date().timeIntervalSince(t))
+            }
+            return best * 1000
+        }
+        _ = tk.encode(text: "warm")
+        print("[gen-gap] ───── content bisect (why is the real prompt 400× the synthetic?) ─────")
+        let synth = String(repeating: "The quick brown fox jumps over the lazy dog. ",
+                           count: system.count / 45)
+        print(String(format: "[gen-gap] REAL   chars=%5d tokens=%4d  %9.2f ms",
+                     system.count, tk.encode(text: system).count, ms(system)))
+        print(String(format: "[gen-gap] SYNTH  chars=%5d tokens=%4d  %9.2f ms",
+                     synth.count, tk.encode(text: synth).count, ms(synth)))
+
+        // Halve repeatedly, always keeping the slower half — lands on the offending region.
+        var lo = system.startIndex, hi = system.endIndex, depth = 0
+        while system.distance(from: lo, to: hi) > 60, depth < 12 {
+            let mid = system.index(lo, offsetBy: system.distance(from: lo, to: hi) / 2)
+            let a = String(system[lo ..< mid]), b = String(system[mid ..< hi])
+            let ta = ms(a), tb = ms(b)
+            print(String(format: "[gen-gap]   depth %2d: first %4d chars %8.2f ms | second %4d chars %8.2f ms",
+                         depth, a.count, ta, b.count, tb))
+            if ta >= tb { hi = mid } else { lo = mid }
+            depth += 1
+        }
+        let culprit = String(system[lo ..< hi])
+        print("[gen-gap] ⇒ hot region (\(culprit.count) chars): \(culprit.debugDescription)")
+    }
+
+    /// The bisect landed on `": <style>, <rest of prompt>." De"` — 32 chars, 117 ms. Angle
+    /// brackets. Gemma's vocab carries thousands of `<unusedN>`-style added tokens, so the
+    /// suspicion is the added-token scan, not BPE. These probes separate the candidates.
+    func tokenizeTrigger() {
+        let tk = encoder.context.tokenizer
+        func ms(_ t: String) -> Double {
+            var best = Double.infinity
+            for _ in 0 ..< 5 { let s = Date(); _ = tk.encode(text: t)
+                               best = min(best, Date().timeIntervalSince(s)) }
+            return best * 1000
+        }
+        _ = tk.encode(text: "warm")
+        print("[gen-gap] ───── trigger isolation ─────")
+        let cases: [(String, String)] = [
+            ("plain word",            "style"),
+            ("plain, 7 chars",        "abcdefg"),
+            ("ONE angle pair",        "<style>"),
+            ("open bracket only",     "<"),
+            ("close bracket only",    ">"),
+            ("two opens",             "<<"),
+            ("four opens",            "<<<<"),
+            ("eight opens",           "<<<<<<<<"),
+            ("bracketed x1",          "<a>"),
+            ("bracketed x2",          "<a><b>"),
+            ("bracketed x4",          "<a><b><c><d>"),
+            ("bracketed x8",          "<a><b><c><d><e><f><g><h>"),
+            ("real special token",    "<start_of_turn>"),
+            ("no-bracket same len",   "start_of_turn__"),
+        ]
+        for (name, text) in cases {
+            print(String(format: "[gen-gap]   %-22@ chars=%3d tokens=%3d  %9.3f ms",
+                         name as NSString, text.count, tk.encode(text: text).count, ms(text)))
+        }
+    }
+
+    /// `<` costs ~30 ms — but the prompt has only TWO of them and costs 1159 ms, so `<` is a
+    /// member of a slow class, not the trigger. Price every distinct character in the prompt
+    /// individually, then check that count × unit-cost reconstructs the whole-prompt time. If it
+    /// does, the cost is per-character and the slow set is fully identified.
+    func tokenizeCharCost() {
+        let tk = encoder.context.tokenizer
+        func ms(_ t: String) -> Double {
+            var best = Double.infinity
+            for _ in 0 ..< 5 { let s = Date(); _ = tk.encode(text: t)
+                               best = min(best, Date().timeIntervalSince(s)) }
+            return best * 1000
+        }
+        _ = tk.encode(text: "warm")
+        var counts: [Character: Int] = [:]
+        for c in system { counts[c, default: 0] += 1 }
+        var priced: [(Character, Int, Double)] = []
+        for (c, n) in counts { priced.append((c, n, ms(String(c)))) }
+        priced.sort { $0.2 * Double($0.1) > $1.2 * Double($1.1) }
+        print("[gen-gap] ───── per-character cost (distinct chars in the real prompt) ─────")
+        print("[gen-gap]   char        count   ms/char    total ms")
+        var total = 0.0
+        for (c, n, t) in priced {
+            total += t * Double(n)
+            if t * Double(n) > 5 {
+                print(String(format: "[gen-gap]   %-10@ %5d %9.3f %11.1f",
+                             String(c).debugDescription as NSString, n, t, t * Double(n)))
+            }
+        }
+        let slow = priced.filter { $0.2 > 1.0 }
+        print(String(format: "[gen-gap]   … %d distinct chars total; %d cost >1 ms each",
+                     priced.count, slow.count))
+        print("[gen-gap]   SLOW SET: " + slow.map { String($0.0).debugDescription }
+                                             .joined(separator: " "))
+        print(String(format: "[gen-gap] ⇒ Σ(count × ms/char) = %.0f ms vs whole-prompt %.0f ms",
+                     total, ms(system)))
+    }
+
+    /// A standalone process, same swift-transformers 1.3.3, same model folder, same
+    /// `AutoTokenizer.from(modelFolder:)`, prices "\n" at 0.003 ms — this process prices it at
+    /// 29.6 ms. So the cost is NOT the library version. Load a SECOND tokenizer, freshly, right
+    /// here: if the fresh one is fast, the slowness belongs to the model-loaded INSTANCE; if both
+    /// are slow, it belongs to the process (MLX resident, memory pressure).
+    func tokenizeInstanceVsProcess(dir: URL) async {
+        func ms(_ tk: any MLXLMCommon.Tokenizer, _ t: String) -> Double {
+            _ = tk.encode(text: "warm")
+            var best = Double.infinity
+            for _ in 0 ..< 5 { let s = Date(); _ = tk.encode(text: t)
+                               best = min(best, Date().timeIntervalSince(s)) }
+            return best * 1000
+        }
+        print("[gen-gap] ───── instance vs process ─────")
+        let loaded = encoder.context.tokenizer
+        print(String(format: "[gen-gap]   model-loaded instance   \\n = %8.3f ms   '<' = %8.3f ms",
+                     ms(loaded, "\n"), ms(loaded, "<")))
+        guard let fresh = try? await GemmaEncoder.loadTokenizer(directory: dir) else {
+            print("[gen-gap]   fresh load FAILED"); return
+        }
+        print(String(format: "[gen-gap]   fresh AutoTokenizer     \\n = %8.3f ms   '<' = %8.3f ms",
+                     ms(fresh, "\n"), ms(fresh, "<")))
+        print("[gen-gap]   type(loaded)=\(type(of: loaded))  type(fresh)=\(type(of: fresh))")
+    }
+
     func pass(_ arm: GapArm) async throws -> GapObs {
         switch arm.id {
         case "BENCH": return try await enhancerBenchPass()
@@ -232,6 +417,11 @@ func genGapProbeRun(gemmaDir: String?, maxTokens: Int, rounds: Int, seed: UInt64
     }
 
     // ───────── summary ─────────
+    tokenizeScaling()
+    tokenizeBisect()
+    tokenizeTrigger()
+    tokenizeCharCost()
+    await tokenizeInstanceVsProcess(dir: genDir)
     print("\n[gen-gap] ───── MEDIANS over \(rounds) rounds ─────")
     print("[gen-gap] arm     prefill_s  prefill_tok/s   decode_tok/s     wall_s  unacct_s   note")
     for arm in arms {
