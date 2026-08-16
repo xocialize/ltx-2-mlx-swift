@@ -355,3 +355,76 @@ tokens. This is also the **first 2.5 measurement at `max128.maxFrames`**, previo
 extrapolated (AB-R-0041). ⚠️ UNEVICTED, so it is not the shipping-regime figure — but it bounds it.
 ⚠️ `cos=0.213226 (divergent-by-design)` — two rounds of densification diverge the sample far more
 than one (r=1 read 0.769). Correct and expected; not a quality signal.
+
+---
+
+## Arm C — decode triangle (C3) ❌ DiffVAE costs ×10–12 time and +23.9 GB for LOWER fidelity
+
+`RunLTX2 --decode-triangle` (combined: time + fidelity) and `--decode-triangle-arm conv|diffvae`
+(one decoder per process: memory). Real clip `hard-cut-14s.mp4` at 704×512×25f, read **in place off
+Satechi** (AB-L-0041). Logs: `probes/armC-decode-triangle{,-reversed,-perarm}.out`.
+
+**Decoder-isolated by construction:** the clip is VAE-encoded ONCE and both decoders receive
+byte-identical latents, then each is scored against the **real source** — not against each other,
+since two decoders can disagree while one is simply right.
+
+### Cost (per-process; reproduced twice per arm)
+
+| decoder | decode | attributable memory |
+|---|---|---|
+| conv | **1.76 / 2.03 s** | **2.34 GB** |
+| DiffVAE | **20.46 / 21.80 s** | **26.26 GB** |
+
+**×10–12 time, +23.9 GB.**
+
+### Fidelity vs the REAL source (identical under both decoder orderings)
+
+| decoder | PSNR | SSIM |
+|---|---|---|
+| conv | **46.57 dB** | **0.9994** |
+| DiffVAE | 35.91 dB | 0.9923 |
+
+**conv is 10.66 dB more faithful.** Reproduces the oracle's direction (AB-R-0013: 42.6 vs 36.8 dB)
+on a different clip and implementation; absolute values differ because the corpus differs.
+
+🔑 **The stochasticity objection is measured, not waved away.** DiffVAE is 1-step-x0 from a noise
+canvas, so "you just drew a bad canvas" is the obvious rebuttal to any metric. A second draw with a
+different key moves **PSNR +0.02 dB and SSIM −0.0000** — the conv-vs-DiffVAE gap is **~500× the
+draw-to-draw spread**. The verdict is not a draw artifact.
+
+### 🚨 A retracted number, and the control that caught it
+
+The first run reported *"DiffVAE costs +26.43 GB peak"* from a COMBINED run. **That was invalid.**
+`PhysSampler` reads PROCESS phys, so whichever decoder runs second carries the first's resident
+weights and the accumulated MLX pool:
+
+| order | diffvae peak | conv peak | delta it "showed" |
+|---|---|---|---|
+| conv first | 41.03 GB | 14.61 GB | **+26.43 GB** |
+| diffvae first | 38.62 GB | **41.18 GB** | **−2.56 GB** |
+
+The second arm read ~41 GB either way. Fixed with **one decoder per process**
+(`--decode-triangle-arm`), which reproduces exactly (2.34 / 26.26 GB attributable, twice each).
+
+⚠️ **The retracted number was numerically CLOSE to the truth** (+26.43 vs the real +23.9) — and that
+is the trap. It was close by accident of ordering, and the identical method yielded −2.56 GB when
+reversed. **A roughly-right number from an invalid method is still a wrong finding**, and only the
+reversal control distinguished them. Same family as AB-R-0041 (post-run "resident floor" measuring
+mmap retention) and AB-L-0041 (an A/B where argument order was the entire effect) — three instances
+of *a process-level metric attributed to a per-component cause*.
+
+### Verdict
+
+**On cost and fidelity, DiffVAE loses decisively.** §V's framing — *"DiffVAE decode is HEAVIER by
+design … conv stays the efficiency default; DiffVAE is a quality tier"* — is supported, and the
+price of that tier is now quantified: **~11× decode time and ~24 GB**. Since decode is 8–32% of a
+run, defaulting to DiffVAE would roughly double a run at best.
+
+C3's claim ("sharper faces, textures, on-screen text") therefore rests **entirely** on a perceptual
+win that no measurement here or in the oracle supports — and one specific sub-claim, on-screen text,
+was already refuted: **identical under Vision OCR** (AB-R-0014). ⚠️ PSNR ≠ perceptual remains true;
+a generative decoder may trade fidelity for apparent sharpness. That case would need an operator
+A/B, and it would have to be worth ×11 time and 24 GB.
+
+🔑 **DiffVAE is ported and gated but deliberately NOT wired into `LTX2Pipeline`. This measurement
+says that is the right call** — wiring it should wait on a perceptual case, not precede one.

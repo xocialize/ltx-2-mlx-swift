@@ -1,0 +1,22 @@
+^D[decode-triangle] clip=hard-cut-14s.mp4  geom=704x512x25f  tree=ltx-2.5-mlx
+[decode-triangle] ground truth = REAL clip frames (read IN PLACE off Satechi; AB-L-0041)
+[decode-triangle] source frames [1, 3, 25, 512, 704]  (1.2s)
+[decode-triangle] shared latent [1, 128, 4, 16, 22]  (encode 1.7s)
+[decode-triangle] ⚠️ REVERSED decoder order (diffvae first)
+
+[decode-triangle] ───── cost triangle ─────
+[decode-triangle] diffvae decode   19.70s  peak  38.62 GB
+[decode-triangle] conv decode    2.26s  peak  41.18 GB
+[decode-triangle] DiffVAE costs ×8.73 time, -2.56 GB peak vs conv
+
+[decode-triangle] ───── fidelity vs the REAL source ─────
+[decode-triangle] diffvae PSNR  35.91 dB   SSIM 0.9923
+[decode-triangle] conv PSNR  46.57 dB   SSIM 0.9994
+[decode-triangle] diffvae 2nd draw: PSNR  35.93 dB (Δ+0.02)  SSIM 0.9923 (Δ-0.0000)
+[decode-triangle] ↑ the spread between draws is the floor on any DiffVAE fidelity claim
+
+[decode-triangle] ⚠️ C3's verdict is the ORACLE's (AB-R-0013/0014): conv is MORE faithful
+[decode-triangle]    (42.6 vs 36.8 dB, 0.994 vs 0.986 SSIM), on-screen text IDENTICAL under
+[decode-triangle]    Vision OCR. PSNR ≠ perceptual — a generative decoder may trade fidelity
+[decode-triangle]    for apparent sharpness. This reproduces FIDELITY+COST on Swift only;
+[decode-triangle]    the perceptual half is an operator A/B, not a metric.

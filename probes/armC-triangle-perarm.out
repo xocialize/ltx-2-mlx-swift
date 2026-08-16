@@ -1,0 +1,12 @@
+[triangle-arm] phys baseline 0.00 GB → pre-decode (source+encoder+latent) 12.37 GB
+[triangle-arm] SUMMARY arm=conv decode=1.76s peak=14.71GB attributable=2.34GB
+[triangle-arm] 'attributable' = peak − pre-decode phys, i.e. what THIS decoder added.
+[triangle-arm] phys baseline 0.00 GB → pre-decode (source+encoder+latent) 12.37 GB
+[triangle-arm] SUMMARY arm=diffvae decode=20.46s peak=38.62GB attributable=26.26GB
+[triangle-arm] 'attributable' = peak − pre-decode phys, i.e. what THIS decoder added.
+[triangle-arm] phys baseline 0.00 GB → pre-decode (source+encoder+latent) 12.37 GB
+[triangle-arm] SUMMARY arm=conv decode=2.03s peak=14.71GB attributable=2.34GB
+[triangle-arm] 'attributable' = peak − pre-decode phys, i.e. what THIS decoder added.
+[triangle-arm] phys baseline 0.00 GB → pre-decode (source+encoder+latent) 12.37 GB
+[triangle-arm] SUMMARY arm=diffvae decode=21.80s peak=38.62GB attributable=26.26GB
+[triangle-arm] 'attributable' = peak − pre-decode phys, i.e. what THIS decoder added.
