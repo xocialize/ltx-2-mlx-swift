@@ -428,3 +428,68 @@ A/B, and it would have to be worth ×11 time and 24 GB.
 
 🔑 **DiffVAE is ported and gated but deliberately NOT wired into `LTX2Pipeline`. This measurement
 says that is the right call** — wiring it should wait on a perceptual case, not precede one.
+
+---
+
+## Arm E — enhancer overhead (C5) ✅ time is modest; the cost is a SECOND RESIDENT 12B
+
+`RunLTX2 --enhancer-bench` (harness written by a delegated agent; reviewed and its central finding
+independently verified before landing). Log: `probes/armE-enhancer-bench.out`.
+
+| axis | measured |
+|---|---|
+| pass, model already loaded | median **7.30 s** (6.79–8.59, 5 cases, 872 tok, 23.3 tok/s) |
+| full shipping seam (load→generate→release) | **10.39 s**, peak 15.24 GB |
+| **second resident model** | **7.19 GB** (floor 0.24 → 7.43 GB after load) |
+| enhancement-phase peak | 10.12 GB (2.69 GB activation over the resident model) |
+| released back to | 0.42 GB — the transient seam does return it |
+| determinism | **REPRODUCIBLE** at a pinned seed (measured by re-running, not asserted) |
+
+### 🔑 The oracle's architectural finding reproduces
+
+AB-R-0018: C5 SUPPORTED, but *"my prediction was wrong by 5× — the real cost is a SECOND resident
+12B, not time."* Swift confirms both halves. On **time**, 10.39 s of full seam against a ~230 s
+241f run is ~4.5% (~15% at 121f), so "minimal extra compute" holds. On **memory**, enhancement adds
+a whole generative checkpoint because `gemma4_unified` is **encode-only** — LTX-2.5's own text
+encoder cannot enhance, so a separate generative model is structurally required.
+
+⚠️ **ARITHMETIC, not measured here** (and labelled as such in the harness output): 2.5's measured
+peak 42.27 GB (AB-R-0035) + 7.19 GB = **49.46 GB vs `standard64`'s 44.8 GB budget**. Enhancement and
+generation **must be sequential** on that tier — which is exactly what the transient load→generate→
+release seam enforces. The vendor's "minimal extra compute" framing does not mention this, and for a
+local-first product with a memory governor it is the term that binds.
+
+### ⚠️ Two honest gaps
+
+**1. Swift's pass is ~2× slower per word than the oracle's.** 7.30 s for 7→134 words here vs 3.1 s
+for 7→113 there (18.4 vs 36.5 words/s) on the same 4-bit checkpoint. This does NOT threaten C5 —
+the claim is about proportion of a run, and 4.5–15% is modest either way — but it is an unexplained
+Swift-vs-oracle gap and should not be quietly rounded away. Candidates: sampler/seam differences,
+the 928-token system prompt being re-prefilled every pass, or a genuine generative-path cost. Not
+investigated.
+
+**2. 🚨 The SHIPPING seam cannot pin its seed — verified independently.**
+`GemmaTextGenerator.generate` builds `GenerateParameters(maxTokens:temperature:)` and never sets
+`seed`, while upstream `MLXLMCommon.GenerateParameters` **does** expose `public var seed: UInt64?`.
+So the app's enhancement is nondeterministic **by omission**, at temp 0.7, where the oracle's
+`enhance_t2v` defaults to `seed=10`. The battery arm therefore drives `GemmaEncoder` + `ChatSession`
+directly to pin the seed (and measures that it reproduces byte-identically); the seam arm runs
+unseeded and is labelled so. **Consequence: two identical enhancement requests in the app can yield
+different prompts, hence different videos, with no way for a caller to fix it.** Spun out as its own
+work item — it is a one-parameter fix, not a research question.
+
+### Also worth keeping
+
+- The battery loads the model ONCE, so a row is the *pass* — comparable to the oracle's 3.1 s. The
+  seam arm separately prices what the app actually pays per enhancement (load included), because the
+  transient design reloads the 12B on every call.
+- `model_type` for both checkpoints is read from `config.json` with **no weights loaded** —
+  `gemma4_unified` (encode-only) and `gemma3` (generative). Proving the encode-only property the
+  expensive way would mean loading a 24 GB encoder just to watch a cast fail.
+- The oracle's real system prompt is read from the oracle repo at runtime rather than vendored (it
+  is Lightricks' text; this repo is the published Apache-2.0 one), with a **loud** fallback notice if
+  absent — the two prompts produce different output lengths and therefore different wall-clocks.
+- The "same run ± enhancement" half of arm E is deliberately NOT here: that is a two-generation
+  comparison and belongs to `--bench-e2e`'s ABBA protocol, since a single-block arm at ≥121f is
+  uninterpretable (AB-R-0066). This isolates the enhancer so that comparison has a per-pass number
+  to sit against.

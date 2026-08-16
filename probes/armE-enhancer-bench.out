@@ -1,0 +1,62 @@
+^D[enhancer-bench] ───── resolved parameters ─────
+[enhancer-bench] generator dir  = /Volumes/Satechi/Models/mlx-community/gemma-3-12b-it-4bit
+[enhancer-bench] generator      = model_type=gemma3  weights-on-disk=8.03 GB
+[enhancer-bench] 2.5 encoder    = gemma4-12b-ltx-v1  model_type=gemma4_unified  weights-on-disk=23.81 GB
+[enhancer-bench] ⇒ ENCODE-ONLY: the 2.5 text encoder CANNOT enhance, so enhancement adds a SECOND resident model. That is C5's real cost (AB-R-0018).
+[enhancer-bench] path           = GemmaEncoder(gemma3) + ChatSession  [Swift generative seam]
+[enhancer-bench] sampling       = SAMPLED (temperature 0.7 → CategoricalSampler) — the oracle's gemma3 recipe  maxTokens=512  seed=10
+[enhancer-bench] determinism    = seed pinned — MEASURED below by re-running E1 with the same seed, not asserted
+[enhancer-bench] system prompt  = oracle gemma_t2v_system_prompt.txt (4175 chars)
+[enhancer-bench] user template  = "user prompt: <prompt>"  (oracle enhance_t2v)
+[enhancer-bench] cases          = 5  seam arm = yes
+[enhancer-bench] MLX cache cap  = 2 GB (LTX_CACHE_LIMIT_GB)
+[enhancer-bench] C5's verdict is the ORACLE's (AB-R-0018: SUPPORTED, 3.1 s pass). This reproduces it on Swift and prices the second resident model.
+
+[enhancer-bench] system prompt = 928 tokens (prefilled on EVERY pass)
+[enhancer-bench] prewarm 1.4s (2 files)
+[enhancer-bench] phys BEFORE generator load: 0.24 GB
+[enhancer-bench] load 2.5s  phys AFTER generator load: 7.43 GB  → SECOND RESIDENT MODEL = 7.19 GB
+[enhancer-bench] warmup 2.9s (8 tokens, excluded)
+
+[enhancer-bench] id  kind        in→out tok    words      s     tok/s
+[enhancer-bench] E1  short    8→ 164     7→134    7.30    22.5
+[enhancer-bench] E2  short    6→ 146     5→108    6.79    21.5
+[enhancer-bench] E3  medium   28→ 179    24→142    7.57    23.6
+[enhancer-bench] E4  detailed   73→ 168    60→136    7.13    23.5
+[enhancer-bench] E5  multishot   58→ 215    43→165    8.59    25.0
+
+[enhancer-bench] determinism: REPRODUCIBLE — same seed=10 re-run produced a byte-identical string
+[enhancer-bench] phys AFTER release + clearCache: 0.42 GB (was 0.24 GB before load)
+
+[enhancer-bench] SEAM GemmaTextGenerator.generate (load→generate→release, UNSEEDED): 10.39s, 131 words, peak 15.24 GB
+[enhancer-bench] SEAM phys after: 4.13 GB — the transient design returns the model
+
+[enhancer-bench] ───── TIME (axis 1) ─────
+[enhancer-bench] per-pass  min 6.79s · median 7.30s · mean 7.48s · max 8.59s  (5 passes, 872 tokens, 23.3 tok/s aggregate)
+[enhancer-bench] model load (prewarmed) 2.5s — the oracle's warm load was 1.4s and its pass 3.1s (AB-R-0018)
+[enhancer-bench] oracle-comparable case E1: 7 words → 134 words in 7.30s (oracle: 7 → 113 in 3.1s)
+[enhancer-bench] ───── MEMORY (axis 2 — the real cost) ─────
+[enhancer-bench] floor before load 0.24 GB → after load 7.43 GB  ⇒ SECOND RESIDENT MODEL 7.19 GB
+[enhancer-bench] PEAK phys across the enhancement phase: 10.12 GB (generation activation over the resident model: 2.69 GB)
+[enhancer-bench] released back to 0.42 GB
+[enhancer-bench] ARITHMETIC (not measured here): 2.5's own measured peak is 42.27 GB (AB-R-0035, 448×320×9, evicted+capped) against standard64's 44.8 GB budget; +7.19 GB of enhancer would be 49.46 GB. Enhancement and generation must be SEQUENTIAL on that tier, which is what the transient seam enforces.
+[enhancer-bench] determinism: REPRODUCIBLE — same seed=10 re-run produced a byte-identical string
+[enhancer-bench] SUMMARY arm=E claim=C5 path=gemma3-generative sampling=temp0.7 seed=10 maxTokens=512 cases=5 median_s=7.30 mean_s=7.48 load_s=2.5 resident=7187534960 peak=10119797264 seam_s=10.39 seam_peak=15244177264
+
+[enhancer-bench] ───── enhanced prompts (operator read; the QUALITY half of C5 is unmeasured) ─────
+[enhancer-bench] E1 « a lighthouse keeper climbing the spiral stairs »
+    → Style: cinematic-realistic. An elderly man with a weathered face and gray hair neatly combed back is climbing a spiral staircase inside a lighthouse. He wears a thick, navy blue sweater, and sturdy work boots. The stone stairs are worn and slightly damp, echoing with the rhythmic thud of his footsteps. A faint scent of saltwater permeates the air, mixed with the musty odor of old stone. As he ascends, the light from the circular windows casts long, shifting shadows that dance on the walls. The man pauses, catching his breath, his hand resting on the cool, rough stone of the wall, a subtle tremor in his hand. He continues climbing, the sound of the ocean growing louder as he nears the top, the wind whistling softly through cracks in the structure—a low, mournful sound.
+
+[enhancer-bench] E2 « a red fox in snow »
+    → Style: cinematic-realistic. A red fox is standing in a snow-covered forest clearing. The fox has thick, reddish-brown fur, a white-tipped tail, and alert, amber eyes. Fine snowflakes are gently falling, dusting the fox’s fur and the surrounding trees. The ground is covered in a thick layer of white snow, with subtle footprints visible near the fox's paws. The fox pauses, sniffing the air with its nose, its whiskers twitching slightly. The background is a dense forest of snow-laden evergreen trees, blurred slightly to emphasize the fox. Ambient sounds of gently falling snow and distant wind rustling through the trees are present. A quiet, natural soundscape fills the scene.
+
+[enhancer-bench] E3 « A woman walks across a sunlit room, sits down at a piano and begins to play while rain runs down the window behind her. »
+    → Style: cinematic-realistic. A woman in her late 20s with long, wavy auburn hair and a simple linen dress is walking across a sunlit room; her steps are measured and quiet on the hardwood floor. Sunlight streams in from a large window, illuminating dust motes dancing in the air. Ambient sounds of a gentle breeze and distant birdsong drift in from outside. As she reaches a grand piano, she sits gracefully on the bench, her hands resting lightly on the keys. Rain begins to fall outside, the sound of droplets pattering against the windowpane gradually increasing. She begins to play a melancholic melody on the piano—soft, deliberate notes fill the room. The rain intensifies, creating a steady, rhythmic backdrop to the music. She plays with a focused expression, her fingers moving deftly across the keys, while raindrops trace paths down the window glass.
+
+[enhancer-bench] E4 « A lone lighthouse on a rocky headland during a storm at dusk, waves exploding against the rocks in sheets of white spray, the beam sweeping through heavy rain. The camera starts low near the waterline and cranes slowly upward, holding the tower against a bruised purple sky. Handheld, anamorphic, grain, the roar of surf and wind under a low horn. »
+    → Style: realistic with anamorphic lens and subtle film grain. The camera is handheld, low to the ground near the waterline, observing a lone, weathered lighthouse standing on a rocky headland. Dark, jagged rocks are visible, constantly impacted by large waves exploding upwards in sheets of white spray. It is dusk; the sky is a bruised purple color, filled with heavy rain that obscures the horizon. The lighthouse tower, a stark white cylinder, stands tall against the sky. The lighthouse beam sweeps rhythmically through the heavy rain, cutting a path of momentary brightness through the gloom. The dominant sound is the relentless roar of the surf crashing against the rocks, interwoven with the howling wind. A low, mournful horn periodically blasts—a deep, resonant tone—as the camera slowly cranes upwards, maintaining the lighthouse tower against the darkening sky.
+
+[enhancer-bench] E5 « Shot 1: a chef's hands dicing onions on a worn wooden board, steam rising behind. Shot 2: the same kitchen from the doorway as a server pushes through, the chef looking up. Shot 3: close on the finished plate under a service lamp. »
+    → Style: cinematic-realistic. Shot 1: A chef's hands are dicing onions on a well-worn wooden board, the knife flashing with each precise cut; steam rises from a nearby stainless steel pot, blurring the background slightly. The sound of the knife chopping rhythmically against the board mixes with the low hum of kitchen equipment. Shot 2: The same kitchen, viewed from the doorway, as a server in a crisp white shirt and dark pants pushes through, carrying a tray laden with plates; the chef glances up briefly, a focused expression still on their face. The sound of the server’s footsteps on the tile floor is muted by the general kitchen noise—pots clanging, voices murmuring. Shot 3: Close on a finished plate under a warm service lamp; the dish consists of perfectly arranged scallops atop a bed of creamy risotto, garnished with fresh herbs. The plate’s surface gleams subtly, reflecting the light. A gentle sizzle emanates from the dish, accompanied by a quiet, anticipatory hum from the kitchen.
+
+[enhancer-bench] DONE — C5's verdict is the ORACLE's (AB-R-0018, SUPPORTED); this arm reproduces the Swift-side timing and prices the second resident 12B.

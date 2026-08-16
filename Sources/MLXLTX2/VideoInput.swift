@@ -13,12 +13,16 @@ import Foundation
 import MLX
 import MLXToolKit
 
-enum VideoInput {
+public enum VideoInput {
 
     /// Decode `url` to (1, 3, frames, height, width) bf16 in [-1,1]: frame i sampled at time
     /// i/fps (clamped to the clip's duration), aspect-fill center-cropped.
-    static func referenceClipFrames(url: URL, width: Int, height: Int,
-                                    frames: Int, fps: Double) async throws -> MLXArray {
+    ///
+    /// Public since 2026-08-16 so `RunLTX2 --decode-triangle` (bench matrix arm C / claim C3) can
+    /// pull REAL clip frames as reconstruction ground truth. That arm needs a real source, not a
+    /// generated one — PSNR/SSIM against a generation would measure the generator, not the decoder.
+    public static func referenceClipFrames(url: URL, width: Int, height: Int,
+                                           frames: Int, fps: Double) async throws -> MLXArray {
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
         guard duration > 0 else {

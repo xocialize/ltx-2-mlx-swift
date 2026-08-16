@@ -2301,9 +2301,31 @@ if args.contains("--connector-gate") {
     try ditQ8Gate()
 } else if args.contains("--ltx25-package-gate") {
     ltx25PackageGate()
+} else if args.contains("--decode-triangle-arm") {
+    try await decodeTriangleArm(positional.first ?? "conv",
+                                clip: positional.dropFirst().first,
+                                width: positional.dropFirst(2).first.flatMap { Int($0) },
+                                height: positional.dropFirst(3).first.flatMap { Int($0) },
+                                frames: positional.dropFirst(4).first.flatMap { Int($0) })
+} else if args.contains("--decode-triangle") {
+    // Bench matrix arm C (claim C3) — decoder-isolated: one shared latent, two decoders,
+    // both scored against the REAL source clip.
+    try await decodeTriangle(clip: positional.first,
+                             width: positional.dropFirst().first.flatMap { Int($0) },
+                             height: positional.dropFirst(2).first.flatMap { Int($0) },
+                             frames: positional.dropFirst(3).first.flatMap { Int($0) })
 } else if args.contains("--duration-battery") {
     // Bench matrix arm D (claim C6) — the HONESTY battery, distinct from --duration-gate's parity check.
     try await durationBatteryRun(modelDir: positional.first)
+} else if args.contains("--enhancer-bench") {
+    // Bench matrix arm E (claim C5) — enhancer wall-clock AND the second-resident-12B memory cost.
+    // RunLTX2 --enhancer-bench [gemmaGenerativeDir] [maxTokens] [seed] [--greedy] [--no-seam]
+    try await enhancerBatteryRun(
+        gemmaDir: positional.first,
+        maxTokens: positional.dropFirst().first.flatMap { Int($0) } ?? 512,
+        seed: positional.dropFirst(2).first.flatMap { UInt64($0) } ?? 10,
+        greedy: args.contains("--greedy"),
+        runSeam: !args.contains("--no-seam"))
 } else if args.contains("--dit25-probe") {
     // RunLTX2 --dit25-probe <bf16|ditq8|bf16-23|q8-23> <out.safetensors> [W H F]
     // ONE arm per process — see the file header.
