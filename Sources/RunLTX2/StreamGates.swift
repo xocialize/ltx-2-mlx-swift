@@ -42,35 +42,125 @@ private func physFootprintGB() -> Double {
     return Double(info.phys_footprint) / 1_073_741_824
 }
 
+/// Thrown by the 2.5 input builder — the gates elsewhere `exit(2)` on setup problems, but a
+/// throwing builder keeps `forLTX25` usable from any arm without it deciding to kill the process.
+private struct GateError: Error, CustomStringConvertible {
+    let description: String
+    init(_ d: String) { description = d }
+}
+
 private struct QuantPaths {
     let checkpoint: URL
     let granules: URL
+    let is25: Bool
 
+    /// 2.5 arms carry a `25-` prefix. The family decides BOTH the checkpoint tree and how the
+    /// inputs are built (2.5 needs a keyframes mask and its own connector conditioning), so it
+    /// cannot be inferred later from the quant name alone.
+    ///
+    /// ⚠️ **2.5's quantized DiT is `-ditq8`, NOT `-q8`.** On 2.5 the `-q8` name is the int8 TEXT
+    /// ENCODER sibling whose transformer symlinks back to bf16 — an arm labelled q8 there would
+    /// stream bf16 granules against a bf16 reference and report the null delta as a result.
+    /// 2.5 has no q4 DiT at all, so there is deliberately no `25-q4`.
     init?(_ quant: String) {
-        let repos = [
+        let repos23 = [
             "bf16": "ltx-2.3-mlx",
             "q8": "ltx-2.3-mlx-q8",
             "q4": "ltx-2.3-mlx-q4",
         ]
-        guard let repo = repos[quant] else { return nil }
-        checkpoint = URL(
-            fileURLWithPath:
-                "/Volumes/Satechi/Models/dgrauet/\(repo)/transformer-distilled.safetensors")
-        granules = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules/\(quant)")
+        let repos25 = [
+            "25-bf16": "ltx-2.5-mlx",
+            "25-ditq8": "ltx-2.5-mlx-ditq8",
+        ]
+        if let repo = repos23[quant] {
+            is25 = false
+            checkpoint = URL(
+                fileURLWithPath:
+                    "/Volumes/Satechi/Models/dgrauet/\(repo)/transformer-distilled.safetensors")
+            granules = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules/\(quant)")
+        } else if let repo = repos25[quant] {
+            is25 = true
+            checkpoint = URL(
+                fileURLWithPath:
+                    "/Volumes/Satechi/Models/xocialize/\(repo)/transformer-distilled.safetensors")
+            granules = URL(
+                fileURLWithPath:
+                    "/Volumes/Satechi/Models/ltx-granules-25/\(quant.dropFirst(3))")
+        } else {
+            return nil
+        }
     }
+
+    /// The model directory (sibling of the transformer) — 2.5 input construction needs the
+    /// `connector.safetensors` that lives beside the checkpoint.
+    var tree: URL { checkpoint.deletingLastPathComponent() }
 }
 
 private struct DiTInputs {
     var videoLatent, audioLatent, sigma: MLXArray
     var videoText, audioText: MLXArray?
     var videoPositions, audioPositions: MLXArray
+    /// 2.5 only. nil on 2.3, whose checkpoints carry no `keyframes_abs_pos_embedding` — passing
+    /// nil rather than relying on `DiT` ignoring it keeps the 2.3 arm explicitly the 2.3 forward.
+    var keyframesMask: MLXArray?
 
     static func fromGoldens(_ dir: String) throws -> DiTInputs {
         let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
         return DiTInputs(
             videoLatent: io["video_latent"]!, audioLatent: io["audio_latent"]!,
             sigma: io["sigma"]!, videoText: io["video_text"], audioText: io["audio_text"],
-            videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!)
+            videoPositions: io["video_positions"]!, audioPositions: io["audio_positions"]!,
+            keyframesMask: nil)
+    }
+
+    /// 2.5's in-distribution inputs, built exactly as `--dit25-probe` builds them (which is in
+    /// turn how `t2vTwoStage` builds them): real Gemma-4 49-state golden → the real 2.5
+    /// connector for text, `firstLatentFrameKeyframesMask` for keyframes, stage-2 entry sigma,
+    /// and a fixed-key latent so every run and every arm gets the identical array.
+    ///
+    /// There is no 2.5 DiT golden to compare against, and none is needed here: a streaming
+    /// parity gate asks whether the STREAMED path reproduces the RESIDENT one on identical
+    /// inputs, which is a self-contained question. What the inputs must be is *valid and
+    /// in-distribution*, so the blocks see realistic activations rather than noise.
+    ///
+    /// Default geometry is deliberately SMALL (9 frames → N=704). Parity is a correctness
+    /// question and does not need the shipping N; the auto/budget arms tile up to the real
+    /// stage-2 N, which is where the streaming decision actually lives.
+    static func forLTX25(tree: URL, frames: Int = 9) throws -> DiTInputs {
+        let width = 704, height = 512, fps = 24.0
+        let fLat = (frames - 1) / 8 + 1, hLat = height / 32, wLat = width / 32
+        let videoTokens = fLat * hLat * wLat
+        let audioTokens = Positions.audioTokenCount(numFrames: frames, fps: fps)
+
+        let goldens = try MLX.loadArrays(
+            url: URL(fileURLWithPath: "\(goldensBase)/gemma4/goldens.safetensors"))
+        guard let mask = goldens["attention_mask"] else {
+            throw GateError("gemma4 goldens missing attention_mask")
+        }
+        var hidden: [MLXArray] = []
+        for i in 0 ..< 49 {
+            guard let h = goldens[String(format: "gemma_hidden_%02d", i)] else {
+                throw GateError("gemma4 goldens missing state \(i)")
+            }
+            hidden.append(h)
+        }
+        let connector = try Connector.load(
+            connectorPath: tree.appendingPathComponent("connector.safetensors"))
+        let (videoText, audioText) = connector(hiddenStates: hidden, mask: mask)
+
+        MLXRandom.seed(0x2025_0814)
+        let videoLatent = MLXRandom.normal([1, videoTokens, 128]).asType(.float32)
+        let audioLatent = MLXRandom.normal([1, audioTokens, 128]).asType(.float32)
+        eval(videoText, audioText, videoLatent, audioLatent)
+
+        return DiTInputs(
+            videoLatent: videoLatent, audioLatent: audioLatent,
+            sigma: MLXArray([Positions.stage2Sigmas[0]]),
+            videoText: videoText, audioText: audioText,
+            videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
+            audioPositions: Positions.audio(tokens: audioTokens),
+            keyframesMask: LTX2Pipeline.firstLatentFrameKeyframesMask(
+                totalTokens: videoTokens, tokensPerLatentFrame: hLat * wLat))
     }
 
     /// Token-axis tile to a target video N (positions tiled alongside — RoPE
@@ -85,6 +175,11 @@ private struct DiTInputs {
         }
         out.videoLatent = tile(videoLatent, axis: 1, to: n)
         out.videoPositions = tile(videoPositions, axis: 1, to: n)  // (B, N, 3)
+        // (B, N, 1) on 2.5. Tiling repeats the keyframe band rather than keeping one leading
+        // block — physically meaningless, and deliberately so: like the RoPE values above, the
+        // auto/budget arms are COST arms where only shapes drive the measurement. Never reuse a
+        // tiled DiTInputs for a parity or quality claim.
+        if let kf = keyframesMask { out.keyframesMask = tile(kf, axis: 1, to: n) }
         return out
     }
 
@@ -92,7 +187,8 @@ private struct DiTInputs {
         let (v, aOpt) = dit(
             videoLatent: videoLatent, audioLatent: audioLatent, sigma: sigma,
             videoText: videoText, audioText: audioText,
-            videoPositions: videoPositions, audioPositions: audioPositions)
+            videoPositions: videoPositions, audioPositions: audioPositions,
+            keyframesMask: keyframesMask)
         let a = aOpt!   // audio supplied ⇒ audio returned (the audio-free path is DFR-only)
         eval(v, a)
         return (v, a)
@@ -279,7 +375,11 @@ func streamParityGate(quant: String) throws {
         print("[stream-parity-gate] unknown quant '\(quant)'")
         exit(2)
     }
-    let inputs = try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
+    // 🔑 The family decides the inputs. A 2.5 checkpoint fed 2.3's dit_full golden would run the
+    // 2.5 forward with NO keyframes mask — a different forward from the shipping one, silently.
+    let inputs = paths.is25
+        ? try DiTInputs.forLTX25(tree: paths.tree)
+        : try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
     let tokens = inputs.videoLatent.dim(1) + inputs.audioLatent.dim(1)
     print("[stream-parity-gate] quant=\(quant) tokens=\(tokens) phys=\(String(format: "%.2f", physFootprintGB())) GB")
 
@@ -399,7 +499,9 @@ func streamAutoGate(quant: String, videoN: Int?) throws {
         print("[stream-auto-gate] unknown quant '\(quant)'")
         exit(2)
     }
-    var inputs = try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
+    var inputs = paths.is25
+        ? try DiTInputs.forLTX25(tree: paths.tree)
+        : try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
     if let n = videoN { inputs = inputs.tiled(toVideoN: n) }
     let tokens = inputs.videoLatent.dim(0)
         * (inputs.videoLatent.dim(1) + inputs.audioLatent.dim(1))
@@ -465,7 +567,9 @@ func streamBudgetGate(quant: String, videoN: Int, budgetGB: Double, steps: Int) 
         print("[stream-budget-gate] unknown quant '\(quant)'")
         exit(2)
     }
-    var inputs = try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
+    var inputs = paths.is25
+        ? try DiTInputs.forLTX25(tree: paths.tree)
+        : try DiTInputs.fromGoldens("\(goldensBase)/dit_full")
     inputs = inputs.tiled(toVideoN: videoN)
     let budget = Int(budgetGB * 1_073_741_824)
     print(String(
