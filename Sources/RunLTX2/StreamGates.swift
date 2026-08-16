@@ -83,9 +83,15 @@ private struct QuantPaths {
             checkpoint = URL(
                 fileURLWithPath:
                     "/Volumes/Satechi/Models/xocialize/\(repo)/transformer-distilled.safetensors")
+            // ⚠️ The granule subdir is keyed by QUANT, not by the repo suffix — it must match
+            // `LTX2Configuration.resolvedGranuleDirectory` (int8 → "q8"), which is what the
+            // shipping pipeline appends to `granuleRootDirectory`. The ARM is named `25-ditq8`
+            // because that is the checkpoint tree; the granule dir is `q8` because that is the
+            // quant. Naming the directory `ditq8` made the gates pass while the real pipeline
+            // looked for `.../ditq8/q8/` and failed to bind.
             granules = URL(
                 fileURLWithPath:
-                    "/Volumes/Satechi/Models/ltx-granules-25/\(quant.dropFirst(3))")
+                    "/Volumes/Satechi/Models/ltx-granules-25/\(quant == "25-ditq8" ? "q8" : "bf16")")
         } else {
             return nil
         }
