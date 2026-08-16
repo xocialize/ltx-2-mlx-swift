@@ -2315,6 +2315,9 @@ if args.contains("--connector-gate") {
     try ditQ8Gate()
 } else if args.contains("--ltx25-package-gate") {
     ltx25PackageGate()
+} else if args.contains("--gemma4-tokenizer-gate") {
+    // The 2.5 tokenize path (Gemma4Encoder.tokenize) — covered by NOTHING before 2026-08-16.
+    try await gemma4TokenizerGate(gemma4Dir: positional.first)
 } else if args.contains("--decode-triangle-arm") {
     try await decodeTriangleArm(positional.first ?? "conv",
                                 clip: positional.dropFirst().first,

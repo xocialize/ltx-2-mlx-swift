@@ -67,9 +67,23 @@ public struct Gemma4Encoder {
 
     /// Tokenize + left-pad, with the manual BOS the 2.5 tokenizer does not supply.
     ///
-    /// Mirrors the oracle: encode the stripped text, prepend `<bos>` if absent, keep the LAST
-    /// `maxLength` on overflow (which can drop that BOS again — matched behaviour), left-pad
-    /// with `pad_token_id`.
+    /// ⟲ **CORRECTED 2026-08-16 (AB-T-0059): over-length input now keeps the FIRST `maxLength`
+    /// tokens, not the last.** The previous implementation kept the LAST — inherited from the
+    /// oracle, and WRONG against the vendor. Verified against `Lightricks/LTX-2` v1.2.0
+    /// `ltx_core/text_encoders/gemma/tokenizer.py:31-63`, which does
+    /// `tokenizer(text, truncation=True, max_length=…)` and then `[bos, *ids][: max_length]` —
+    /// both of which keep the FRONT, because the vendor sets `padding_side` explicitly but never
+    /// `truncation_side`, and the Gemma-4 `tokenizer_config.json` does not set it either, so HF's
+    /// default applies. **Measured, not assumed:** `tk.truncation_side == "right"` on the real
+    /// checkpoint, and a >1024-token probe with distinct head/tail markers kept the head and
+    /// dropped the tail.
+    ///
+    /// The old behaviour was doubly wrong on a long prompt: it conditioned on the prompt's TAIL
+    /// where the vendor uses its HEAD, and it discarded the BOS it had just prepended.
+    ///
+    /// Order matters and mirrors the vendor exactly: encode → truncate to `maxLength` (front) →
+    /// prepend `<bos>` if absent → re-clip to `maxLength` (front, so an exactly-full prompt loses
+    /// its LAST token rather than the BOS) → left-pad with `pad_token_id`.
     public static func tokenize(
         _ text: String,
         tokenizer tk: any MLXLMCommon.Tokenizer,
@@ -78,8 +92,8 @@ public struct Gemma4Encoder {
         maxLength: Int = 1024
     ) -> (tokenIds: MLXArray, mask: MLXArray) {
         var tokens = tk.encode(text: text.trimmingCharacters(in: .whitespacesAndNewlines))
-        if tokens.first != bosId { tokens.insert(bosId, at: 0) }
-        if tokens.count > maxLength { tokens = Array(tokens.suffix(maxLength)) }
+        if tokens.count > maxLength { tokens = Array(tokens.prefix(maxLength)) }   // HF truncation_side=right
+        if tokens.first != bosId { tokens = Array(([bosId] + tokens).prefix(maxLength)) }
         let pad = maxLength - tokens.count
         let ids = Array(repeating: padId, count: pad) + tokens
         let m = Array(repeating: 0, count: pad) + Array(repeating: 1, count: tokens.count)
