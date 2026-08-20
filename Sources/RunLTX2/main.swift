@@ -1514,6 +1514,13 @@ func physFootprintBytes() -> UInt64 {
 final class PhysSampler: @unchecked Sendable {
     private let lock = NSLock()
     private var _max: UInt64 = 0
+    /// Low-water during the measured window. 🔑 **Under EVICTION this, not `phys-after-load`, is
+    /// the honest residency**: the pipeline drops the DiT/encoder around the stages that do not
+    /// need them, so after-load captures a transient the run never returns to (measured: after-load
+    /// 22.13 GB vs a whole-run PEAK of 14.59 — a "resident" larger than the peak, with activation
+    /// falling out as 0.00). The inter-stage FLOOR is what actually stays held, so
+    /// `activation = peak − floor` is the transient the governor must budget on top of it.
+    private var _min: UInt64 = .max
     private var _running = false
     private var _t0 = Date()
     /// `LTX_PHYS_TRACE=1` prints a line on every NEW high-water, timestamped from `start()`.
@@ -1542,14 +1549,20 @@ final class PhysSampler: @unchecked Sendable {
         lock.lock()
         var newHighWater = false
         if p > _max { _max = p; newHighWater = true }
+        if p < _min { _min = p }
         let elapsed = Date().timeIntervalSince(_t0)
         lock.unlock()
         if newHighWater && trace {
             print(String(format: "[PHYS-HW] +%7.1fs  %.2f GB", elapsed, Double(p) / 1_000_000_000.0))
         }
     }
-    func resetMax() { lock.lock(); _max = physFootprintBytes(); _t0 = Date(); lock.unlock() }
+    func resetMax() {
+        lock.lock(); let p = physFootprintBytes(); _max = p; _min = p; _t0 = Date(); lock.unlock()
+    }
     func maxBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _max }
+    /// Low-water during the measured window — the retained set under eviction. `.max` if the
+    /// sampler never observed a sample (window too short to sample at 25 ms).
+    func minBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _min }
     func stop() { lock.lock(); _running = false; lock.unlock() }
 }
 

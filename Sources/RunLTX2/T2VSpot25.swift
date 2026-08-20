@@ -104,9 +104,12 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
         }
     }
 
+    // i2v conditions on a clean first frame and pulls in the ~4.9 GB i2v-adapter LoRA, so it is a
+    // materially different footprint from t2v — it must be measured, not inferred from the t2v row.
+    let i2v = env["LTX_I2V"] == "1"
     let lane = streamed ? "STREAMED" : "RESIDENT"
     print("[t2v-spot25] request \(width)×\(height)×\(frames)f \(quantName) · tier=\(profile.rawValue)"
-        + " · DiT lane: \(lane) · encoder: \(encTree)"
+        + " · DiT lane: \(lane) · encoder: \(encTree) · mode: \(i2v ? "i2v" : "t2v")"
         + " · gate: \(cfg.streamingOptions.gatePolicy.rawValue)")
     if streamed { print("[t2v-spot25] granules \(granuleTree.path)") }
 
@@ -125,6 +128,10 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
             warm.append(p)
         }
     }
+    // The adapter is a real resident cost on the i2v path; leaving it cold would both slow the run
+    // and measure paging rather than footprint (the pruna trap).
+    if i2v { warm.append(URL(fileURLWithPath:
+        "/Volumes/Satechi/Models/ltx-lora-cache/i2v-adapter.safetensors")) }
     prewarmFiles(warm)
     print(String(format: "[t2v-spot25] prewarm %.1fs (%d files%@)", Date().timeIntervalSince(p0),
                  warm.count, streamed ? ", transformer excluded by streamedBlocks" : ""))
@@ -133,11 +140,28 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let pkg = MLXLTX25Package(configuration: cfg)
     try await pkg.load()
     Memory.clearCache()
+    // 🚨 DECLARE FROM HERE, not from the post-run sample below. `--mem-bench25` shipped the same
+    // bug (AB-R-0078): its "resident floor" was one post-run, post-clearCache reading, which under
+    // eviction measures RETAINED MMAP PAGES and is unstable run-to-run — 11.39 vs 5.72 GB for the
+    // identical geometry and arm, while phys-after-load moved 0.00. This arm inherited the same
+    // instrument for its floor=/act= columns until 2026-08-20. PEAK was never affected, so every
+    // ACCEPTANCE number quoted from this harness stands; only the split was wrong.
+    let afterLoad = physFootprintBytes()
 
+    // Synthetic init frame, matching `--i2v-spot`'s approach: this is a FOOTPRINT arm and shapes
+    // drive cost, so image CONTENT is irrelevant. ⚠️ Do not reuse this arm for a quality claim.
+    let initPNG = i2v ? try syntheticInitPNG(width: width, height: height) : Data()
     func request(_ nf: Int) -> T2VRequest {
-        T2VRequest(prompt: env["LTX_T2V_PROMPT"]
-                       ?? "a fox running down a beach at sunset, waves rolling in",
-                   numFrames: nf, fps: 24, width: width, height: height, seed: 42)
+        let prompt = env["LTX_T2V_PROMPT"]
+            ?? "a fox running down a beach at sunset, waves rolling in"
+        guard i2v else {
+            return T2VRequest(prompt: prompt, numFrames: nf, fps: 24,
+                              width: width, height: height, seed: 42)
+        }
+        return T2VRequest(prompt: prompt,
+                          initImage: MLXToolKit.Image(format: .png, data: initPNG),
+                          numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                          metaData: [LoRAMetaKeys.id: .string("i2v-adapter")])
     }
 
     // Warmup at 9f — kernel compile is per-process and would otherwise land inside the measured
@@ -145,8 +169,9 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     _ = try await pkg.run(request(9))
     Memory.clearCache()
     let floor = physFootprintBytes()
-    print(String(format: "[t2v-spot25] resident floor (post-warmup + clearCache): %.2f GB",
-                 gbOf(floor)))
+    print(String(format: "[t2v-spot25] phys-after-load=%.2f GB · post-run retain=%.2f GB "
+                     + "(both reported for comparison; the DECLARE line below uses neither)",
+                 gbOf(afterLoad), gbOf(floor)))
 
     sampler.resetMax()
     let r0 = Date()
@@ -154,8 +179,18 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     if let save = env["LTX_T2V_SAVE"], !save.isEmpty {
         try resp.video.data.write(to: URL(fileURLWithPath: (save as NSString).expandingTildeInPath))
     }
-    let peak = sampler.maxBytes(); sampler.stop()
-    let activation = peak > floor ? peak - floor : 0
+    let peak = sampler.maxBytes()
+    let held = sampler.minBytes(); sampler.stop()
+    // ⚠️ THREE candidate residencies, and under EVICTION only one is honest:
+    //   afterLoad — everything loaded at once; a transient the run never returns to. Measured
+    //               22.13 GB against a 14.59 GB whole-run PEAK, i.e. a "resident" bigger than the
+    //               peak and an activation of 0.00. This is the shape-inversion CLAUDE.md warns of.
+    //   retain    — one post-run, post-clearCache sample; unstable run-to-run (11.39 vs 5.72 GB on
+    //               identical work) because the weights are genuinely gone by then (AB-R-0078).
+    //   held      — the LOW-WATER during the measured run: what survives across stage boundaries.
+    // `held` is the one the governor should reserve; `peak − held` is the transient on top of it.
+    let resident = min(held, peak)
+    let activation = peak > resident ? peak - resident : 0
 
     // The acceptance arithmetic, printed rather than left to the reader — a raw peak next to a
     // tier name invites the reader to eyeball a comparison the rule defines precisely.
@@ -177,8 +212,14 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let verdict = gbOf(peak) <= budgetGB ? "✅ WITHIN" : "❌ OVER"
     print(String(format: "[t2v-spot25] run %.1fs  mp4 %.1f MB", Date().timeIntervalSince(r0),
                  Double(resp.video.data.count) / 1_000_000))
-    print(String(format: "[t2v-spot25] SPLIT lane=%@ quant=%@ floor=%.2f GB peak=%.2f GB act=%.2f GB",
-                 lane as NSString, quantName as NSString, gbOf(floor), gbOf(peak), gbOf(activation)))
+    print(String(format: "[t2v-spot25] SPLIT lane=%@ mode=%@ quant=%@ enc=%@ · "
+                     + "resident(held)=%.2f GB act=%.2f GB peak=%.2f GB "
+                     + "· [afterLoad=%.2f retain=%.2f — neither is declarable under eviction]",
+                 lane as NSString, (i2v ? "i2v" : "t2v") as NSString, quantName as NSString,
+                 (encTree.hasSuffix("-q8") ? "int8" : "bf16") as NSString,
+                 gbOf(resident), gbOf(activation), gbOf(peak), gbOf(afterLoad), gbOf(floor)))
+    print(String(format: "[t2v-spot25] DECLARE → residentBytes=%.2f GB peakActivationBytes=%.2f GB",
+                 gbOf(resident), gbOf(activation)))
     print(String(format: "[t2v-spot25] ACCEPTANCE tier=%@ budget=%.2f GB · measured stage-max "
                      + "%.2f GB → %@",
                  profile.rawValue as NSString, budgetGB, gbOf(peak), verdict as NSString))
