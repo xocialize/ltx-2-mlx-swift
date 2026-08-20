@@ -95,11 +95,19 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     if streamed {
         cfg.streamedBlocks = true
         cfg.granuleRootDirectory = granuleRoot
+        // Set the gate policy through the CONFIG axis (forwarded by MLXLTX2Package), not the
+        // pipeline's `LTX_STREAM_GATE` env — that env exists for callers that drive
+        // `LTX2Pipeline` directly (`--e2e25`). Going through the config is what proves the
+        // shipping wrapper actually forwards it: gate the WIRING, not just the component.
+        if env["LTX_STREAM_GATE"] == "force" || profile.recommendedForcedStreamGate {
+            cfg.streamingOptions.gatePolicy = .forceStream
+        }
     }
 
     let lane = streamed ? "STREAMED" : "RESIDENT"
     print("[t2v-spot25] request \(width)×\(height)×\(frames)f \(quantName) · tier=\(profile.rawValue)"
-        + " · DiT lane: \(lane) · encoder: \(encTree)")
+        + " · DiT lane: \(lane) · encoder: \(encTree)"
+        + " · gate: \(cfg.streamingOptions.gatePolicy.rawValue)")
     if streamed { print("[t2v-spot25] granules \(granuleTree.path)") }
 
     // Prewarm off the config's OWN prewarmPaths — which, when streamedBlocks is set, deliberately

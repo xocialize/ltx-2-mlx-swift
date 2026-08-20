@@ -181,8 +181,70 @@ func ltx25PackageGate() {
               && keptCustom.effectiveTransformerRepo == "acme/my-ltx25-mirror-ditq8",
           "\(keptCustom.repo) → \(keptCustom.effectiveTransformerRepo ?? "nil")")
 
+    // ───── the TEXT-ENCODER axis (2026-08-19) ─────
+    // 🔑 The whole point of these cases is that `quant` and `textEncoderQuant` are DIFFERENT axes
+    // resolving to DIFFERENT sibling repos with different suffixes. Conflating them is the
+    // documented 2.5 footgun, and it is silent: both produce a plausible repo name.
+    var enc = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx")
+    enc.quant = .int8
+    enc.textEncoderQuant = .int8
+    check("20 int8 DiT and int8 ENCODER resolve to DIFFERENT siblings",
+          enc.effectiveTransformerRepo == "xocialize/ltx-2.5-mlx-ditq8"
+              && enc.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
+          "transformer=\(enc.effectiveTransformerRepo ?? "nil") components=\(enc.effectiveComponentsRepo)")
+
+    var bf = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx")
+    check("21 default encoder is bf16 and rides the components repo unchanged",
+          bf.textEncoderQuant == .bf16 && bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
+          "\(bf.textEncoderQuant.rawValue) → \(bf.effectiveComponentsRepo)")
+
+    // int4 encoder was REJECTED by the gate (AB-D-0010, 0.996728 vs a 0.999879 bf16 floor).
+    // Deriving `-q4` would name a tree that must never be built, let alone loaded.
+    bf.textEncoderQuant = .int4
+    check("22 int4 encoder derives NO sibling (rejected quant, must not be nameable)",
+          bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
+          "\(bf.effectiveComponentsRepo)")
+
+    // 2.3's encoder is an EXTERNAL repo, so a components sibling would carry no encoder at all.
+    var enc23 = LTX2Configuration(family: .ltx23, repo: "xocialize/ltx-2.3-mlx")
+    enc23.textEncoderQuant = .int8
+    check("23 2.3 never derives an encoder sibling (its encoder is an external repo)",
+          enc23.effectiveComponentsRepo == "xocialize/ltx-2.3-mlx",
+          "\(enc23.effectiveComponentsRepo)")
+
+    // The declaration has to REACH weightSources, not just the computed property — the wiring is
+    // what ships, and a gate on the property alone would pass while materialization used `repo`.
+    let compSource = enc.weightSources.first { $0.role == "components" }
+    check("24 weightSources materializes the ENCODER sibling, not the base repo",
+          compSource?.repo == "xocialize/ltx-2.5-mlx-q8",
+          "components source repo=\(compSource?.repo ?? "nil")")
+
+    // ───── gate policy + Codable back-compat ─────
+    check("25 gate policy defaults to .auto (no silent behaviour change)",
+          bf.streamingOptions.gatePolicy == .auto, "\(bf.streamingOptions.gatePolicy.rawValue)")
+    check("26 profiles ADVISE the measured low-tier settings",
+          LTX2Profile.compact24.recommendedTextEncoderQuant == .int8
+              && LTX2Profile.compact24.recommendedForcedStreamGate
+              && LTX2Profile.standard64.recommendedTextEncoderQuant == .bf16
+              && !LTX2Profile.standard64.recommendedForcedStreamGate,
+          "compact24=int8/forced · standard64=bf16/auto")
+
+    // A config persisted BEFORE this key existed must still decode — and as bf16, the only
+    // encoder that existed then (the bernini d02cfa1 rule).
+    let legacyEnc = #"{"repo":"xocialize/ltx-2.5-mlx","family":"ltx25","quant":"int8"}"#
+    let decoded = try? JSONDecoder().decode(LTX2Configuration.self, from: Data(legacyEnc.utf8))
+    check("27 legacy config without the key decodes as bf16 encoder",
+          decoded?.textEncoderQuant == Quant.bf16,
+          "\(decoded.map { $0.textEncoderQuant.rawValue } ?? "DECODE FAILED")")
+
+    let round = try? JSONDecoder().decode(
+        LTX2Configuration.self, from: JSONEncoder().encode(enc))
+    check("28 textEncoderQuant survives a Codable round-trip",
+          round?.textEncoderQuant == .int8 && round?.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
+          "\(round.map { $0.textEncoderQuant.rawValue } ?? "DECODE FAILED")")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (20/20)"
+          ? "[ltx25-package-gate] PASS ✅ (28/28)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

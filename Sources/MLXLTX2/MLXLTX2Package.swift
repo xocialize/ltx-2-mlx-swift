@@ -144,6 +144,9 @@ public final class MLXLTX2Package: ModelPackage {
         // configured quant. The streamer's .auto gate still falls back resident when this
         // machine/request's arithmetic doesn't clear — output-invisibly.
         pipeline?.streamingGranuleDirectory = configuration.resolvedGranuleDirectory
+        // Gate policy and slot geometry travel with the granule root — forwarding one without the
+        // other would silently run a `.forceStream` configuration on the `.auto` default.
+        pipeline?.streamingOptions = configuration.streamingOptions
 
         // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
         // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).

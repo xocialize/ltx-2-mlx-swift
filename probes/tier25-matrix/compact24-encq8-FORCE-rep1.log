@@ -1,0 +1,12 @@
+[t2v-spot25] request 704×512×161f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.8s (11 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[t2v-spot25] resident floor (post-warmup + clearCache): 0.64 GB
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[t2v-spot25] run 47.3s  mp4 0.8 MB
+[t2v-spot25] SPLIT lane=STREAMED quant=int8 floor=0.64 GB peak=14.56 GB act=13.92 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=16.80 GB · measured stage-max 14.56 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

@@ -62,6 +62,36 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     public var recommendedQuant: Quant {
         switch self { case .compact24, .balanced32: .int4; case .standard64: .int8; case .max128: .bf16 }
     }
+
+    /// Advisory, like `recommendedQuant`: which TEXT-ENCODER precision this tier wants.
+    ///
+    /// 🔑 **Measured, not guessed (AB-R-0090/0104/0105).** With the DiT streamed, LTX-2.5's peak is
+    /// set by a **geometry-INDEPENDENT ~24.8 GB encoder floor** (256×256×9 and 512×288×121 agree to
+    /// 0.01 GB). That floor is over both low-tier budgets, so on `compact24`/`balanced32` the int8
+    /// encoder is not a nicety — it is load-bearing: 24.8 → **14.6 / 15.4 GB**. Quality is settled
+    /// by a BLIND 4-pair perceptual A/B (AB-R-0104). Above those tiers bf16 fits comfortably and
+    /// stays the default, since it is the reproducible arm.
+    public var recommendedTextEncoderQuant: Quant {
+        switch self { case .compact24, .balanced32: .int8; default: .bf16 }
+    }
+
+    /// Advisory: whether this tier should PIN the streamer on rather than let the runtime gate decide.
+    ///
+    /// 🚨 **`.auto` is not safe to DECLARE a low tier on.** The gate streams only when measured IO
+    /// (S) outruns measured compute (C(N)), and **C(N) at small N is noisy**: at `compact24`'s
+    /// N=2430 it read 3.34 / 7.43 / 3.52 GiB/s over three runs, flipping the verdict and swinging
+    /// PEAK between **14.6 GB (streamed) and 33.6 GB (fell back resident)** — 1 run in 3. A
+    /// footprint that depends on a coin flip cannot be declared; the honest `.auto` number is the
+    /// FALLBACK peak, which busts the budget.
+    /// ✅ Forcing it costs nothing measurable: 3 forced runs read **14.56 GB every time**, at
+    /// 47.3–68.1 s against `.auto`'s 46.5–69.0 s — overlapping spreads, no stall penalty. The
+    /// expected memory-for-time trade did not materialise, because a spurious fallback ALSO costs
+    /// time (it loads 18.38 GiB).
+    /// ⚠️ Headroom scales with N, so this is a SMALL-N remedy: standard64 clears N_min by 4.8× and
+    /// has no need of it.
+    public var recommendedForcedStreamGate: Bool {
+        switch self { case .compact24: true; default: false }
+    }
 }
 
 /// Init-time configuration for `MLXLTX2Package` (C9): where the LTX-2.3 component
@@ -103,6 +133,27 @@ public enum LTXFamily: String, Codable, Sendable, CaseIterable {
         case (.ltx25, .int8): return "-ditq8"
         case (.ltx25, .int4): return nil        // no q4 2.5 DiT exists; do NOT derive one
         default: return nil                     // bf16 rides the components repo
+        }
+    }
+
+    /// Sibling repo carrying a quantized TEXT ENCODER, or nil to use the components repo as-is.
+    ///
+    /// 🔑 **This is what `<repo>-q8` on 2.5 actually IS**, and naming it here is the point: the
+    /// suffix has been documented for months only as a *trap* for the DiT axis above, which is
+    /// true and which obscured that it is the correct and only source of the int8 Gemma-4 encoder.
+    /// The tree carries `gemma4-12b-ltx-v1/` int8 shards (13 GB vs the bf16 tree's 22 GB) and
+    /// symlinks every other component back, so pointing the COMPONENTS repo at it swaps the
+    /// encoder and nothing else — which is exactly how AB-R-0031 built it ("zero wiring changes").
+    ///
+    /// 2.3 returns nil at every quant: its encoder is an EXTERNAL repo (`gemmaRepo`), not in-tree,
+    /// so a suffix here would name a components sibling that does not carry an encoder at all.
+    ///
+    /// ⚠️ Only int8 exists. int4 g64 was REJECTED by the gate (connector output 0.996728 on valid
+    /// positions vs a 0.999879 bf16 floor, AB-D-0010) — do not derive a `-q4` encoder.
+    func textEncoderRepoSuffix(for quant: Quant) -> String? {
+        switch (self, quant) {
+        case (.ltx25, .int8): return "-q8"
+        default: return nil
         }
     }
 }
@@ -175,6 +226,28 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// Root of the granule store (e.g. `/Volumes/Satechi/Models/ltx-granules`).
     public var granuleRootDirectory: URL?
 
+    /// Streaming knobs forwarded to `BlockStreamer` — group size, gate policy, margin.
+    ///
+    /// Default `.auto` preserves today's behaviour exactly; a caller opts into pinning with
+    /// `streamingOptions.gatePolicy = .forceStream`, and `LTX2Profile.recommendedForcedStreamGate`
+    /// says which tiers want that (advisory — this field decides, mirroring `recommendedQuant`).
+    /// EXCLUDED from Codable: `BlockStreamingOptions` is `Sendable` but not `Codable`, and the
+    /// policy is a deployment decision rather than persisted model identity.
+    public var streamingOptions = BlockStreamingOptions()
+
+    /// Precision of the TEXT ENCODER, independent of `quant` (which is the DiT's).
+    ///
+    /// 🔑 **Two separate axes, and conflating them is the documented 2.5 footgun.** `quant` selects
+    /// the transformer sibling (`-ditq8` on 2.5); this selects the components repo carrying the
+    /// encoder (`-q8` on 2.5). They are different repos with different suffixes and different
+    /// footprints — see `LTXFamily.transformerRepoSuffix` vs `textEncoderRepoSuffix`.
+    ///
+    /// Default `.bf16` keeps existing configs byte-identical. ⚠️ **Only affects REPO resolution**
+    /// (what `weightSources` materializes). When `ltxDirectory` is set you are naming a tree
+    /// directly, so point it at the sibling (`…-q8/`) instead — `LTX2Pipeline.gemma4Dir` derives
+    /// the encoder from `ltxDirectory` and this axis cannot override an explicit path.
+    public var textEncoderQuant: Quant = .bf16
+
     /// The granule tree for the configured quant, when streaming is enabled.
     public var resolvedGranuleDirectory: URL? {
         guard streamedBlocks, let root = granuleRootDirectory else { return nil }
@@ -219,6 +292,7 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
 
     private enum CodingKeys: String, CodingKey {
         case family, repo, revision, gemmaRepo, transformerRepo, quant, profile
+        case textEncoderQuant
     }
 
     public init(from decoder: Decoder) throws {
@@ -227,6 +301,9 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         // that is what it must keep decoding as (the bernini d02cfa1 pattern — a new key must never
         // become mandatory for configs that predate it).
         family = try c.decodeIfPresent(LTXFamily.self, forKey: .family) ?? .ltx23
+        // Absent ⇒ `.bf16`, the only encoder that existed when configs were first persisted (the
+        // same bernini d02cfa1 rule as `family`: a new key must never become mandatory).
+        textEncoderQuant = try c.decodeIfPresent(Quant.self, forKey: .textEncoderQuant) ?? .bf16
         repo = try c.decode(String.self, forKey: .repo)
         revision = try c.decodeIfPresent(String.self, forKey: .revision)
         gemmaRepo = try c.decodeIfPresent(String.self, forKey: .gemmaRepo)
@@ -269,12 +346,21 @@ extension LTX2Configuration: WeightSourcing {
         return repo + suffix
     }
 
+    /// The components repo actually materialized — `repo`, or its quantized-encoder sibling when
+    /// `textEncoderQuant` names one. Everything but the encoder is identical in that tree (the
+    /// sibling symlinks the rest back), so this swaps the encoder and nothing else.
+    public var effectiveComponentsRepo: String {
+        guard let suffix = family.textEncoderRepoSuffix(for: textEncoderQuant) else { return repo }
+        return repo + suffix
+    }
+
     public var weightSources: [WeightSource] {
         var componentGlobs = Self.componentFiles
         if family == .ltx25 { componentGlobs.append(contentsOf: Self.componentFiles25) }
         if effectiveTransformerRepo == nil { componentGlobs.append(Self.defaultTransformerFile) }
         var sources = [
-            WeightSource(role: "components", repo: repo, revision: revision, matching: componentGlobs),
+            WeightSource(role: "components", repo: effectiveComponentsRepo, revision: revision,
+                         matching: componentGlobs),
         ]
         // 2.5's Gemma-4 encoder lives INSIDE the components tree, so it is not a separate source —
         // declaring one would materialize an unrelated Gemma-3 repo the 2.5 pipeline never opens.

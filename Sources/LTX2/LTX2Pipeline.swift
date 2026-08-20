@@ -54,6 +54,25 @@ public final class LTX2Pipeline {
         return streamingGranuleDirectory
     }
 
+    /// `LTX_STREAM_GATE=force` pins the streamer to `.forceStream` — a MEASUREMENT affordance in
+    /// the same style as `LTX_STREAM_GRANULES` above, not a shipping default.
+    ///
+    /// 🔑 **Why it exists (2026-08-19, AB-R-0105).** The `.auto` gate compares measured IO (S)
+    /// against measured compute (C(N)) and streams only when IO can outrun compute. At SMALL N,
+    /// C(N) is noisy — at `compact24`'s N=2430 it read 3.34 / 7.43 / 3.52 GiB/s across three runs,
+    /// flipping the verdict and the PEAK between 14.6 GB (streamed) and 33.6 GB (fell back
+    /// resident). A tier cannot be declared on a footprint that depends on a coin flip, so the
+    /// question "what does compact24 cost if streaming is GUARANTEED" needs asking directly.
+    /// ⚠️ Forcing it where C(N) > S means the refill genuinely cannot keep up: expect real stall.
+    /// That is the trade being measured, not a bug.
+    private var effectiveStreamingOptions: BlockStreamingOptions {
+        var o = streamingOptions
+        if ProcessInfo.processInfo.environment["LTX_STREAM_GATE"] == "force" {
+            o.gatePolicy = .forceStream
+        }
+        return o
+    }
+
     /// Arm the streamer's gate threshold for the request being run (no-op when resident).
     ///
     /// 🚨 Under modality tiling this MUST be the largest **per-forward** count, not the untiled
@@ -145,7 +164,7 @@ public final class LTX2Pipeline {
             // Streamed blocks: slots + globals only. A reload after an evict
             // re-binds fresh slots (the granule tree is the weight source; the
             // checkpoint provenance-gates it and provides the 58 globals).
-            let streamer = try LTXBlockStreamer(granuleDir: granuleDir, options: streamingOptions)
+            let streamer = try LTXBlockStreamer(granuleDir: granuleDir, options: effectiveStreamingOptions)
             d = try DiT(
                 streaming: streamer, checkpoint: ditPath, config: DiTConfig(),
                 computeDtype: .bfloat16)
