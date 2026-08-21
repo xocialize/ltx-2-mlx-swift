@@ -432,20 +432,41 @@ extension LTX2Configuration: WeightSourcing {
     /// The component files LTX-2.3 needs beyond the transformer (optional features included —
     /// a first run materializes the full experience; the pipeline degrades per missing file
     /// only for explicit-dir setups).
+    /// ⚠️ **The `_config.json` SIDECARS are not optional.** `Upsampler.peekVariant` resolves which
+    /// variant a checkpoint is (x2 / x1.5-rational / temporal-x2) by reading `<stem>_config.json`
+    /// WITHOUT touching the weights — so a fetch that brings the safetensors and drops the sidecar
+    /// delivers a file the pipeline cannot classify.
+    ///
+    /// ⟲ **CORRECTED 2026-08-21.** This list carried ONE upscaler and NO sidecars, so 2.3 could
+    /// fetch only x2 and could not identify even that. `componentFiles25` had them all along —
+    /// 2.3 was simply left behind when the variant support landed, and the omission was invisible
+    /// because every local tree has the files on disk already. **The port supports and GATES all
+    /// three variants (`--upsampler-variants-gate`, `--two-stage-variants-gate`); two of them were
+    /// unreachable for anyone fetching from the declared repo.**
     static let componentFiles = [
         "connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
-        "audio_vae.safetensors", "vocoder.safetensors", "spatial_upscaler_x2_v1_1.safetensors",
+        "audio_vae.safetensors", "vocoder.safetensors",
+        "spatial_upscaler_x2_v1_1.safetensors", "spatial_upscaler_x2_v1_1_config.json",
+        "temporal_upscaler_x2_v1_0.safetensors", "temporal_upscaler_x2_v1_0_config.json",
+    ]
+
+    /// 2.3-only. ⚠️ **The x1.5-rational upscaler exists for 2.3 and NOT for 2.5** — putting it in
+    /// the shared list makes every 2.5 arm demand a file its tree has never contained. Caught by
+    /// the reach gate's file-completeness pass within a minute of making exactly that mistake.
+    static let componentFiles23 = [
+        "spatial_upscaler_x1_5_v1_0.safetensors", "spatial_upscaler_x1_5_v1_0_config.json",
     ]
 
     /// 2.5-only components, on top of `componentFiles`. The Gemma-4 encoder shards are matched by
     /// directory glob because they live in-tree (`gemma4-12b-ltx-v1/`) rather than in their own
     /// repo — which is also what `LTX2Pipeline.isLTX25` keys off, so a components fetch that
     /// dropped them would make the tree resolve as 2.3 and silently run the wrong pipeline.
+    /// 2.5-only, ON TOP of `componentFiles` — which now carries every upscaler variant and its
+    /// sidecar for both families, so the entries that used to be duplicated here are gone.
     static let componentFiles25 = [
         "gemma4-12b-ltx-v1/*",
         "config.json", "embedded_config.json",
-        "temporal_upscaler_x2_v1_0.safetensors", "temporal_upscaler_x2_v1_0_config.json",
-        "spatial_upscaler_x2_v1_1_config.json",
+        "vae_diffusion_decoder.safetensors", "duration_head.safetensors",
     ]
 
     /// The repo serving the quantized transformer; bf16 rides the components repo.
@@ -471,7 +492,7 @@ extension LTX2Configuration: WeightSourcing {
     public var weightSources: [WeightSource] {
         var componentGlobs = Self.componentFiles
         if family == .ltx25 { componentGlobs.append(contentsOf: Self.componentFiles25) }
-        if effectiveTransformerRepo == nil { componentGlobs.append(Self.defaultTransformerFile) }
+        if family == .ltx23 { componentGlobs.append(contentsOf: Self.componentFiles23) }
         var sources = [
             WeightSource(role: "components", repo: effectiveComponentsRepo, revision: revision,
                          matching: componentGlobs),
@@ -488,8 +509,14 @@ extension LTX2Configuration: WeightSourcing {
         if family.defaultGemmaRepo != nil || family == .ltx23 {
             sources.append(WeightSource(role: "text-encoder", repo: gemmaRepo))
         }
-        if let tRepo = effectiveTransformerRepo, !effectiveStreamedBlocks {
-            sources.append(WeightSource(role: "transformer-\(quant.rawValue)", repo: tRepo,
+        // 🔑 The transformer is its OWN source, from the quant sibling when one exists and
+        // otherwise from the BASE repo — never from `effectiveComponentsRepo`. It used to ride the
+        // components glob when there was no sibling (bf16), which meant an encoder-swapped config
+        // demanded the 35 GB bf16 transformer from the `-q8` tree: 35 GB of duplication to satisfy
+        // a combination nobody ships. Streaming replaces this source entirely.
+        if !effectiveStreamedBlocks {
+            sources.append(WeightSource(role: "transformer-\(quant.rawValue)",
+                                        repo: effectiveTransformerRepo ?? repo,
                                         matching: [Self.defaultTransformerFile]))
         }
         return sources

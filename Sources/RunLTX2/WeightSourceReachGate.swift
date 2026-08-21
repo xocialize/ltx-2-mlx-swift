@@ -69,8 +69,53 @@ func weightSourceReachGate() async throws {
         if !ok { failures.append(repo) }
     }
 
+    // ───── FILE-LEVEL completeness ─────
+    // 🔑 Repo existence is not enough, and assuming it was is how the 2.3 upscalers hid. The repo
+    // resolved; it simply did not contain two of the three variants the port supports and GATES,
+    // plus none of the `_config.json` sidecars that identify them. Every local tree has those files
+    // on disk, so nothing on this machine could ever notice.
+    print("[reach-gate] checking that each source's declared files actually EXIST there")
+    var trees: [String: Set<String>] = [:]
+    func tree(_ repo: String) async -> Set<String> {
+        if let t = trees[repo] { return t }
+        var req = URLRequest(url: URL(
+            string: "https://huggingface.co/api/models/\(repo)/tree/main?recursive=true")!)
+        req.timeoutInterval = 30
+        var out: Set<String> = []
+        if let (data, resp) = try? await URLSession.shared.data(for: req),
+           (resp as? HTTPURLResponse)?.statusCode == 200,
+           let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            for e in arr where (e["type"] as? String) == "file" {
+                if let p = e["path"] as? String { out.insert(p) }
+            }
+        }
+        trees[repo] = out
+        return out
+    }
+    func matches(_ pattern: String, _ files: Set<String>) -> Bool {
+        guard pattern.hasSuffix("/*") else { return files.contains(pattern) }
+        let dir = String(pattern.dropLast(1))          // keep the trailing slash
+        return files.contains { $0.hasPrefix(dir) }
+    }
+    var missing: [String] = []
+    for (label, cfg) in configs {
+        for src in cfg.weightSources {
+            guard let globs = src.matching, !globs.isEmpty else { continue }     // whole-repo source: existence suffices
+            let files = await tree(src.repo)
+            guard !files.isEmpty else { continue }     // unreachable, already reported above
+            let absent = globs.filter { !matches($0, files) }
+            if !absent.isEmpty {
+                let line = "\(src.repo) [\(label):\(src.role)] missing \(absent.joined(separator: ", "))"
+                if !missing.contains(line) { missing.append(line) }
+            }
+        }
+    }
+    for m in missing { print("  ❌ \(m)") }
+    if missing.isEmpty { print("  ✅ every declared file resolves in its repo") }
+    failures.append(contentsOf: missing)
+
     if failures.isEmpty {
-        print("[reach-gate] PASS ✅ — every declared WeightSource is publicly reachable")
+        print("[reach-gate] PASS ✅ — every declared WeightSource is reachable AND complete")
     } else {
         print("[reach-gate] FAIL ❌ \(failures.count) unreachable: \(failures.joined(separator: ", "))")
         print("[reach-gate] ⚠️ a consumer without local weights CANNOT materialize these arms")
