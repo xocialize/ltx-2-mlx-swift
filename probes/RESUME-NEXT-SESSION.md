@@ -2,9 +2,23 @@
 
 > ✅ **2026-08-21 — LTX-2.5 is PUBLISHED, gate-green, and shipping on all four tiers by decision
 > (AB-D-0035).** Everything committed and pushed.
-> ✅ **PHASE 1 CLOSED 2026-08-21 — AUDIO IS SHIPPABLE (AB-D-0036).** LTX-2.5 generates
-> intelligible, prompt-specified speech; operator approved all three scripted arms plus the ambient
-> foley. **Next slot = Phase 2** (desk work, short runs — no dedicated slot needed).
+> ✅ **PHASE 1 IS FULLY CLOSED — AUDIO IS SHIPPABLE, INCLUDING ON THE LOW TIERS.**
+> 2.5 generates intelligible, prompt-specified speech (AB-D-0036), and the **int8 encoder is
+> CLEARED for speech** by a blind operator listen of the full encoder ladder (AB-D-0037).
+> **Next = Phase 2** — desk work and short runs; **no dedicated GPU slot needed.**
+
+## ⏸️ Session paused for an operator reboot (display-resolution issue on wake)
+
+Nothing is running. All three repos clean and pushed. Nothing to restart or re-measure.
+
+**Artifacts on the Desktop, all reboot-safe:**
+
+| path | |
+|---|---|
+| `~/Desktop/ltx25-audio-verdict/` (12 MB) | Phase 1 clips — 3 speech, 3 ambient, +2 known-text |
+| `~/Desktop/ltx25-enc-audio-ab/` (16 MB) | encoder ladder, 12 clips, arm-named + `manifest.tsv` |
+| `~/Desktop/ltx25-enc-BLIND/` (16 MB) | the blind set (verdict already given — safe to delete) |
+| `~/Desktop/ltx25-enc-BLIND-KEY.tsv` | its key, no longer withheld |
 
 ## Where things stand
 
@@ -38,61 +52,55 @@ two first and adding low tiers when the ask lands.
 
 ## The plan (agreed 2026-08-21)
 
-### ✅ Phase 1 — AUDIO VERDICT — **DONE, and it reversed the expectation**
+### ✅ Phase 1 — AUDIO VERDICT — **CLOSED. It reversed the expectation twice.**
 
-**LTX-2.5 generates intelligible, prompt-specified speech.** Three known-text arms:
+**1. 2.5 generates intelligible, prompt-specified speech (AB-D-0036).** Operator approved every
+clip; voices gender/age-appropriate; the workshop foley matched the depicted action (joint AV
+coherence, not merely "audio exists"). ⟲ 2.3's babble is a MODEL property and AB-R-0002's
+"2.5's audio STACK is byte-identical" never settled 2.5 — the stack is the DECODER; generation is
+the DiT's.
 
-| arm | transcript | WER |
-|---|---|---|
-| speech-01 | *"The quick brown fox jumps over the lazy dog."* | **0.00** |
-| speech-04 | *"Pack my box with five dozen liquor jugs."* | **0.00** |
-| speech-05 | *"the rain in Spain stays mainly on the plain"* → *"…rein and spine…on the plane"* | 0.56 — **artifact** |
+**2. The int8 encoder is CLEARED for speech (AB-D-0037).** 4 encoder arms × 3 low-prior sentences;
+q8 matched bf16 exactly (WER 0.12/0.00/0.00, the 0.12 being whisper writing *"at 7."*), and a blind
+operator listen could not separate ANY arm — **including a poison encoder at 0.829 connector
+cosine**. Both instruments agree. Full write-up: `probes/enc25-audio/RESULTS.md`.
 
-🚨 **CORRECTED TWICE — read AB-R-0110 before quoting any of this.** speech-05 was filed first as a
-"homophone artifact", then as *corroborated* because the operator heard "Spain" before reading my
-note. **Both were wrong.**
+🚨 **Two corrections live in AB-R-0110 — read it before quoting the Phase 1 numbers.** speech-05 was
+filed first as a "homophone artifact" and then as *corroborated* because the operator heard it
+correctly before reading my note. **Both were wrong.** `spine` is not a homophone of `Spain`, the
+audio genuinely does say *spine*, and the **stock sentence** primed the human judge — not my note —
+so the "independent" check shared the prior it was meant to test. **Count is 2 of 3 exact, 1 with a
+real word error.**
 
-- *rein/rain* and *plane/plain* are true homophones and cost nothing.
-- **`spine` is NOT a homophone of `Spain`** (/spaɪn/ vs /speɪn/), and the operator reports the audio
-  genuinely **does** sound like *spine* — they supplied "Spain" by assuming the famous phrase after
-  hearing "rain". **Whisper was right on that token; the model got one word wrong.**
+🔑 **Mandatory going forward: LOW-PRIOR, homophone-free known-text sentences.** A famous sentence
+correlates the errors of the model, the ASR AND the human judge at once, leaving no independent
+check anywhere in the loop.
 
-🔑 **I ruled out the wrong contaminant.** My note did not prime the operator — **the stock sentence
-did**. The "independent" confirmation shared the very prior it was meant to check. The phrase
-steered the model, the ASR, and the human judge in the SAME direction at once, leaving no
-independent check anywhere in the loop.
+🔑 **WER measures WHICH WORDS — encoder damage does not appear there.** Proven: the metric cannot
+separate bf16 from an encoder we rejected. What separates them is nothing the ear could find either.
 
-⟲ So the count is **2 of 3 EXACT** (WER 0.00, 0.00), **1 with one substantive word error** — not
-3 of 3. WER over-stated the damage; it did not invent it.
+⚠️ **Scope limit, in the test design not the listening:** the encoder-ladder prompts specified almost
+no visual content (*"a person looks directly at the camera and says clearly: …"*), so **visual
+adherence under a degraded encoder is UNTESTED**. A degraded encoder's failure mode is *ignoring the
+prompt*, which a quality-preference judgement cannot see. AB-R-0104 (q8 only) is still the video-axis
+evidence.
 
-**Operator verdict: all three approved.** Voices gender/age-appropriate to the person on screen, and
-the workshop foley was correct AND matched the video — joint AV coherence, not just "audio exists".
+⚠️ Still unmeasured on audio: seed-to-seed consistency, multi-speaker/dialogue, lip-sync under
+scrutiny, non-English, and arbitrary (non-stock) sentences — `speech-06-arbitrary` is in the script
+and is one short run from closing the last of those.
 
-⟲ This kills the inherited assumption. 2.3's babble is a MODEL property, and AB-R-0002's
-"2.5's audio STACK is byte-identical" was read as settling 2.5 too. It never did — the stack is the
-DECODER; generation is the DiT's, and 2.5's DiT differs.
+### 📋 NEW — the q4 ENCODER rejection is worth re-examining (opportunity, NOT a reversal)
 
-⚠️ **WER is the wrong instrument for homophone-dense lines** — it logged a false negative here.
-Read it phonetically, or script lines without homophones.
+int4 was rejected on the **connector gate** (0.996728 vs a 0.999 bar) and **never perceptually
+tested**. It now has its first perceptual evidence — indistinguishable, blind — on a narrow prompt
+class. **Under STREAMING the encoder is the binding memory term** (that is what took compact24 from
+24.79 → 14.57 GB), and q4 is **7.6 GB vs q8's 13 GB**, aimed straight at **compact24 i2v's 92%-of-
+budget thinness**.
 
-🚨 **LOW-PRIOR SENTENCES ARE NOW MANDATORY, not a nice-to-have (AB-R-0110/AB-L-0056).** All three
-known-text arms were famous stock sentences — two pangrams and an elocution line. That is worse than
-a weak test: **a high-prior sentence correlates the errors of every judge you could check it with.**
-The model can complete it from its prior, the ASR carries the same prior, and so does the human
-listener. No proverbs, no pangrams, no stock phrases, no homophones.
-
-So the claim Phase 1 earned is *"speech is intelligible and well-voiced"* — real, and the question
-that was open — **not** *"it says the specific arbitrary thing you typed"*.
-
-⚠️ **Also unmeasured:** seed-to-seed consistency, multi-speaker/dialogue, lip-sync under scrutiny,
-non-English, and — cheapest and most load-bearing — **speech under the int8 ENCODER**. All audio
-arms ran the bf16 encoder; the low tiers auto-follow to int8, and AB-R-0104's A/B judged VIDEO only.
-If int8 conditioning degrades speech, it degrades it exactly where the app most wants audio.
-
-⚠️ **The probe script did not reproduce its own run** — arms 04/05 were run ad-hoc and never written
-back, and the harness logged no prompt, so the receipts could not regenerate the verdict. Both fixed
-(prompts recorded, per-arm `expectations.tsv`, arms 04–06 in the file). This repo already earned
-"print RESOLVED parameters, not intended ones"; the harness that proved audio works violated it.
+⚠️ Do NOT reverse on this. Needed first: (a) an A/B on **visually specified** prompts judging
+**ADHERENCE**, not preference; (b) the real tier measurement — under eviction the encoder sits
+largely outside the peak (AB-R-0034: int8 moved the resident-DiT peak 0.18 GB); only the STREAMED
+regime makes it binding; (c) the same quant class was rejected in `qwen-image-edit-swift`.
 
 ### Phase 2 — consumer-path items (~half a day, mostly desk work)
 
