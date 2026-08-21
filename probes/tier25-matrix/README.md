@@ -54,3 +54,42 @@ it to `granuleRootDirectory`; naming it `ditq8` binds in the gates and fails in 
 The int8 encoder's **perceptual A/B is not done** — its sample MOVES (mean −0.1421/std 0.4253 vs
 bf16 −0.1274/0.4222) and it is gated on numbers only. Single run, one geometry per tier. DFR/i2v
 untested in this config. Do not turn these into a tier declaration without the perceptual pass.
+
+---
+
+# i2v + corrected footprint — 18 runs, fresh boot, serial (2026-08-20, AB-R-0106)
+
+Closes AB-T-0066, the last measurement gap. Each profile clamps its own envelope from a
+704×512×161 request; **compact24 takes `.forceStream` from its profile advisory** (no env override),
+balanced32/standard64 stay `.auto`.
+
+**WORST-CASE per tier+mode** — worst, never mean, because compact24's `.auto` headroom once ranged
+1.33×…0.59× and a mean would have hidden the failure:
+
+| tier | mode | resident | activation | peak | budget | % of budget |
+|---|---|---|---|---|---|---|
+| compact24 | t2v | 0.49 | 14.15 | **14.58** | 16.8 | 87% ✅ |
+| compact24 | i2v | 0.49 | 15.02 | **15.49** | 16.8 | **92% ⚠️** |
+| balanced32 | t2v | 0.63 | 14.86 | **15.42** | 22.4 | 69% ✅ |
+| balanced32 | i2v | 0.61 | 16.65 | **17.14** | 22.4 | 77% ✅ |
+| standard64 | t2v | 0.63 | 18.80 | **19.43** | 44.8 | 43% ✅ |
+| standard64 | i2v | 0.58 | 18.47 | **19.03** | 44.8 | 42% ✅ |
+
+**18/18 ✅ WITHIN.** Every `.auto` run STREAMED on the measured pass (the "fell back resident" lines
+present in balanced32/standard64 logs are the **9f warmup**, which falls back at small N by design —
+read the LAST gate line, not any of them). compact24 never fell back at all under `.forceStream`.
+
+**i2v costs 0.9–1.7 GB over t2v** and had to be measured: it adds the ~4.9 GB i2v-adapter LoRA, and
+the resident/activation split shows why the peak does not move by that much — the adapter is inside
+the evicted set, so it lands in activation, not residency.
+
+**The split reproduces the eviction signature** — resident 0.41–0.63 GB against 14–19 GB of
+activation. That inversion (tiny resident, activation-dominated) is what the low-water instrument
+was adopted to capture, and its consistency across 18 runs is the evidence it is measuring the
+right thing.
+
+⚠️ **compact24 i2v at 92% of budget is THIN and should not be declared casually.** This project has
+already called out a 96%-of-budget declaration as unsafe (bf16 on standard64, AB-R-0038) — and that
+one at least sat *below* its profile's frame cap, where this sits *at* compact24's own clamped
+envelope (512×288×121), so there is no headroom hiding in an untested geometry. One prompt was
+tested; activation is content-sensitive.

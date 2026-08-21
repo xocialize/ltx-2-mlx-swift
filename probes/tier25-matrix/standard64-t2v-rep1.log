@@ -1,0 +1,16 @@
+[t2v-spot25] request 704×512×161f int8 · tier=standard64 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: auto
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.9s (11 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=713 · S=4.48 GiB/s vs C(N)=21.07 GiB/s → N_min≈3355 → FALL BACK (resident)
+[BlockStreamer] fell back resident: 18.38 GiB in 5.3s (3.45 GiB/s)
+[t2v-spot25] phys-after-load=22.08 GB · post-run retain=0.59 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=7560 · S=4.47 GiB/s vs C(N)=0.92 GiB/s → N_min≈1555 → STREAM (hidden)
+[t2v-spot25] run 142.9s  mp4 2.2 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.59 GB act=18.56 GB peak=19.16 GB · [afterLoad=22.08 retain=0.59 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.59 GB peakActivationBytes=18.56 GB
+[t2v-spot25] ACCEPTANCE tier=standard64 budget=44.80 GB · measured stage-max 19.16 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

@@ -15,6 +15,12 @@
 #   - compact24 gets .forceStream from its profile advisory automatically — do NOT set LTX_STREAM_GATE.
 #     .auto flips run-to-run at that N (peak 14.6 <-> 33.6 GB, 1 in 3), which is why the advisory exists.
 #
+# ⚠️ FIXED 2026-08-20 after the first real run: the summary grep was 'DECLARE .*', which matched the
+# PROSE "…the DECLARE line below uses neither)" instead of the actual "DECLARE → residentBytes=…"
+# line. Console output was wrong for all 18 runs; the per-run LOGS were always correct, so nothing
+# was lost — but a summary that quietly prints the wrong line is exactly how a bad number ships.
+# Anchor on the arrow.
+#
 # 🔑 INSTRUMENT: the DECLARE line uses resident = LOW-WATER DURING THE RUN, not phys-after-load and
 # not the post-run sample. Under eviction after-load reads a transient the run never returns to
 # (22.13 GB against a 14.59 GB peak — a resident larger than the peak); the post-run sample is
@@ -33,7 +39,7 @@ run() {  # mode tier rep
     "$BIN" --t2v-spot25 704 512 161 > "$OUT/$tag.log" 2>&1
   printf "  %-26s %s\n     %s\n" "$tag" \
     "$(grep -oE 'ACCEPTANCE .*' "$OUT/$tag.log" | head -1)" \
-    "$(grep -oE 'DECLARE .*'    "$OUT/$tag.log" | head -1)"
+    "$(grep -oE 'DECLARE → .*'  "$OUT/$tag.log" | head -1)"
 }
 
 for rep in 1 2 3; do
