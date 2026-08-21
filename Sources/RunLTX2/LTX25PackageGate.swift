@@ -408,8 +408,43 @@ func ltx25PackageGate() {
           "resident=\(fp23.residentBytesHint.map(String.init) ?? "nil") "
               + "act=\(fp23.peakActivationBytesHint.map(String.init) ?? "nil")")
 
+    // ── 44-47 · STORAGE FLOOR (contract 1.34.0, AB-T-0075 / AB-D-0038) ──────────────────────
+    // 🚨 The field means "below this the run CRASHES", not "below this it is slow". I9 measured
+    // bf16-on-USB at 0/7 while int8/int4 on the SAME volume were fine, so WHICH variants carry a
+    // floor is the entire content of the declaration. Case 45 is the one that can actually fail:
+    // declaring a floor on int8 would make the engine refuse (or warn about) a crash that has never
+    // been observed on that variant — a false positive that costs users hardware.
+    // ── 44-47 · STORAGE FLOOR (contract 1.34.0, AB-T-0075 / AB-D-0038) ──────────────────────
+    // 🚨 The field means "below this the run CRASHES", not "below this it is slow". I9 measured
+    // bf16-on-USB at 0/7 while int8/int4 on the SAME volume were fine, so WHICH variants carry a
+    // floor is the entire content of the declaration. Case 45 is the one that can actually fail:
+    // declaring a floor on int8 would have the engine refuse (or warn about) a crash never observed
+    // on that variant — a false positive that costs users hardware. Case 47 pins the ABSENCE on the
+    // streamed path so a future session cannot "helpfully" add one without reading AB-D-0038:
+    // streaming degrades in TIME, not safety, and that advisory is app-side off
+    // volumeCharacterization().
+    let fps25: [QuantFootprint] = m.requirements.footprints
+    let fps23: [QuantFootprint] = MLXLTX2Package.manifest.requirements.footprints
+    // ⚠️ Hoisted into plain lets deliberately: `.first { }?.field.map(String.init) ?? "nil"` inside
+    // a string interpolation blows the Swift type-checker's budget here (measured, twice).
+    let floor25bf16: UInt64? = fps25.first { $0.quant == .bf16 }?.minSustainedReadBytesPerSecond
+    let floor25int8: UInt64? = fps25.first { $0.quant == .int8 }?.minSustainedReadBytesPerSecond
+    let floor23bf16: UInt64? = fps23.first { $0.quant == .bf16 }?.minSustainedReadBytesPerSecond
+    let nonBf16: [QuantFootprint] = (fps25 + fps23).filter { $0.quant != .bf16 }
+    let offenders: Int = nonBf16.filter { $0.minSustainedReadBytesPerSecond != nil }.count
+    func show(_ v: UInt64?) -> String { v.map(String.init) ?? "nil" }
+
+    check("44 2.5 bf16 declares a storage floor (I9 class: sub-floor is a CRASH, not a slowdown)",
+          floor25bf16 == 1_000_000_000, show(floor25bf16))
+    check("45 2.5 int8 declares NO floor — int8/int4 survived the same USB volume bf16 died on",
+          floor25int8 == nil, show(floor25int8))
+    check("46 2.3 bf16 declares the floor too — it is the variant I9 was MEASURED on",
+          floor23bf16 == 1_000_000_000, show(floor23bf16))
+    check("47 no non-bf16 variant carries a floor (streaming degrades in TIME — app-side advisory)",
+          offenders == 0, "\(offenders) offenders")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (43/43)"
+          ? "[ltx25-package-gate] PASS ✅ (47/47)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

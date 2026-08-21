@@ -79,7 +79,11 @@ public final class MLXLTX2Package: ModelPackage {
                 // higher res/frame envelope fits a tier. (Each value = measured + ~20% headroom.)
                 footprints: [
                     // bf16 DiT = 37.99 GB on disk. MEASURED: floor 38.85 GB · peak 51.95 GB · act 13.10 GB.
-                    QuantFootprint(quant: .bf16, residentBytes: 40_000_000_000, peakActivationBytes: 16_000_000_000),
+                    // ⚠️ minSustainedReadBytesPerSecond: 2.3 bf16 is the variant I9 was MEASURED
+                    // on (0/7 on a ~250-475 MB/s USB volume; int8/int4 there were fine). See the
+                    // 2.5 sibling for the full rationale and the conservatism caveat.
+                    QuantFootprint(quant: .bf16, residentBytes: 40_000_000_000, peakActivationBytes: 16_000_000_000,
+                                   minSustainedReadBytesPerSecond: 1_000_000_000),
                     // int8: ONLY the transformer-block Linears are int8 (everything else stays bf16);
                     // q8 transformer = 20.6 GB on disk. MEASURED: floor 21.49 GB · peak 33.59 GB · act 12.10 GB.
                     QuantFootprint(quant: .int8, residentBytes: 22_000_000_000, peakActivationBytes: 15_000_000_000),

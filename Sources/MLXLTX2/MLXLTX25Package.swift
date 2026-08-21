@@ -96,8 +96,23 @@ public final class MLXLTX25Package: ModelPackage {
                 // no speed — AB-D-0013). Declaring an int4 footprint would invite a checkpoint that
                 // must not be produced. `LTXFamily.transformerRepoSuffix` returns nil for it too.
                 footprints: [
+                    // ⚠️ STORAGE FLOOR ON bf16 ONLY (contract 1.34.0, AB-T-0075/AB-D-0038). The
+                    // field means "below this the run CRASHES", not "below this it is slow" — I9:
+                    // safetensors load lazily inside live Metal command buffers, and when the bf16
+                    // working set outgrows what page cache absorbs on a slow volume the fault storm
+                    // trips the GPU watchdog. Measured bf16-on-USB (~250-475 MB/s) = 0/7 across
+                    // three sessions; int8/int4 on the SAME volume were fine, which is why int8
+                    // carries no floor. Prewarm does not save it — the run's own working set evicts
+                    // the cache mid-generation.
+                    // ⚠️ 1.0 GB/s is CONSERVATIVE, not measured: the band between ~475 MB/s (0/7
+                    // crash) and PCI-E is untested, so this sits clearly above the known-fatal range
+                    // and below any real NVMe. Narrow it only with data from that band.
+                    // 🚨 This is NOT the streaming floor. Streamed tiers degrade in TIME, not
+                    // safety, so declaring one here would make the engine assert a crash that does
+                    // not happen — that advisory is app-side off volumeCharacterization().
                     QuantFootprint(quant: .bf16, residentBytes: 40_000_000_000,
-                                   peakActivationBytes: 6_000_000_000),
+                                   peakActivationBytes: 6_000_000_000,
+                                   minSustainedReadBytesPerSecond: 1_000_000_000),
                     QuantFootprint(quant: .int8, residentBytes: 23_000_000_000,
                                    peakActivationBytes: 5_000_000_000),
                 ],
