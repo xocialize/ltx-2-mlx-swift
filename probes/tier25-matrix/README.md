@@ -148,3 +148,36 @@ Why it is worth a warning rather than silence:
 - **One prompt was measured, and activation is content-sensitive.** The figure is a sample, not a
   bound.
 - t2v on the same tier is 87% (14.58 GB), so the warning is specific to i2v — do not warn on both.
+
+---
+
+# 📋 SECOND RECOMMENDED UI ITEM — pre-fetch the i2v adapter (2026-08-21, AB-R-0114)
+
+Everything that could BLOCK i2v is clear: the adapter is **not** `licenseGated`, it **does**
+auto-materialize, and it is **publicly reachable unauthenticated** (HTTP 200, `x-linked-size:
+4932895568`, byte-identical to our cache — the check AB-T-0067 exists to enforce).
+
+⚠️ **But the fetch happens inside `run()`** (`MLXLTX2Package.swift:228`), so on a cold install the
+**first i2v generation stalls for a 4.93 GB download mid-run** — and the engine cannot warn about it,
+because `weightSources` does not declare the adapter. It correctly cannot: which adapter a request
+needs is a property of the REQUEST (`initImage` / `loraId`), not of the config.
+
+Consequences for a host:
+- the free-space preflight covers the 20–58 GB of declared sources but **not this 4.93 GB**;
+- `needsDownload` never mentions it, so a download UI reads "ready" and the run then blocks;
+- progress reaches only a `WeightDownloadProgress` sink the **caller** bound — the TaskLocal does not
+  flow onto URLSession's delegate queue, so an unbound host sees a silent stall.
+
+**Remedy, which the code already anticipates** — `LoRACache.isCached(_:)` exists for exactly this:
+
+1. On selecting i2v, call `isCached()`; if false run `ensure()` in an explicit download phase with
+   progress, before generate is live.
+2. Add **4.93 GB** to the free-space check when i2v is enabled.
+3. Bind the progress sink at the call site.
+
+🚨 **Do NOT add the adapter to `weightSources`** — every t2v-only install would then download 4.93 GB
+it never opens. Request-scoped artifacts do not belong in a config-scoped declaration.
+
+⚠️ Unverified: an actual cold fetch. The file has been cached since 2026-06-30 and moving 4.93 GB
+aside to exercise the download path was not worth the risk mid-session. URL construction is
+confirmed by the 200 + exact byte match; the atomic download/move path is untested this session.
