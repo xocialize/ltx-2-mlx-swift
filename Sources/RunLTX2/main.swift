@@ -2326,6 +2326,8 @@ if args.contains("--connector-gate") {
     try ditTinyGate()
 } else if args.contains("--dit-q8-gate") {
     try ditQ8Gate()
+} else if args.contains("--weight-sources-reach-gate") {
+    try await weightSourceReachGate()
 } else if args.contains("--ltx25-package-gate") {
     ltx25PackageGate()
 } else if args.contains("--gemma4-tokenizer-gate") {

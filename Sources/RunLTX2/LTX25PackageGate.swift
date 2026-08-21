@@ -42,14 +42,14 @@ func ltx25PackageGate() {
     let c25 = LTX2Configuration(family: .ltx25)
     let c23 = LTX2Configuration()
     check("01 default repo per family",
-          c25.repo == "xocialize/ltx-2.5-mlx" && c23.repo == "xocialize/ltx-2.3-mlx",
+          c25.repo == "mlx-community/ltx-2.5-mlx" && c23.repo == "xocialize/ltx-2.3-mlx",
           "2.5=\(c25.repo)  2.3=\(c23.repo)")
     check("02 family defaults to 2.3", c23.family == .ltx23, "\(c23.family.rawValue)")
 
     // 2. THE LANDMINE — and it is measured, not asserted.
     var q8_25 = LTX2Configuration(family: .ltx25); q8_25.quant = .int8
     let derived = q8_25.effectiveTransformerRepo
-    check("03 2.5 int8 derives -ditq8", derived == "xocialize/ltx-2.5-mlx-ditq8", "\(derived ?? "nil")")
+    check("03 2.5 int8 derives -ditq8", derived == "mlx-community/ltx-2.5-mlx-ditq8", "\(derived ?? "nil")")
 
     let ditq8File = "\(modelBase)/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors"
     let encq8File = "\(modelBase)/ltx-2.5-mlx-q8/transformer-distilled.safetensors"
@@ -167,8 +167,8 @@ func ltx25PackageGate() {
     sloppy.quant = .int8
     let forced = MLXLTX25Package.coerced(sloppy)
     check("18 2.5 package coerces a default-constructed config onto 2.5 repos",
-          forced.family == .ltx25 && forced.repo == "xocialize/ltx-2.5-mlx"
-              && forced.effectiveTransformerRepo == "xocialize/ltx-2.5-mlx-ditq8",
+          forced.family == .ltx25 && forced.repo == "mlx-community/ltx-2.5-mlx"
+              && forced.effectiveTransformerRepo == "mlx-community/ltx-2.5-mlx-ditq8",
           "family=\(forced.family.rawValue) repo=\(forced.repo) "
               + "transformer=\(forced.effectiveTransformerRepo ?? "nil")")
     // …but an EXPLICIT non-default repo must survive coercion: forcing the family must not
@@ -185,19 +185,19 @@ func ltx25PackageGate() {
     // 🔑 The whole point of these cases is that `quant` and `textEncoderQuant` are DIFFERENT axes
     // resolving to DIFFERENT sibling repos with different suffixes. Conflating them is the
     // documented 2.5 footgun, and it is silent: both produce a plausible repo name.
-    var enc = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx")
+    var enc = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx")
     enc.quant = .int8
     enc.textEncoderQuant = .int8
     check("20 int8 DiT and int8 ENCODER resolve to DIFFERENT siblings",
-          enc.effectiveTransformerRepo == "xocialize/ltx-2.5-mlx-ditq8"
-              && enc.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
+          enc.effectiveTransformerRepo == "mlx-community/ltx-2.5-mlx-ditq8"
+              && enc.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx-q8",
           "transformer=\(enc.effectiveTransformerRepo ?? "nil") components=\(enc.effectiveComponentsRepo)")
 
     // No profile ⇒ nothing to follow ⇒ bf16, the pre-existing behaviour.
-    var bf = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx")
+    var bf = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx")
     check("21 no profile ⇒ encoder resolves bf16 and rides the components repo unchanged",
           bf.textEncoderQuant == nil && bf.effectiveTextEncoderQuant == .bf16
-              && bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
+              && bf.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx",
           "override=\(bf.textEncoderQuant?.rawValue ?? "nil") → "
               + "\(bf.effectiveTextEncoderQuant.rawValue) → \(bf.effectiveComponentsRepo)")
 
@@ -205,7 +205,7 @@ func ltx25PackageGate() {
     // Deriving `-q4` would name a tree that must never be built, let alone loaded.
     bf.textEncoderQuant = .int4
     check("22 int4 encoder derives NO sibling (rejected quant, must not be nameable)",
-          bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
+          bf.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx",
           "\(bf.effectiveComponentsRepo)")
 
     // 2.3's encoder is an EXTERNAL repo, so a components sibling would carry no encoder at all.
@@ -219,7 +219,7 @@ func ltx25PackageGate() {
     // what ships, and a gate on the property alone would pass while materialization used `repo`.
     let compSource = enc.weightSources.first { $0.role == "components" }
     check("24 weightSources materializes the ENCODER sibling, not the base repo",
-          compSource?.repo == "xocialize/ltx-2.5-mlx-q8",
+          compSource?.repo == "mlx-community/ltx-2.5-mlx-q8",
           "components source repo=\(compSource?.repo ?? "nil")")
 
     // ───── gate policy + Codable back-compat ─────
@@ -247,7 +247,7 @@ func ltx25PackageGate() {
 
     // A config persisted BEFORE this key existed must still decode — and as bf16, the only
     // encoder that existed then (the bernini d02cfa1 rule).
-    let legacyEnc = #"{"repo":"xocialize/ltx-2.5-mlx","family":"ltx25","quant":"int8"}"#
+    let legacyEnc = #"{"repo":"mlx-community/ltx-2.5-mlx","family":"ltx25","quant":"int8"}"#
     let decoded = try? JSONDecoder().decode(LTX2Configuration.self, from: Data(legacyEnc.utf8))
     check("27 legacy config without the key decodes as FOLLOW-PROFILE (nil), not a pinned value",
           decoded != nil && decoded?.textEncoderQuant == nil
@@ -259,17 +259,17 @@ func ltx25PackageGate() {
         LTX2Configuration.self, from: JSONEncoder().encode(enc))
     check("28 an EXPLICIT textEncoderQuant survives a Codable round-trip",
           round?.textEncoderQuant == Quant.int8
-              && round?.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
+              && round?.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx-q8",
           "\(round?.textEncoderQuant?.rawValue ?? "DECODE FAILED")")
 
     // ───── AUTO-FOLLOW (operator decision 2026-08-21: save users from themselves) ─────
     // 🔑 The point of these cases is that picking a low TIER and touching nothing else yields a
     // configuration that FITS. Before auto-follow it yielded one that busts the governor, silently.
-    var lowTier = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .compact24)
+    var lowTier = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
     lowTier.quant = .int8
     check("29 compact24 AUTO-FOLLOWS to the int8 encoder + a pinned gate",
           lowTier.effectiveTextEncoderQuant == .int8
-              && lowTier.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8"
+              && lowTier.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx-q8"
               && lowTier.resolvedStreamingOptions.gatePolicy == .forceStream,
           "enc=\(lowTier.effectiveTextEncoderQuant.rawValue) "
               + "repo=\(lowTier.effectiveComponentsRepo) "
@@ -278,7 +278,7 @@ func ltx25PackageGate() {
     // …and it must reach weightSources, not just the computed property.
     check("30 auto-follow reaches weightSources",
           lowTier.weightSources.first { $0.role == "components" }?.repo
-              == "xocialize/ltx-2.5-mlx-q8",
+              == "mlx-community/ltx-2.5-mlx-q8",
           "\(lowTier.weightSources.first { $0.role == "components" }?.repo ?? "nil")")
 
     // The ESCAPE HATCH: an explicit override beats the profile, in both directions. This is what
@@ -288,16 +288,16 @@ func ltx25PackageGate() {
     override.forceStreamGate = false
     check("31 explicit overrides BEAT the profile advice (the escape hatch)",
           override.effectiveTextEncoderQuant == .bf16
-              && override.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx"
+              && override.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx"
               && override.resolvedStreamingOptions.gatePolicy == .auto,
           "enc=\(override.effectiveTextEncoderQuant.rawValue) "
               + "gate=\(override.resolvedStreamingOptions.gatePolicy.rawValue)")
 
     // High tiers must NOT auto-follow into int8 — the advice there is bf16, the reproducible arm.
-    var highTier = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .standard64)
+    var highTier = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .standard64)
     check("32 standard64 auto-follows to bf16/auto — unchanged from before auto-follow",
           highTier.effectiveTextEncoderQuant == .bf16
-              && highTier.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx"
+              && highTier.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx"
               && highTier.resolvedStreamingOptions.gatePolicy == .auto,
           "enc=\(highTier.effectiveTextEncoderQuant.rawValue) "
               + "gate=\(highTier.resolvedStreamingOptions.gatePolicy.rawValue)")
@@ -311,7 +311,7 @@ func ltx25PackageGate() {
           "still \(direct.resolvedStreamingOptions.gatePolicy.rawValue) — use forceStreamGate")
 
     // ───── streaming as the DEFAULT for advised tiers (operator decision 2026-08-21) ─────
-    var stream = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .compact24)
+    var stream = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
     stream.quant = .int8
     check("34 advised tiers stream by default; max128 does NOT",
           LTX2Profile.compact24.recommendedStreamedBlocks
@@ -333,7 +333,7 @@ func ltx25PackageGate() {
           "\(stream.weightSources.first { $0.role == "granules" }?.repo ?? "nil")")
 
     // …and the converse: a non-streaming tier must still fetch the transformer and NOT granules.
-    var resident = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .max128)
+    var resident = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .max128)
     resident.quant = .int8
     let rroles = Set(resident.weightSources.map(\.role))
     check("37 a non-streaming tier fetches the transformer and NOT granules",

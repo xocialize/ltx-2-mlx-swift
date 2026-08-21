@@ -30,10 +30,16 @@ public final class MLXLTX25Package: ModelPackage {
                 weightLicense: .ltx2Community,
                 portCodeLicense: .apache2),
             provenance: Provenance(
-                // Origin, not fetch location (the config's `repo` is our mirror). Lightricks
-                // trained LTX-2.5; dgrauet converted it to MLX; `xocialize/ltx-2.5-mlx` mirrors
-                // that conversion. Conflating the two would let the mirror launder its origin.
-                sourceRepo: "dgrauet/ltx-2.5-mlx",
+                // Origin, not fetch location. ⟲ **CORRECTED 2026-08-21**: this read
+                // `dgrauet/ltx-2.5-mlx`, describing a mirror-of-a-conversion. That repo does not
+                // exist (404 with a valid token), and the description was stale — **our 2.5 port
+                // is FROM ORIGIN**, which the published tree states itself:
+                // `mlx-community/ltx-2.5-mlx` declares `base_model: Lightricks/LTX-2.5`.
+                // The origin/fetch distinction the old comment defended is still right and still
+                // enforced — origin is Lightricks, fetch is `LTX2Configuration.repo` — it was
+                // simply pointed at the wrong origin, which under-credited our own work AND named
+                // an artifact nobody can retrieve.
+                sourceRepo: "Lightricks/LTX-2.5",
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma-4 + connector + DiT + VAEs + vocoder)
             requirements: RequirementsManifest(

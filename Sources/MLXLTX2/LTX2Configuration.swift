@@ -142,7 +142,7 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
 public enum LTXFamily: String, Codable, Sendable, CaseIterable {
     case ltx23, ltx25
 
-    public var defaultRepo: String { self == .ltx25 ? "xocialize/ltx-2.5-mlx" : "xocialize/ltx-2.3-mlx" }
+    public var defaultRepo: String { self == .ltx25 ? "mlx-community/ltx-2.5-mlx" : "xocialize/ltx-2.3-mlx" }
 
     /// 2.5's text encoder ships INSIDE the components tree (`gemma4-12b-ltx-v1/`), so there is no
     /// separate encoder repo to materialize — `LTX2Pipeline.gemma4Dir` derives it from `ltxDirectory`.
@@ -206,7 +206,14 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     ///
     /// 🚨 **Weight-durability rule** (`mlx-porting` skill, Step 8): a shipped source never points
     /// at a namespace we do not control. The default is `xocialize/ltx-2.3-mlx`, a byte-verified
-    /// verbatim mirror of `dgrauet/ltx-2.3-mlx` (every tensor SHA-256-matched at mirror time, and
+    /// ⚠️ **PARTIAL mirror — 7 of upstream's 13 safetensors** (verified 2026-08-21 by comparing
+    /// published blob sizes: every shared file matches byte-for-byte, so the "verbatim" claim
+    /// holds — but `transformer-dev`, `transformer-distilled-1.1`, `spatial_upscaler_x1_5_v1_0`,
+    /// `temporal_upscaler_x2_v1_0` and both distilled LoRAs were never mirrored).
+    /// 🚨 **That has a FUNCTIONAL consequence**: `Upsampler` supports and gates all three variants
+    /// (x2 / x1.5-rational / temporal-x2), but our published tree ships only x2 — so a consumer
+    /// fetching from `repo` cannot use two of the three we built. Tracked as the full from-origin
+    /// 2.3 port. verbatim mirror of `dgrauet/ltx-2.3-mlx` (every tensor SHA-256-matched at mirror time, and
     /// the LTX-2 Community License propagated per its §3). The upstream conversion lives on a
     /// PERSONAL account, which can disappear via account deletion or a username change — routes
     /// an org cannot take. `Provenance.sourceRepo` still names dgrauet, because that is where
