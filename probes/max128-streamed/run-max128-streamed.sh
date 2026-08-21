@@ -54,4 +54,7 @@ run "resident-481f-ctl" 481 0     # control: the AB-R-0073 number, re-measured o
 echo
 echo "READ: worst-case PEAK per arm, from the 25 ms PhysSampler high-water — never a profiler span."
 echo "⚠️ Read the LAST gate line per log: the 9f warmup falls back at small N BY DESIGN."
-echo "⚠️ If any streamed arm fell back on its MEASURED pass, its peak is a RESIDENT number — say so."
+echo "🚨 THE SPLIT LINE'"'"'S lane= REPORTS THE CONFIG, NOT THE GATE OUTCOME. Verified in the 9f smoke"
+echo "   test: the gate FELL BACK on both passes (N=713 vs N_min 4140) yet the line still read"
+echo "   lane=STREAMED, peak 44.10 GB — a RESIDENT number under a STREAMED label. Read the LAST"
+echo "   [BlockStreamer] gate line in each log and confirm it says STREAM before quoting any peak."

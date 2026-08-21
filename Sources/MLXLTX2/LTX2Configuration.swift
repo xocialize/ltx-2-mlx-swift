@@ -635,11 +635,14 @@ extension LTX2Configuration: FootprintConfigured {
     /// number as a measurement of a fallback run.
     public var expectedWeightReadBytesPerRunHint: UInt64? {
         guard family == .ltx25, let profile else { return nil }
-        // int8 sweep MEASURED from the live streamer: "sweep 18.37 GiB" at both compact24 and
-        // standard64. bf16 scaled by the on-disk DiT ratio (37.99 / 20.6 = 1.844) — 2.5's int8
-        // quantizes only the transformer-block Linears, which is exactly what gets swept.
+        // Both sweeps MEASURED from the live streamer's own bind line, not derived:
+        //   int8 "sweep 18.37 GiB" (compact24 AND standard64) · bf16 "sweep 34.56 GiB" (max128).
+        // ⚠️ The bf16 figure was first ESTIMATED at 36.38e9 by scaling the on-disk DiT ratio
+        // (37.99/20.6 = 1.844); the measurement says 37.11e9 — ~2% out. The ratio is wrong because
+        // int8 quantizes only the transformer-block Linears while the granule sweep also carries
+        // per-block tensors that never quantize. Read the bind line; do not scale.
         let sweepInt8: UInt64 = 19_724_000_000
-        let sweepBf16: UInt64 = 36_380_000_000
+        let sweepBf16: UInt64 = 37_106_000_000
         if effectiveStreamedBlocks {
             let steps: UInt64 = profile.oneStage ? 8 : 11
             return (quant == .bf16 ? sweepBf16 : sweepInt8) * steps

@@ -467,11 +467,19 @@ func ltx25PackageGate() {
     // returns a per-step multiple, the streamed/resident branch has been inverted.
     check("50 max128 is RESIDENT — reads the bf16 checkpoint once, not 11 sweeps",
           rM == 37_990_000_000, show(rM))
+    // ⚠️ bf16 streamed is max128's OVERRIDE lane (its profile advises resident). The sweep here is
+    // the MEASURED bind-line figure — 34.56 GiB — not the on-disk ratio, which was ~2% out.
+    var rdMs = LTX2Configuration(family: .ltx25, profile: .max128)
+    rdMs.quant = .bf16; rdMs.streamedBlocks = true
+    let rMs: UInt64? = rdMs.expectedWeightReadBytesPerRunHint
+    check("52 max128 STREAMED (explicit override) uses the measured 34.56 GiB bf16 sweep x 11",
+          rMs == 37_106_000_000 * 11, show(rMs))
+
     check("51 2.3 declares no read hint — the sweep numbers are 2.5-measured (family-keyed)",
           r23 == nil, show(r23))
 
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (51/51)"
+          ? "[ltx25-package-gate] PASS ✅ (52/52)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
