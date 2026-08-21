@@ -35,20 +35,42 @@ Streaming is the default on advised tiers, auto-followed from the profile with a
 (`textEncoderQuant`, `forceStreamGate`, `streamedBlocks` — all tri-state, `nil` = follow).
 Board: package **38/38**, reach **PASS**, stream-tiny, pipeline-25, 2.3 q4 parity.
 
-## 🚨 The one thing that blocks a consumer app — and it is NOT ours to fix
+## ✅ THE CONSUMER-APP BLOCKER IS GONE — AB-T-0069 / AB-A-0012 / AB-T-0070 all DONE
 
-**AB-T-0069 / AB-A-0012 (→ MLXEngine).** `QuantFootprint` is per-QUANT; the measured footprint now
-varies by TIER because low tiers stream. The governor therefore charges 28.0 GB for a config that
-measures 15.5, and **REFUSES compact24 (16.8) and balanced32 (22.4)** — the two tiers the whole
-low-tier effort unlocked.
+⟲ **This section said "the one thing that blocks a consumer app" for most of 2026-08-21. STALE.**
+All three landed the same day.
 
-It fails **CLOSED** (denies a fitting config) rather than open, so nothing breaks — it just denies
-the machines the work was for. ⚠️ **Do NOT "fix" it by declaring the streamed numbers
-unconditionally**: that under-declares the resident path (max128 stays resident) and would admit
-runs the governor should refuse. Failing open is worse.
+**AB-T-0069** (ltx-2-mlx-swift v0.9.0 `347d4b5`, receipt AB-R-0107) — the streamed low tiers are
+**admissible through the governor**:
 
-**Until it resolves, 2.5 is a `standard64`+`max128` product in practice.** Consider shipping those
-two first and adding low tiers when the ask lands.
+| tier | charge now | corridor [worst measured, budget] | before |
+|---|---|---|---|
+| compact24 | **16.20** | [15.49, 16.8] ✅ | 28.0 → REFUSED |
+| balanced32 | **18.00** | [17.14, 22.4] ✅ | 28.0 → REFUSED |
+| standard64 | 28 | covers streamed 19.43 AND `.auto` fallback 27.31 | 39 (stale 2.3 hint) |
+| max128 | 76 | unchanged | 76 |
+
+🔑 **No engine change and no PackageID split were needed** — `FootprintConfigured` existed since
+contract 1.13/1.14 and this config already conformed. The bug was a hard-`nil` `residentBytesHint`
+sitting under a comment asserting the exact assumption streaming broke. Three fail-closed guards:
+streamed numbers only where streaming is GUARANTEED (pinned, never `.auto`), family-keyed, and a
+`load()` guard that throws when a pinned tier has no resolvable granule tree. Gate **43/43**.
+
+**AB-T-0070** (mlx-engine-swift **v0.46.0 / contract 1.34.0**) — per-volume disk characterization at
+prepare + `QuantFootprint.minSustainedReadBytesPerSecond` + below-floor refusal **before any command
+buffer**. **I9 is now refusable instead of a mid-generation abort.** Our pin (`from: "0.32.0"`)
+already resolves it.
+
+### 📋 It left US an action item — now filed as **AB-T-0075**
+
+LTX must DECLARE its floors; the engine only enforces them. ⚠️ And the follow-up's wording
+(*"bf16/resident lanes"*) **predates AB-T-0069**: a resident lane reads its checkpoint once, but a
+**PINNED streamed tier reads granules throughout generation and cannot fall back** — `.forceStream`
+is exactly what removed the coin flip. compact24's 16.20 GB admission *depends* on streaming; its
+`.auto` fallback peak is 31.92 against a 16.8 budget. **A disk too slow to stream does not slow that
+tier down, it invalidates the footprint it was admitted on.** ⚠️ The floor VALUE is unmeasured
+between ~475 MB/s (USB, bf16 0/7 crash) and PCIe — and it refuses hardware, so it is an operator
+call. See AB-T-0075.
 
 ## The plan (agreed 2026-08-21)
 
