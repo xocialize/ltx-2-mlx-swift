@@ -348,8 +348,68 @@ func ltx25PackageGate() {
               && Set(noStream.weightSources.map(\.role)).contains("transformer-int8"),
           "effective=\(noStream.effectiveStreamedBlocks)")
 
+    // ───── FOOTPRINT HINTS (AB-T-0069: the governor must ADMIT the streamed low tiers) ─────
+    // The engine charges persistentHint + transientHint (MemoryGovernor.footprintSplit); these
+    // cases mirror that arithmetic against the tier budgets (0.7 × RAM) and the AB-R-0106
+    // worst-case measurements, so the declaration cannot drift out of the honest corridor
+    // [worst measured, budget] in either direction without failing here.
+    let gb = { (x: UInt64) in Double(x) / 1_000_000_000 }
+    var fpLow = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
+    fpLow.quant = .int8
+    let c24 = (fpLow.residentBytesHint ?? 23_000_000_000) &+ (fpLow.peakActivationBytesHint ?? 5_000_000_000)
+    check("39 compact24 streamed charge sits in [worst measured 15.49, budget 16.8]",
+          fpLow.residentBytesHint != nil && fpLow.peakActivationBytesHint != nil
+              && c24 >= 15_490_000_000 && c24 <= 16_800_000_000,
+          String(format: "charge %.2f GB (resident %@ + activation %@)", gb(c24),
+                 fpLow.residentBytesHint.map { String(format: "%.1f", gb($0)) } ?? "nil",
+                 fpLow.peakActivationBytesHint.map { String(format: "%.1f", gb($0)) } ?? "nil"))
+
+    var fpMid = fpLow; fpMid.profile = .balanced32
+    let b32 = (fpMid.residentBytesHint ?? 23_000_000_000) &+ (fpMid.peakActivationBytesHint ?? 5_000_000_000)
+    check("40 balanced32 streamed charge sits in [worst measured 17.14, budget 22.4]",
+          fpMid.residentBytesHint != nil && fpMid.peakActivationBytesHint != nil
+              && b32 >= 17_140_000_000 && b32 <= 22_400_000_000,
+          String(format: "charge %.2f GB", gb(b32)))
+
+    // standard64 keeps `.auto`, so its honest envelope is the RESIDENT fallback (27.31, AB-R-0105):
+    // both hints nil → the quant-keyed int8 23+5 = 28 covers it. max128 keeps the resident bf16
+    // lane: resident nil (quant 40) + activation 36 → charge 76, unchanged (the AB-T-0069
+    // acceptance's other half).
+    var fpStd = fpLow; fpStd.profile = .standard64
+    var fpMax = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .max128)
+    fpMax.quant = .bf16
+    check("41 standard64 falls to quant numbers (covers .auto fallback); max128 charge unchanged",
+          fpStd.residentBytesHint == nil && fpStd.peakActivationBytesHint == nil
+              && fpMax.residentBytesHint == nil
+              && fpMax.peakActivationBytesHint == 36_000_000_000,
+          "std hints=(\(fpStd.residentBytesHint.map(String.init) ?? "nil"),"
+              + "\(fpStd.peakActivationBytesHint.map(String.init) ?? "nil")) "
+              + "max128 act=\(fpMax.peakActivationBytesHint.map(String.init) ?? "nil")")
+
+    // 🚨 FAIL-CLOSED, both escape hatches: a low tier that will NOT stream (explicit gate-off or
+    // blocks-off) must get RESIDENT numbers — quant 23+5 = 28 → refused on 16.8. A streamed hint
+    // here would under-declare a 31.92 GB run: fail-open, the AB-A-0012 condition.
+    var fpGateOff = fpLow; fpGateOff.forceStreamGate = false
+    var fpBlocksOff = fpLow; fpBlocksOff.streamedBlocks = false
+    check("42 explicit stream-off on a low tier gets RESIDENT numbers (refused, correctly)",
+          fpGateOff.residentBytesHint == nil && fpGateOff.peakActivationBytesHint == nil
+              && fpBlocksOff.residentBytesHint == nil && fpBlocksOff.peakActivationBytesHint == nil,
+          "gateOff=(\(fpGateOff.residentBytesHint.map(String.init) ?? "nil")) "
+              + "blocksOff=(\(fpBlocksOff.residentBytesHint.map(String.init) ?? "nil"))")
+
+    // 🚨 THE FAMILY TRAP: the engine reads hints from the config AS HANDED — coerced() covers repo
+    // defaults, NOT footprints. A family-defaulted config on compact24 must yield 2.3's numbers
+    // (resident nil, activation 3 GB), never 2.5's streamed 15.4 — fail-closed for the caller who
+    // forgot `family: .ltx25`, and unchanged behaviour for actual 2.3 registrations.
+    var fp23 = LTX2Configuration(repo: "xocialize/ltx-2.3-mlx", profile: .compact24)
+    fp23.quant = .int4
+    check("43 a family-defaulted (2.3) compact24 keeps 2.3 hints — coerced() does not cover footprints",
+          fp23.residentBytesHint == nil && fp23.peakActivationBytesHint == 3_000_000_000,
+          "resident=\(fp23.residentBytesHint.map(String.init) ?? "nil") "
+              + "act=\(fp23.peakActivationBytesHint.map(String.init) ?? "nil")")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (38/38)"
+          ? "[ltx25-package-gate] PASS ✅ (43/43)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

@@ -581,32 +581,97 @@ extension LTX2Configuration: WeightSourcing {
     }
 }
 
-/// Per-profile transient hint (contract 1.14 `FootprintConfigured`): the activation peak is
-/// seqLen-scaled, so a clamped profile declares its OWN transient instead of the 704×512 default.
-/// `residentBytesHint` stays nil — the per-quant `QuantFootprint.residentBytes` (the DiT floor) is
-/// envelope-independent. Values are max-over-phase at the profile's envelope; measured entries are
-/// marked, others are estimates pending the T3 autorun re-baseline (LOW-TIER-PLAN).
+/// Config-aware footprint (contract 1.14 `FootprintConfigured`): what the governor charges for THIS
+/// registration, overriding the per-quant `QuantFootprint` when the config's resolved shape differs
+/// from the quant-keyed declaration.
+///
+/// 🔑 **2.5 low tiers STREAM, and streaming is not a property of the quant** (AB-T-0069): the same
+/// int8 checkpoint is 23 GB resident on the resident path and ~0.5 GB resident + ~15 GB activation
+/// streamed. The per-quant declaration (23+5 = 28) therefore REFUSED `compact24`/`balanced32` —
+/// tiers that measure 15.49 / 17.14 against budgets of 16.8 / 22.4 (AB-R-0106, worst of 18 runs).
+/// These hints carry the measured split for the RESOLVED lane; `nil` falls through to the quant
+/// numbers, which stay the honest envelope for every resident lane.
+///
+/// ⚠️ **Streamed hints are declared ONLY where streaming is GUARANTEED**: family `.ltx25`, streaming
+/// resolved on, and the gate PINNED (`recommendedForcedStreamGate` advisory or explicit `true`).
+/// Never on `.auto` — the runtime gate may fall back resident output-invisibly (AB-R-0105: 1 run in
+/// 3 at compact24's N), and a streamed declaration over a resident run under-declares — fail-OPEN,
+/// worse than the fail-closed refusal this extension exists to fix (AB-A-0012). The corollary: an
+/// explicit `forceStreamGate = false` / `streamedBlocks = false` on a low tier gets RESIDENT
+/// numbers and is refused. That refusal is correct — the run it describes would bust the budget.
+/// `MLXLTX2Package.load()` enforces the same invariant from the other side: a pinned-tier config
+/// whose granule tree cannot be resolved throws instead of silently building a resident DiT.
+///
+/// ⚠️ **Family-keyed, deliberately.** This one config type serves 2.3 (resident low tiers, int4)
+/// and 2.5 (streamed low tiers, int8) — and the engine reads hints from the config AS HANDED, not
+/// from `MLXLTX25Package.coerced()`'s copy (`MLXServeEngine.swift:436`). Register 2.5 with
+/// `family: .ltx25`; a family-defaulted config gets 2.3's numbers and fails CLOSED on the low
+/// tiers. Gate cases 39–43 pin all of this.
 extension LTX2Configuration: FootprintConfigured {
-    public var residentBytesHint: UInt64? { nil }
+    /// True when this registration is guaranteed to stream the DiT — the ONLY condition under
+    /// which the streamed footprint may be declared (see the fail-open note above).
+    private var declaresStreamedFootprint: Bool {
+        family == .ltx25
+            && effectiveStreamedBlocks
+            && resolvedStreamingOptions.gatePolicy == .forceStream
+    }
+
+    public var residentBytesHint: UInt64? {
+        guard declaresStreamedFootprint, let profile else { return nil }
+        switch profile {
+        case .compact24, .balanced32:
+            // Measured resident while streaming: 0.41–0.63 GB (slots + globals + LoRA factors)
+            // across all 18 runs (AB-R-0106). Declared 0.8 GB.
+            return 800_000_000
+        default:
+            return nil   // standard64/max128: the quant-keyed resident stays the honest envelope
+        }
+    }
 
     public var peakActivationBytesHint: UInt64? {
         guard let profile else { return nil }   // fall back to the per-quant QuantFootprint
-        // MEASURED 2026-07-01 after T3b+T3c (sequential encode, connector int8, decode-scoped
-        // cacheLimit, fully-sequential DiT on low tiers) — see LOW-TIER-PLAN FINAL RESULTS. The
-        // hint is peak − the declared per-quant residentBytes, so the engine's charge
-        // (resident + reserve) equals the true measured stage-max peak:
-        //   compact24  peak 15.36 GB (budget 16.8 ✓)   balanced32 peak 16.07 (22.4 ✓)
-        //   standard64 peak 37.51   (44.8 ✓)           max128     peak 92.2  (0.85×128 ✓)
-        switch profile {
-        case .compact24:  return 3_000_000_000    // 15.36 − 13 (int4 resident) + headroom
-        case .balanced32: return 4_000_000_000    // 16.07 − 13 + headroom
-        case .standard64: return 16_000_000_000   // 37.51 − 22 (int8 resident) + headroom
-        case .max128:     return 36_000_000_000   // TIGHTENED off the 481f i2v spot measure
-        // (RunLTX2 --i2v-spot, 2026-07-01): 704×512×481f bf16 i2v + the 4.9 GB i2v-adapter LoRA
-        // peaks 72.73 GB (floor 43.40 incl. LoRA · act 29.33). The hint covers peak − declared
-        // bf16 resident (72.73 − 40 = 32.73, LoRA residency rides in the transient) + headroom.
-        // t2v is lighter (480f peak 67.61 — BRIDGE-LTX-005), so i2v is the binding path.
-        // Charge: 40 + 36 = 76 GB ≤ 0.85×128 (was 92 pre-measure — 16 GB returned to the governor).
+        if declaresStreamedFootprint {
+            // MEASURED 2026-08-21 (AB-R-0106: 3 tiers × 2 modes × 3 reps, worst-case per tier,
+            // streamed DiT + int8 encoder at each profile's own clamped envelope). i2v is the
+            // binding mode on both tiers. Declared = worst measured + headroom, inside the
+            // corridor [worst measured, tier budget]:
+            //   compact24  worst 15.49 (i2v, 92% of 16.8) → charge 0.8 + 15.4 = 16.2 (96% of budget)
+            //   balanced32 worst 17.14 (i2v, 77% of 22.4) → charge 0.8 + 17.2 = 18.0 (80% of budget)
+            // compact24's corridor is inherently narrow — the operator accepted the 92% measurement
+            // explicitly (AB-D-0035), and headroom-over-measured beats distance-from-budget here:
+            // the budget side is exact arithmetic, the measurement side is content-sensitive.
+            switch profile {
+            case .compact24:  return 15_400_000_000
+            case .balanced32: return 17_200_000_000
+            default: break    // standard64 streams by default too, but declares below
+            }
+        }
+        switch family {
+        case .ltx25:
+            switch profile {
+            case .compact24, .balanced32:
+                // Resident/unpinned 2.5 low tier: quant numbers (23+5) → refused. Correct —
+                // that configuration measures 31.92/33.13 GB resident and busts the budget.
+                return nil
+            case .standard64:
+                // int8 23+5 = 28 covers BOTH lanes: streamed 19.43 (AB-R-0106) and the `.auto`
+                // resident fallback 27.31 (AB-R-0105) — which is why standard64 may keep `.auto`.
+                // (Replaces the 2.3-era 16 GB hint, which charged 39 for a lane measuring ≤27.31.)
+                return nil
+            case .max128:
+                return 36_000_000_000  // resident bf16 lane, unchanged: 481f i2v spot, charge 40+36=76
+            }
+        case .ltx23:
+            // 2.3-era hints, UNCHANGED (T3b+T3c LOW-TIER-PLAN measurements, 2026-07-01): the hint
+            // is peak − the declared per-quant residentBytes, so charge equals measured stage-max:
+            //   compact24  peak 15.36 (budget 16.8 ✓)   balanced32 peak 16.07 (22.4 ✓)
+            //   standard64 peak 37.51 (44.8 ✓)          max128     peak 92.2  (0.85×128 ✓)
+            switch profile {
+            case .compact24:  return 3_000_000_000    // 15.36 − 13 (int4 resident) + headroom
+            case .balanced32: return 4_000_000_000    // 16.07 − 13 + headroom
+            case .standard64: return 16_000_000_000   // 37.51 − 22 (int8 resident) + headroom
+            case .max128:     return 36_000_000_000   // 481f i2v spot: peak 72.73, charge 40+36=76
+            }
         }
     }
 }

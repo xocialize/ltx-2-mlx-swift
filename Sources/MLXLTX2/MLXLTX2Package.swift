@@ -143,6 +143,23 @@ public final class MLXLTX2Package: ModelPackage {
                 expected: "resolvable weight directories",
                 got: "materialization did not yield ltxDirectory/gemmaDirectory")
         }
+        // Streamed-footprint honesty guard (AB-T-0069 / AB-A-0012): a 2.5 tier whose gate the
+        // profile PINS declares the streamed footprint to the governor (~16.2/18.0 GB), because its
+        // resident fallback (31.92/33.13 GB) busts both the budget and, on the machines those tiers
+        // exist for, physical RAM. With no resolvable granule tree the pipeline below would
+        // silently build a RESIDENT DiT under that streamed declaration — an under-declared run,
+        // fail-OPEN. Refuse instead: loud, early, and explainable. (2.3 is exempt: its low tiers
+        // are int4-resident by design and their fallback fits the budget.)
+        if cfg.family == .ltx25,
+           cfg.effectiveStreamedBlocks,
+           cfg.profile?.recommendedForcedStreamGate == true,
+           cfg.resolvedGranuleDirectory == nil {
+            throw PackageError.configurationMismatch(
+                expected: "a resolvable granule tree (granuleRootDirectory, or store-resolved "
+                    + "granules) — this tier's declared footprint assumes a streamed DiT, and its "
+                    + "resident fallback exceeds the tier budget",
+                got: "streaming resolved ON for a pinned tier with no granule directory")
+        }
         // HV2 (STREAMING-PLAN.md): granules go IN to `load()`, not on afterwards. Setting them
         // after the fact left `load()` building a RESIDENT DiT first — which made the checkpoint
         // mandatory even for a fully streamed run, and made the first denoise pay a reload. The
