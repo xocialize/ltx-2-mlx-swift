@@ -137,16 +137,16 @@ public final class MLXLTX2Package: ModelPackage {
                 expected: "resolvable weight directories",
                 got: "materialization did not yield ltxDirectory/gemmaDirectory")
         }
+        // HV2 (STREAMING-PLAN.md): granules go IN to `load()`, not on afterwards. Setting them
+        // after the fact left `load()` building a RESIDENT DiT first — which made the checkpoint
+        // mandatory even for a fully streamed run, and made the first denoise pay a reload. The
+        // streamer's `.auto` gate still falls back resident when the arithmetic doesn't clear,
+        // output-invisibly; `.forceStream` (advised on tiers whose fallback busts budget) pins it.
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
                                                transformerPath: cfg.transformerPath,
-                                               vaeDecoderPath: cfg.vaeDecoderPath)
-        // HV2 opt-in (STREAMING-PLAN.md): stream DiT blocks from the granule tree for the
-        // configured quant. The streamer's .auto gate still falls back resident when this
-        // machine/request's arithmetic doesn't clear — output-invisibly.
-        pipeline?.streamingGranuleDirectory = configuration.resolvedGranuleDirectory
-        // Gate policy and slot geometry travel with the granule root — forwarding one without the
-        // other would silently run a `.forceStream` configuration on the `.auto` default.
-        pipeline?.streamingOptions = configuration.resolvedStreamingOptions
+                                               vaeDecoderPath: cfg.vaeDecoderPath,
+                                               granuleDirectory: cfg.resolvedGranuleDirectory,
+                                               streamingOptions: cfg.resolvedStreamingOptions)
 
         // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
         // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).

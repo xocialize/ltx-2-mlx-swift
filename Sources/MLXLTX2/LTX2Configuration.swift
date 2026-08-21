@@ -104,6 +104,24 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     public var recommendedForcedStreamGate: Bool {
         switch self { case .compact24, .balanced32: true; default: false }
     }
+
+    /// Whether this tier should STREAM the DiT blocks by default.
+    ///
+    /// 🔑 **On/off is not a quality question — streamed output is bit-identical to resident**
+    /// (`--stream-parity-gate` memcmp + poison control). It is a cost question, and the costs run
+    /// opposite ways per tier:
+    ///
+    ///   compact24 / balanced32 — **REQUIRED.** Resident busts the budget outright (31.92/16.8 and
+    ///     33.13/22.4). Without streaming 2.5 does not run here at all.
+    ///   standard64 — **BENEFICIAL.** Resident fits (27.31/44.8), but streaming measured 24% FASTER
+    ///     (105.6 s vs 139.1 s) because eviction reloads the DiT every stage, and it frees ~8 GB
+    ///     for co-tenancy. Default on.
+    ///   max128 — **OFF.** bf16 already fits with room, so streaming buys headroom nobody needs at
+    ///     the price of ~6× read amplification — and max128's streamed behaviour is UNMEASURED.
+    ///     Do not default to an unmeasured configuration just because it is available.
+    public var recommendedStreamedBlocks: Bool {
+        switch self { case .max128: false; default: true }
+    }
 }
 
 /// Init-time configuration for `MLXLTX2Package` (C9): where the LTX-2.3 component
@@ -168,6 +186,16 @@ public enum LTXFamily: String, Codable, Sendable, CaseIterable {
         default: return nil
         }
     }
+
+    /// Published granule trees (`xocialize/ltx-2.{3,5}-granules`), laid out with one subdirectory
+    /// per quant — exactly the shape `resolvedGranuleDirectory` appends to.
+    ///
+    /// 🔑 **Granules are a DETERMINISTIC re-layout of the same bytes, so they are distributed, not
+    /// regenerated per install.** Each tree carries per-file SHA-256 in its manifest plus
+    /// `source_repo`/`source_revision` provenance stamps, so a downloader can verify what it got
+    /// rather than trusting the filename (the whole point of manifest v2).
+    var granuleRepo: String { self == .ltx25 ? "xocialize/ltx-2.5-granules"
+                                             : "xocialize/ltx-2.3-granules" }
 }
 
 public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfigured {
@@ -234,7 +262,26 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// Both fields are EXCLUDED from Codable — the root is an environment path like
     /// `ltxDirectory`, and encoding the flag alone would buy nothing while making the key
     /// mandatory for configs persisted before it existed (the bernini d02cfa1 pattern).
-    public var streamedBlocks = false
+    /// 🔑 **TRI-STATE: `nil` (the default) means FOLLOW THE PROFILE'S ADVICE.** Read
+    /// `effectiveStreamedBlocks`, never this field.
+    ///
+    /// Streaming is the better default wherever it applies, not merely an escape valve: output is
+    /// **bit-identical** (`--stream-parity-gate` memcmp, with a poisoned-slot control proving the
+    /// compare has teeth), stall at real generation sizes is **0.0%**, and it is measurably FASTER
+    /// than resident because `evictDiTAroundStages` makes the resident path RELOAD the DiT every
+    /// stage — 105.6 s vs 139.1 s at standard64 (AB-R-0090).
+    ///
+    /// ⚠️ Its real cost is **read amplification**: ~6× the bytes read per generation (a full sweep
+    /// per denoise step rather than one load). Overlapped, so no wall-clock — but real SSD/power
+    /// load, and UNMEASURED on battery. That is why `max128` does NOT default to it: there the
+    /// resident footprint already fits with room, so streaming would buy headroom nobody needs at
+    /// a cost we have not characterised.
+    public var streamedBlocks: Bool?
+
+    /// Resolved: explicit override → profile advice → `false`.
+    public var effectiveStreamedBlocks: Bool {
+        streamedBlocks ?? profile?.recommendedStreamedBlocks ?? false
+    }
     /// Root of the granule store (e.g. `/Volumes/Satechi/Models/ltx-granules`).
     public var granuleRootDirectory: URL?
 
@@ -306,7 +353,7 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
 
     /// The granule tree for the configured quant, when streaming is enabled.
     public var resolvedGranuleDirectory: URL? {
-        guard streamedBlocks, let root = granuleRootDirectory else { return nil }
+        guard effectiveStreamedBlocks, let root = granuleRootDirectory else { return nil }
         let sub: String
         switch quant {
         case .int8: sub = "q8"
@@ -422,12 +469,19 @@ extension LTX2Configuration: WeightSourcing {
             WeightSource(role: "components", repo: effectiveComponentsRepo, revision: revision,
                          matching: componentGlobs),
         ]
+        // 🔑 STREAMING REPLACES the transformer download, it does not add to it. The granule tree
+        // is a re-layout of the same bytes plus a globals sidecar, and `bindStore` serves globals
+        // from that sidecar when the checkpoint is absent (manifest v2's whole purpose). Fetching
+        // both would double the DiT's disk for no benefit — 70 GB instead of 35 on bf16.
+        if effectiveStreamedBlocks {
+            sources.append(WeightSource(role: "granules", repo: family.granuleRepo))
+        }
         // 2.5's Gemma-4 encoder lives INSIDE the components tree, so it is not a separate source —
         // declaring one would materialize an unrelated Gemma-3 repo the 2.5 pipeline never opens.
         if family.defaultGemmaRepo != nil || family == .ltx23 {
             sources.append(WeightSource(role: "text-encoder", repo: gemmaRepo))
         }
-        if let tRepo = effectiveTransformerRepo {
+        if let tRepo = effectiveTransformerRepo, !effectiveStreamedBlocks {
             sources.append(WeightSource(role: "transformer-\(quant.rawValue)", repo: tRepo,
                                         matching: [Self.defaultTransformerFile]))
         }
@@ -483,6 +537,11 @@ extension LTX2Configuration: WeightSourcing {
         }
         if cfg.transformerPath == nil, let tRepo = effectiveTransformerRepo {
             cfg.transformerPath = store.directory(for: tRepo)?.appending(path: Self.defaultTransformerFile)
+        }
+        // The granule ROOT resolves like any other repo; `resolvedGranuleDirectory` appends the
+        // quant subdir the published trees are laid out with (`bf16/`, `q8/`, `q4/`).
+        if cfg.granuleRootDirectory == nil, cfg.effectiveStreamedBlocks {
+            cfg.granuleRootDirectory = store.directory(for: family.granuleRepo)
         }
         return cfg
     }
@@ -544,13 +603,13 @@ extension LTX2Configuration: WeightPrewarming {
         // granules (F_NOCACHE by design) and only the ~58 small globals load from it; paging
         // the full 20–38 GB file would defeat the point (the quant-aware prewarm lesson, one
         // level up).
-        let transformer = streamedBlocks ? nil : r.transformerPath
+        let transformer = effectiveStreamedBlocks ? nil : r.transformerPath
         guard let ltxDir = r.ltxDirectory else {
             return [r.gemmaDirectory, transformer, r.vaeDecoderPath].compactMap { $0 }
         }
         return Self.prewarmPaths(ltxDir: ltxDir, transformerPath: transformer,
                                  vaeDecoderPath: r.vaeDecoderPath, gemmaDirectory: r.gemmaDirectory,
-                                 excludeDefaultTransformer: streamedBlocks)
+                                 excludeDefaultTransformer: effectiveStreamedBlocks)
     }
 
     private static func prewarmPaths(ltxDir: URL, transformerPath: URL?, vaeDecoderPath: URL?,

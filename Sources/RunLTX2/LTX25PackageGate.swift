@@ -310,8 +310,46 @@ func ltx25PackageGate() {
           direct.resolvedStreamingOptions.gatePolicy == .forceStream,
           "still \(direct.resolvedStreamingOptions.gatePolicy.rawValue) — use forceStreamGate")
 
+    // ───── streaming as the DEFAULT for advised tiers (operator decision 2026-08-21) ─────
+    var stream = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .compact24)
+    stream.quant = .int8
+    check("34 advised tiers stream by default; max128 does NOT",
+          LTX2Profile.compact24.recommendedStreamedBlocks
+              && LTX2Profile.balanced32.recommendedStreamedBlocks
+              && LTX2Profile.standard64.recommendedStreamedBlocks
+              && !LTX2Profile.max128.recommendedStreamedBlocks,
+          "compact24/balanced32/standard64=on · max128=off (fits resident; streamed is UNMEASURED there)")
+
+    // 🔑 THE POINT OF THE WIRING: streaming REPLACES the transformer download. Fetching both would
+    // cost 70 GB instead of 35 on bf16 — the 2× that made "default streaming" look expensive.
+    let roles = Set(stream.weightSources.map(\.role))
+    check("35 streaming REPLACES the transformer source with granules (not both)",
+          roles.contains("granules") && !roles.contains(where: { $0.hasPrefix("transformer-") }),
+          "roles=\(roles.sorted())")
+
+    check("36 granules resolve to the PUBLISHED tree",
+          stream.weightSources.first { $0.role == "granules" }?.repo
+              == "xocialize/ltx-2.5-granules",
+          "\(stream.weightSources.first { $0.role == "granules" }?.repo ?? "nil")")
+
+    // …and the converse: a non-streaming tier must still fetch the transformer and NOT granules.
+    var resident = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .max128)
+    resident.quant = .int8
+    let rroles = Set(resident.weightSources.map(\.role))
+    check("37 a non-streaming tier fetches the transformer and NOT granules",
+          rroles.contains("transformer-int8") && !rroles.contains("granules"),
+          "roles=\(rroles.sorted())")
+
+    // An explicit override must flip it back, in both directions — same escape hatch as the others.
+    var noStream = stream
+    noStream.streamedBlocks = false
+    check("38 explicit streamedBlocks=false beats the profile and restores the transformer source",
+          !noStream.effectiveStreamedBlocks
+              && Set(noStream.weightSources.map(\.role)).contains("transformer-int8"),
+          "effective=\(noStream.effectiveStreamedBlocks)")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (34/34)"
+          ? "[ltx25-package-gate] PASS ✅ (38/38)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

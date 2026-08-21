@@ -61,15 +61,27 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let quant: Quant = quantName == "bf16" ? .bf16 : .int8
     // 2.5's quantized transformer tree. Named explicitly rather than derived so a wrong suffix is
     // a missing FILE (loud) instead of a silently-bf16 run under an int8 label.
-    let transformerPath: URL? = quant == .int8
-        ? URL(fileURLWithPath: "\(base)/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
-        : nil
-    let streamed = (env["LTX_STREAM_25"] ?? "1") != "0"
+    // LTX_NO_CHECKPOINT=1 points at a path that does not exist, which is exactly how a HOSTED v2
+    // deployment looks: granules downloaded, transformer never fetched. `bindStore` serves the 59
+    // globals from `globals.granule` and integrity comes from the manifest hashes. This proves on
+    // REAL weights what `--stream-tiny-gate` proves synthetically.
+    let noCheckpoint = env["LTX_NO_CHECKPOINT"] == "1"
+    let transformerPath: URL? = noCheckpoint
+        ? URL(fileURLWithPath: "\(base)/ltx-2.5-mlx-ditq8/DOES-NOT-EXIST.safetensors")
+        : (quant == .int8
+            ? URL(fileURLWithPath: "\(base)/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+            : nil)
+    // Tri-state like the config: unset ⇒ follow the profile's advice. Defaulting this to "on"
+    // meant the harness could not measure the SHIPPING default on a tier that does not stream
+    // (max128 printed "STREAMED" while the profile says resident) — a harness that cannot express
+    // the shipping configuration cannot validate it.
+    let streamOverride: Bool? = env["LTX_STREAM_25"].map { $0 != "0" }
     // ROOT, not the tree itself: `LTX2Configuration.resolvedGranuleDirectory` appends a
     // quant-keyed subdir (int8 → "q8", bf16 → "bf16"), matching 2.3's `ltx-granules/{bf16,q8,q4}`.
     let granuleRoot = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules-25")
     let granuleTree = granuleRoot.appendingPathComponent(quant == .int8 ? "q8" : "bf16")
 
+    let streamed = streamOverride ?? profile.recommendedStreamedBlocks
     if streamed, !FileManager.default.fileExists(
         atPath: granuleTree.appendingPathComponent("manifest.json").path) {
         print("[t2v-spot25] FAIL ❌ no granule tree at \(granuleTree.path) — lay it out with "
@@ -104,8 +116,8 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     cfg.textEncoderQuant = encOverride
     let encTree = cfg.effectiveTextEncoderQuant == .int8 ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
     cfg.ltxDirectory = URL(fileURLWithPath: "\(base)/\(encTree)")
+    cfg.streamedBlocks = streamOverride          // nil ⇒ the profile decides
     if streamed {
-        cfg.streamedBlocks = true
         cfg.granuleRootDirectory = granuleRoot
         // ⚠️ `forceStreamGate`, NOT `streamingOptions.gatePolicy` — the latter does not survive
         // resolution (package-gate case 33). Unset ⇒ nil ⇒ the profile decides; LTX_STREAM_GATE is

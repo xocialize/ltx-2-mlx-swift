@@ -155,6 +155,25 @@ public final class LTX2Pipeline {
     /// low-tier request would silently generate BASE after the pre-encode DiT drop).
     private var activeLoRASpec: [(url: URL, strength: Float)] = []
 
+    /// Build the DiT in whichever regime applies. ONE construction site, shared by `load()` and
+    /// `ensureDiT()`, so a streamed deployment cannot accidentally take the resident path in one
+    /// of them — which is exactly what used to happen: `load()` always built a RESIDENT DiT (and
+    /// warmed it), eviction then dropped it, and only the reload came back streamed. That made the
+    /// checkpoint mandatory even for a fully streamed run, and it is the reload the resident path
+    /// is measured paying.
+    static func makeDiT(ditPath: URL, granuleDir: URL?,
+                        options: BlockStreamingOptions) throws -> DiT {
+        guard let granuleDir else {
+            return try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
+        }
+        // ⚠️ `checkpoint:` may point at a file that does not exist — that is the HOSTED v2 case,
+        // not an error. `bindStore` serves the globals from `globals.granule` and takes integrity
+        // from the manifest hashes; it throws only if the checkpoint is absent AND the tree is v1.
+        let streamer = try LTXBlockStreamer(granuleDir: granuleDir, options: options)
+        return try DiT(streaming: streamer, checkpoint: ditPath, config: DiTConfig(),
+                       computeDtype: .bfloat16)
+    }
+
     @discardableResult
     func ensureDiT() throws -> DiT {
         if let d = ditStorage { return d }
@@ -543,7 +562,9 @@ public final class LTX2Pipeline {
     /// upsampler); `gemmaDir` is the Gemma-3 weights dir. Audio decode is enabled when both
     /// audio_vae.safetensors and vocoder.safetensors exist.
     public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil,
-                            vaeDecoderPath: URL? = nil) async throws -> LTX2Pipeline {
+                            vaeDecoderPath: URL? = nil, granuleDirectory: URL? = nil,
+                            streamingOptions: BlockStreamingOptions = .init()) async throws
+        -> LTX2Pipeline {
         // DIAGNOSTIC LEVER: `LTX_CACHE_LIMIT_GB=N` caps the MLX buffer pool (uncapped by default).
         // An unbounded cache inflates phys_footprint until the OS pages — the suspected cause of the
         // 48f "<10% GPU, 1000s" stall. Set this to test whether capping restores throughput.
@@ -561,8 +582,16 @@ public final class LTX2Pipeline {
         // stops before/after the two heavy phases (weight load, kernel warmup) instead of
         // waiting the whole load out.
         try Task.checkCancellation()
-        let dit = try DiT.load(weightsPath: ditPath, config: DiTConfig(), computeDtype: .bfloat16)
-        MLXProfiler.shared.note(String(format: "DiT.load done (lazy) · phys=%.2f GB", Double(physFootprintBytes()) / 1e9))
+        // Streamed from the START when granules are supplied — no resident load, and therefore no
+        // requirement that the checkpoint exist at all.
+        let granuleDir = granuleDirectory
+            ?? ProcessInfo.processInfo.environment["LTX_STREAM_GRANULES"]
+                .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        let dit = try makeDiT(ditPath: ditPath, granuleDir: granuleDir, options: streamingOptions)
+        MLXProfiler.shared.note(String(
+            format: "DiT %@ done (lazy) · phys=%.2f GB",
+            granuleDir == nil ? "resident load" : "STREAMED bind",
+            Double(physFootprintBytes()) / 1e9))
         try Task.checkCancellation()
         // Pay the one-time Metal kernel-compile cost here (in "Loading"), not on the first denoise
         // step where it idles the GPU and looks like a hang. See DiT.warmup / PROFILING.md.
@@ -580,9 +609,12 @@ public final class LTX2Pipeline {
             ? URL(fileURLWithPath: (upsamplerSel as NSString).expandingTildeInPath)
             : ltxDir.appending(path: upsamplerSel)
         let hasUpsampler = fm.fileExists(atPath: upsamplerProbe.path)
-        return LTX2Pipeline(dit: dit, ditPath: ditPath, ltxDir: ltxDir, gemmaDir: gemmaDir,
-                            hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler,
-                            vaeDecoderPath: vaePath)
+        let p = LTX2Pipeline(dit: dit, ditPath: ditPath, ltxDir: ltxDir, gemmaDir: gemmaDir,
+                             hasAudio: hasAudio, hasEncoder: hasEncoder, hasUpsampler: hasUpsampler,
+                             vaeDecoderPath: vaePath)
+        p.streamingGranuleDirectory = granuleDirectory
+        p.streamingOptions = streamingOptions
+        return p
     }
 
     /// Resolve `LTX_VAE_DECODER` to a decoder file, or nil for the stock default.
