@@ -89,7 +89,7 @@ evidence.
 scrutiny, non-English, and arbitrary (non-stock) sentences — `speech-06-arbitrary` is in the script
 and is one short run from closing the last of those.
 
-### 📋 NEW — the q4 ENCODER rejection is worth re-examining (opportunity, NOT a reversal)
+### 📋 QUEUED — **AB-T-0074**: re-examine the q4 ENCODER rejection (operator-authorized)
 
 int4 was rejected on the **connector gate** (0.996728 vs a 0.999 bar) and **never perceptually
 tested**. It now has its first perceptual evidence — indistinguishable, blind — on a narrow prompt
@@ -97,10 +97,20 @@ class. **Under STREAMING the encoder is the binding memory term** (that is what 
 24.79 → 14.57 GB), and q4 is **7.6 GB vs q8's 13 GB**, aimed straight at **compact24 i2v's 92%-of-
 budget thinness**.
 
-⚠️ Do NOT reverse on this. Needed first: (a) an A/B on **visually specified** prompts judging
-**ADHERENCE**, not preference; (b) the real tier measurement — under eviction the encoder sits
-largely outside the peak (AB-R-0034: int8 moved the resident-DiT peak 0.18 GB); only the STREAMED
-regime makes it binding; (c) the same quant class was rejected in `qwen-image-edit-swift`.
+**Operator authorized the re-exam** on the strength of the blind ladder judging BOTH axes
+("great both visually and audio… couldn't pick favorites"), with q4 and poison both in the set.
+
+⚠️ **Re-examination, NOT a reversal.** Four preconditions, full detail in AB-T-0074:
+1. **ADHERENCE A/B on visually specified prompts** — judge *"contains what was asked for"*, not
+   *"looks better"*. Keep **poison** in as the calibration arm; if poison passes adherence too, the
+   test is the problem. ⚠️ The ladder's prompts had almost no visual content, which is exactly why
+   the operator's favourable video read does not settle this.
+2. **Measure the tier saving** — under eviction the encoder is largely outside the peak (AB-R-0034:
+   int8 moved the resident-DiT peak 0.18 GB); only the STREAMED regime makes it binding. ≥3 reps,
+   worst-case, `.forceStream`, t2v AND i2v.
+3. **Reconcile** the same quant class being rejected in `qwen-image-edit-swift`.
+4. **Re-run the deciding gate number** — connector output at VALID positions, not the diluted
+   whole-array figure (AB-L-0017).
 
 ### Phase 2 — consumer-path items (~half a day, mostly desk work)
 
