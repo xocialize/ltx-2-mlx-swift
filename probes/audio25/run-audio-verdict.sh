@@ -32,34 +32,60 @@ mkdir -p "$OUT"
 BIN=./.build/release/RunLTX2
 xcrun swift build -c release --product RunLTX2 2>&1 | grep -E "error:|Build complete" | tail -1
 
-gen() { # tag prompt
-  local tag="$1" prompt="$2" t0=$(date +%s)
+EXPECT_FILE=$OUT/expectations.tsv; : > "$EXPECT_FILE"
+
+gen() { # tag  prompt  [expected-spoken-text]
+  local tag="$1" prompt="$2" expect="${3:-}" t0=$(date +%s)
+  # ⚠️ RECORD THE RESOLVED PROMPT. An earlier run of this probe logged none, so the two
+  # known-text arms could not be reproduced from the receipts afterwards — exactly the
+  # "print resolved parameters, not intended ones" lesson this repo already earned.
+  { echo "PROMPT: $prompt"; echo "EXPECT: ${expect:-<none — not a known-text arm>}"; } > "$OUT/$tag.log"
   LTX_TIER=standard64 LTX_QUANT=int8 \
   LTX_T2V_PROMPT="$prompt" LTX_T2V_SAVE="$OUT/$tag.mp4" \
-    "$BIN" --t2v-spot25 704 512 121 > "$OUT/$tag.log" 2>&1
-  printf "  %-22s %4ss  %s\n" "$tag" "$(( $(date +%s) - t0 ))" \
+    "$BIN" --t2v-spot25 704 512 121 >> "$OUT/$tag.log" 2>&1
+  [ -n "$expect" ] && printf '%s\t%s\n' "$tag" "$expect" >> "$EXPECT_FILE"
+  printf "  %-26s %4ss  %s\n" "$tag" "$(( $(date +%s) - t0 ))" \
     "$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,duration -of csv=p=0 "$OUT/$tag.mp4" 2>/dev/null)"
 }
 
 echo "═══ SPEECH arms — the case 2.3 fails ═══"
-gen speech-01-piece-to-camera "a woman looks directly at the camera and says clearly: the quick brown fox jumps over the lazy dog"
+gen speech-01-piece-to-camera "a woman looks directly at the camera and says clearly: the quick brown fox jumps over the lazy dog" \
+    "the quick brown fox jumps over the lazy dog"
 gen speech-02-newsreader      "a news anchor at a desk reading the evening headlines, clear studio audio"
 gen speech-03-street-busker   "a street musician singing a simple folk song to a small crowd"
+gen speech-04-known           "a man speaks directly to the camera and says clearly: pack my box with five dozen liquor jugs" \
+    "pack my box with five dozen liquor jugs"
+gen speech-05-known           "a woman speaks directly to the camera and says clearly: the rain in Spain stays mainly on the plain" \
+    "the rain in Spain stays mainly on the plain"
+# ⚠️ ARBITRARY-SENTENCE ARM — added 2026-08-21 because arms 01/04/05 are all FAMOUS stock
+# sentences (two pangrams + an elocution line). A model can land those partly off its language
+# PRIOR rather than off the prompt, so they probe intelligibility well and prompt-FOLLOWING
+# weakly. Consumers type arbitrary dialogue, which has no such prior. Deliberately homophone-free.
+gen speech-06-arbitrary       "a man speaks directly to the camera and says clearly: the yellow truck left the depot at seven" \
+    "the yellow truck left the depot at seven"
 echo "═══ AMBIENT arms — the CONTROL (non-speech audio can be fine while speech is babble) ═══"
 gen ambient-01-rain           "heavy rain on a tin roof at night, thunder in the distance"
 gen ambient-02-traffic        "a busy city intersection at rush hour, traffic and horns"
 gen ambient-03-workshop       "a woodworking shop, a hand plane moving across timber"
 
 echo
-echo "═══ objective leg — SPEECH arms only ═══"
-for f in "$OUT"/speech-*.mp4; do
-  [ -e "$f" ] || continue
-  echo "── $(basename "$f")"
-  ( cd ../ltx-2-mlx && uv run python ../LTX_TESTING/tools/stt_verify.py "$f" \
-      --expect "the quick brown fox jumps over the lazy dog" 2>&1 | tail -3 ) || \
+echo "═══ objective leg — known-text SPEECH arms only ═══"
+# ⚠️ ONE --expect FOR ALL SPEECH ARMS IS A CATEGORY ERROR — arms 02/03 have no scripted line, so
+# scoring them against arm 01's sentence measures nothing. Only arms listed in expectations.tsv
+# have a ground truth; the rest are operator-judged.
+while IFS=$'\t' read -r tag expect; do
+  [ -n "${tag:-}" ] || continue
+  echo "── $tag"
+  echo "   expect: $expect"
+  ( cd ../ltx-2-mlx && uv run --with mlx-whisper python ../LTX_TESTING/tools/stt_verify.py \
+      "$OUT/$tag.mp4" --expect "$expect" 2>&1 | tail -3 ) || \
     echo "   (stt_verify unavailable — operator listen is the verdict regardless)"
-done
-echo
+done < "$EXPECT_FILE"
+
+# ⚠️ READ WER WITH A PHONETIC EYE, NOT AS A SCORE. Measured 2026-08-21 on arm 05: WER 0.56 against
+# audio the operator heard CORRECTLY, blind. Two of the three substitutions were true homophones
+# (rein/rain, plane/plain) and cost nothing; the third, spine/Spain, is NOT a homophone (/spaɪn/ vs
+# /speɪn/) and is a real mis-transcription. A raw threshold logs a false NEGATIVE on lines like this.
 echo "clips in $OUT — LISTEN to all six. The question is not 'is it similar to 2.3' but:"
 echo "  speech arms  → intelligible words, or phonetic babble with speech-like prosody?"
 echo "  ambient arms → is non-speech audio actually good? (this decides ambient-only as a product)"
