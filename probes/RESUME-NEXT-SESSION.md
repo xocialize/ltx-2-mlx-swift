@@ -1,24 +1,25 @@
 # RESUME — next session starts here
 
-> ✅ **2026-08-21 — LTX-2.5 is PUBLISHED, gate-green, and shipping on all four tiers by decision
-> (AB-D-0035).** Everything committed and pushed.
-> ✅ **PHASE 1 IS FULLY CLOSED — AUDIO IS SHIPPABLE, INCLUDING ON THE LOW TIERS.**
-> 2.5 generates intelligible, prompt-specified speech (AB-D-0036), and the **int8 encoder is
-> CLEARED for speech** by a blind operator listen of the full encoder ladder (AB-D-0037).
-> **Next = Phase 2** — desk work and short runs; **no dedicated GPU slot needed.**
+> ✅ **LTX-2.5 is PUBLISHED, gate-green, ADMISSIBLE ON ALL FOUR TIERS, and Phase 1 + most of
+> Phase 2 are closed.** Everything committed and pushed; three repos clean.
+>
+> ▶️ **NEXT = PHASE 2d, `probes/max128-streamed/run-max128-streamed.sh`** — the last unmeasured
+> tier+mode. It is a memory ACCEPTANCE measurement, so it **needs the dedicated slot**: serial only,
+> no `MLX_PROFILE`, no burn-in, worst-case never mean. Harness is staged, parses, smoke-tested,
+> and aborts if another `RunLTX2` is live.
 
-## ⏸️ Session paused for an operator reboot (display-resolution issue on wake)
+## ⏸️ Paused for an operator reboot
 
-Nothing is running. All three repos clean and pushed. Nothing to restart or re-measure.
+Nothing running. `mlxengine-video-ltx`, `ltx-2-mlx-swift`, `ltx-2-mlx` all clean and pushed.
+Granules present: **35 G bf16 · 19 G q8** at `/Volumes/Satechi/Models/ltx-granules-25/`.
 
-**Artifacts on the Desktop, all reboot-safe:**
-
-| path | |
-|---|---|
-| `~/Desktop/ltx25-audio-verdict/` (12 MB) | Phase 1 clips — 3 speech, 3 ambient, +2 known-text |
-| `~/Desktop/ltx25-enc-audio-ab/` (16 MB) | encoder ladder, 12 clips, arm-named + `manifest.tsv` |
-| `~/Desktop/ltx25-enc-BLIND/` (16 MB) | the blind set (verdict already given — safe to delete) |
-| `~/Desktop/ltx25-enc-BLIND-KEY.tsv` | its key, no longer withheld |
+🚨 **Two traps the 9f smoke test found — read before quoting ANY number from that run:**
+1. **The SPLIT line's `lane=` reports the CONFIG, not the gate outcome.** At 9f the gate fell back
+   resident on both passes and still printed `lane=STREAMED, peak 44.10 GB` — a RESIDENT number
+   under a STREAMED label. **Confirm the LAST `[BlockStreamer] gate:` line says STREAM first.**
+2. **Read the bind line for sweep sizes, never scale them.** bf16's sweep is **34.56 GiB**
+   (measured); scaling the on-disk DiT ratio gave 36.38e9, ~2% out, because int8 quantizes only the
+   block Linears while the sweep also carries tensors that never quantize.
 
 ## Where things stand
 
@@ -134,21 +135,36 @@ budget thinness**.
 4. **Re-run the deciding gate number** — connector output at VALID positions, not the diluted
    whole-array figure (AB-L-0017).
 
-### Phase 2 — consumer-path items (~half a day, mostly desk work)
+### Phase 2 — ✅ 2a / 2b / 2c DONE · ▶️ 2d is the only item left
 
-⟲ **Smaller than first scoped.** Downloads are engine-side: `WeightMaterializer` already reports
-`fraction`/`totalBytes` with a free-space preflight. Enhancer eviction is an app-side
-`evict(package:)` call, not an engine change.
+⟲ **Most of Phase 2 needed no GPU — it was already answered in committed receipts nobody re-read.**
 
-- **2a** Enhancer load→generate→**evict**. Prove the **7.19 GB actually returns** (measure phys
-  before/after — do not trust the call). Also settle **AB-A-0009**: is the governed enhancement path
-  seed-pinnable? Open with 5 replies, and reproducibility matters for a product.
-- **2b** i2v end-to-end through the package. Works in-harness; what is unverified is adapter
-  **materialization** — confirm the i2v adapter is not `licenseGated` and downloads on a cold run.
-- **2c** compact24 + i2v advisory (92% of budget) — documented in `probes/tier25-matrix/README.md`,
-  app-side to surface. i2v-specific; t2v on that tier is 87%.
-- **2d** `max128` streamed — the one tier defaulting to resident, never measured streamed. Doubles
-  as the on-ramp to Phase 3.
+- **2a ✅ enhancer evict (AB-R-0115).** phys **0.24 → 7.43 → 0.42 GB** after release + `clearCache`.
+  The 7.19 GB returns; residue 0.18 GB.
+  🚨 **But the SEAM arm, which releases WITHOUT `clearCache`, leaves 4.13 GB charged** — the MLX
+  buffer-pool ratchet. **"Evict the enhancer" is an INCOMPLETE instruction**: pair it with a cache
+  clear or ~3 of the 7.19 GB never comes back. Load-bearing because LTX peak 42.27 + enhancer 7.19
+  = **49.46 GB against standard64's 44.8** — the two cannot be co-resident, so the tier depends on
+  the enhancer fully leaving.
+  ✅ Determinism settled too: **AB-A-0009 answered in the POSITIVE** — `LLMParameters.seed` (engine
+  v0.45.0 / contract 1.33.0), gated live on `GemmaLLMPackage` itself. ⚠️ **Available ≠ used: the
+  CALLER must set it.** Reproducibility is possible, not automatic.
+- **2b ✅ i2v materialization (AB-R-0114).** NOT `licenseGated`, auto-materializes via
+  `LoRACache.ensure()`, and resolves **unauthenticated at 200** with a byte-identical size — the
+  check AB-T-0067 exists to enforce.
+  ⚠️ The fetch is inside `run()`, so a cold install **stalls the first i2v generation for 4.93 GB**
+  and the engine's free-space preflight knows nothing about it. 🚨 Do NOT add it to `weightSources`
+  — every t2v-only install would download it. Request-scoped ≠ config-scoped. App-side remedy
+  documented in `probes/tier25-matrix/README.md`.
+- **2c ✅** compact24 + i2v advisory — documented; app-side to surface.
+- **2d ▶️ max128 STREAMED — THE DEDICATED-SLOT ITEM.** The one tier whose profile advises RESIDENT,
+  so it has never been measured streamed. Two things ride on it: its declared **76 GB** charge may
+  be enormously conservative (more co-residency), and **481f@96 is the longest clip any profile
+  permits** (66.01 GB native, AB-R-0073) — the Phase 3 on-ramp. ⚠️ 481f is **3× the largest frame
+  count ever measured on 2.5 streamed**; flat 9→161f is strong evidence but does not extend
+  automatically. ⚠️ Streaming max128 is an **explicit override** (its profile advises resident) —
+  that is the AB-D-0035 escape hatch working, not a profile change. **A measurement is not a
+  decision.**
 
 ### Phase 3 — 128 GB now, 768 GB speculative (HOLD until M5 Ultra specs are real)
 
