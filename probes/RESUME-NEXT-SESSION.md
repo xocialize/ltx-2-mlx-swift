@@ -2,8 +2,9 @@
 
 > ✅ **2026-08-21 — LTX-2.5 is PUBLISHED, gate-green, and shipping on all four tiers by decision
 > (AB-D-0035).** Everything committed and pushed.
-> **Next slot = Phase 1 of the consumer-app plan: the AUDIO VERDICT.** One script, ~1 hour,
-> needs a GPU slot **and your ears**: `probes/audio25/run-audio-verdict.sh`
+> ✅ **PHASE 1 CLOSED 2026-08-21 — AUDIO IS SHIPPABLE (AB-D-0036).** LTX-2.5 generates
+> intelligible, prompt-specified speech; operator approved all three scripted arms plus the ambient
+> foley. **Next slot = Phase 2** (desk work, short runs — no dedicated slot needed).
 
 ## Where things stand
 
@@ -37,24 +38,35 @@ two first and adding low tiers when the ask lands.
 
 ## The plan (agreed 2026-08-21)
 
-### Phase 1 — AUDIO VERDICT ← **start here**
+### ✅ Phase 1 — AUDIO VERDICT — **DONE, and it reversed the expectation**
 
-```bash
-cd LTX_DEV/ltx-2-mlx-swift && ./probes/audio25/run-audio-verdict.sh
-```
+**LTX-2.5 generates intelligible, prompt-specified speech.** Three known-text arms:
 
-6 clips (3 speech, 3 ambient) + an mlx-whisper WER leg on the speech arms. **You listen; that is the
-verdict.**
+| arm | transcript | WER |
+|---|---|---|
+| speech-01 | *"The quick brown fox jumps over the lazy dog."* | **0.00** |
+| speech-04 | *"Pack my box with five dozen liquor jugs."* | **0.00** |
+| speech-05 | *"and the rein and spine stays mainly on the plane."* | 0.56 — **artifact** |
 
-**Why it is open:** 2.3 distilled audio is prosodic babble, not intelligible speech — a MODEL
-property. AB-R-0002 found 2.5's audio STACK byte-identical to 2.3's, which is often misread as
-settling it. **It does not: the stack is the decoder; generation comes from the DiT, and 2.5's DiT
-is a different model.** Unmeasured, not inherited.
+🔑 **speech-05 is a TRANSCRIPTION artifact, not a generation failure**, confirmed twice: the
+homophones (*rein/rain*, *plane/plain*) explain it, and **the operator heard "Spain" BEFORE reading
+that note** — the correct hearing preceded the explanation, so it was not suggestion.
 
-**Decides:** does the app promise *speech*, *ambient/foley only*, or *audio off by default*? All
-three ship; only one is honest. ⚠️ The ambient arms are the control — non-speech audio can be
-excellent while speech is babble, and judging only speech prompts would condemn the feature on its
-hardest case.
+**Operator verdict: all three approved.** Voices gender/age-appropriate to the person on screen, and
+the workshop foley was correct AND matched the video — joint AV coherence, not just "audio exists".
+
+⟲ This kills the inherited assumption. 2.3's babble is a MODEL property, and AB-R-0002's
+"2.5's audio STACK is byte-identical" was read as settling 2.5 too. It never did — the stack is the
+DECODER; generation is the DiT's, and 2.5's DiT differs.
+
+⚠️ **WER is the wrong instrument for homophone-dense lines** — it logged a false negative here.
+Score phonetic distance, or script lines without homophones.
+
+⚠️ **The question is now HOW CONSISTENTLY, not IF.** Unmeasured: seed-to-seed consistency,
+multi-speaker/dialogue, lip-sync under scrutiny, non-English, and — cheapest and most load-bearing —
+**speech under the int8 ENCODER**. All audio arms ran the bf16 encoder; the low tiers auto-follow to
+int8, and AB-R-0104's A/B judged VIDEO only. If int8 conditioning degrades speech, it degrades it
+exactly where the app most wants audio.
 
 ### Phase 2 — consumer-path items (~half a day, mostly desk work)
 
