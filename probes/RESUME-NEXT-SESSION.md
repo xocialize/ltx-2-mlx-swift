@@ -48,15 +48,22 @@ two first and adding low tiers when the ask lands.
 | speech-04 | *"Pack my box with five dozen liquor jugs."* | **0.00** |
 | speech-05 | *"the rain in Spain stays mainly on the plain"* → *"…rein and spine…on the plane"* | 0.56 — **artifact** |
 
-🔑 **speech-05 is a TRANSCRIPTION artifact, not a generation failure**, confirmed twice: it is the
-famous elocution line, and **the operator heard "Spain" BEFORE reading any note about it** — the
-correct hearing preceded the explanation, so it was not suggestion.
+🚨 **CORRECTED TWICE — read AB-R-0110 before quoting any of this.** speech-05 was filed first as a
+"homophone artifact", then as *corroborated* because the operator heard "Spain" before reading my
+note. **Both were wrong.**
 
-⟲ **"Homophone artifact" was too broad a label, corrected.** *rein/rain* and *plane/plain* are true
-homophones and cost nothing. **`spine` is NOT a homophone of `Spain`** — /spaɪn/ vs /speɪn/ differ
-in the vowel — so that substitution is a real mis-transcription, not a spelling coin-flip. The
-operator's ear resolves it and the perceptual verdict is theirs by doctrine, so the shipping
-question stands; the record should not claim all three subs were free.
+- *rein/rain* and *plane/plain* are true homophones and cost nothing.
+- **`spine` is NOT a homophone of `Spain`** (/spaɪn/ vs /speɪn/), and the operator reports the audio
+  genuinely **does** sound like *spine* — they supplied "Spain" by assuming the famous phrase after
+  hearing "rain". **Whisper was right on that token; the model got one word wrong.**
+
+🔑 **I ruled out the wrong contaminant.** My note did not prime the operator — **the stock sentence
+did**. The "independent" confirmation shared the very prior it was meant to check. The phrase
+steered the model, the ASR, and the human judge in the SAME direction at once, leaving no
+independent check anywhere in the loop.
+
+⟲ So the count is **2 of 3 EXACT** (WER 0.00, 0.00), **1 with one substantive word error** — not
+3 of 3. WER over-stated the damage; it did not invent it.
 
 **Operator verdict: all three approved.** Voices gender/age-appropriate to the person on screen, and
 the workshop foley was correct AND matched the video — joint AV coherence, not just "audio exists".
@@ -68,13 +75,14 @@ DECODER; generation is the DiT's, and 2.5's DiT differs.
 ⚠️ **WER is the wrong instrument for homophone-dense lines** — it logged a false negative here.
 Read it phonetically, or script lines without homophones.
 
-🚨 **WHAT PHASE 1 DID *NOT* ESTABLISH — all three known-text arms are FAMOUS stock sentences**
-(two pangrams and an elocution line). A model can land those partly off its language PRIOR rather
-than off the prompt, so they probe **intelligibility** well and **prompt-following** weakly.
-Consumers type arbitrary dialogue, which has no such prior. So the claim earned is *"speech is
-intelligible and well-voiced"* — real, and the question that was open — **not** *"it says the
-specific arbitrary thing you typed"*. `speech-06-arbitrary` is now in the script (homophone-free,
-no stock-phrase prior) and is one short run from closing it.
+🚨 **LOW-PRIOR SENTENCES ARE NOW MANDATORY, not a nice-to-have (AB-R-0110/AB-L-0056).** All three
+known-text arms were famous stock sentences — two pangrams and an elocution line. That is worse than
+a weak test: **a high-prior sentence correlates the errors of every judge you could check it with.**
+The model can complete it from its prior, the ASR carries the same prior, and so does the human
+listener. No proverbs, no pangrams, no stock phrases, no homophones.
+
+So the claim Phase 1 earned is *"speech is intelligible and well-voiced"* — real, and the question
+that was open — **not** *"it says the specific arbitrary thing you typed"*.
 
 ⚠️ **Also unmeasured:** seed-to-seed consistency, multi-speaker/dialogue, lip-sync under scrutiny,
 non-English, and — cheapest and most load-bearing — **speech under the int8 ENCODER**. All audio

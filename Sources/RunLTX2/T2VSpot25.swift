@@ -32,6 +32,10 @@
 //        LTX_QUANT=int8|bf16                                (default: the tier's recommendation)
 //        LTX_STREAM_25=1|0                                  (default: 1 — stream the DiT blocks)
 //        LTX_ENC=q8                                         (int8 TEXT encoder — 13 GB vs 22)
+//        LTX_ENC_TREE=<dirname>                             (CONTROL ARMS ONLY — names an encoder
+//                                                            tree directly, e.g. ltx-2.5-mlx-q4 or
+//                                                            -poison. Bypasses resolution; never an
+//                                                            acceptance number.)
 //        LTX_T2V_SAVE=<path>                                (optional MP4 write)
 //
 // 🔑 MEASURED 2026-08-16 — NEITHER LEVER WORKS ALONE, and that is the whole finding. At
@@ -114,7 +118,20 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
         modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
         profile: profile)
     cfg.textEncoderQuant = encOverride
-    let encTree = cfg.effectiveTextEncoderQuant == .int8 ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    var encTree = cfg.effectiveTextEncoderQuant == .int8 ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    // ⚠️ CONTROL-ARM HATCH — NOT a shipping path. `LTX_ENC_TREE` names an encoder tree directly so
+    // the REJECTED (`-q4`, connector 0.996728) and DELIBERATELY-BROKEN (`-poison`, 0.829329 on real
+    // tokens) siblings can be run as poison controls. A quality A/B whose deciding metric cannot
+    // fail on a known-bad encoder is not a test — the repo-wide rule from AB-L-0017.
+    // It bypasses the config's own resolution ON PURPOSE, which is exactly why it must never be
+    // used for an acceptance number: case 18 exists to stop this harness re-deriving what it should
+    // be reading. It announces itself loudly so no receipt can quote it by accident.
+    if let raw = env["LTX_ENC_TREE"], !raw.isEmpty {
+        encTree = raw
+        FileHandle.standardError.write(Data(
+            "⚠️  LTX_ENC_TREE=\(raw) — CONTROL ARM, encoder resolution BYPASSED. Not an acceptance number.\n"
+                .utf8))
+    }
     cfg.ltxDirectory = URL(fileURLWithPath: "\(base)/\(encTree)")
     cfg.streamedBlocks = streamOverride          // nil ⇒ the profile decides
     if streamed {
