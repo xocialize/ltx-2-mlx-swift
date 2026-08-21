@@ -49,11 +49,17 @@ Granule trees (54 GB, not in git): `/Volumes/Satechi/Models/ltx-granules-25/{bf1
 ⚠️ The subdir is keyed by QUANT (`q8`), because `LTX2Configuration.resolvedGranuleDirectory` appends
 it to `granuleRootDirectory`; naming it `ditq8` binds in the gates and fails in the real pipeline.
 
-## ⚠️ Admissible ≠ shippable
+## ⚠️ Admissible ≠ shippable — ⟲ ALL THREE CAVEATS BELOW ARE NOW CLOSED (see the 2026-08-20 section)
 
-The int8 encoder's **perceptual A/B is not done** — its sample MOVES (mean −0.1421/std 0.4253 vs
-bf16 −0.1274/0.4222) and it is gated on numbers only. Single run, one geometry per tier. DFR/i2v
-untested in this config. Do not turn these into a tier declaration without the perceptual pass.
+~~The int8 encoder's perceptual A/B is not done~~ → **PASSED BLIND**, 4 pairs (AB-R-0104).
+~~Single run, one geometry per tier~~ → **3 reps × 3 tiers × 2 modes** (AB-R-0106).
+~~DFR/i2v untested~~ → **i2v measured**; **DFR formally DEFERRED** for the base release (AB-D-0034 —
+dominated ×1.6–1.8, operator prefers native, and unreachable from the package, so no tier
+declaration covers it).
+
+⚠️ One caveat SURVIVES and one is NEW: the numbers here were `.auto`-gated, and at compact24's N
+that gate flips run-to-run (AB-R-0105) — the low tiers require `.forceStream`. And **compact24 i2v
+sits at 92% of budget**, which is thin (see below).
 
 ---
 
