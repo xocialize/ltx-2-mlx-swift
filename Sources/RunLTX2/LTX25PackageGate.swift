@@ -232,6 +232,19 @@ func ltx25PackageGate() {
               && !LTX2Profile.standard64.recommendedForcedStreamGate,
           "compact24=int8/forced · standard64=bf16/auto")
 
+    // 🚨 THE PIN RULE IS "does the FALLBACK still fit", not "is N small". Every tier whose budget
+    // is met ONLY while streaming must pin the gate, or an .auto decline busts it outright.
+    // Measured resident (fallback) peaks: compact24 31.92/16.8 ✗, balanced32 33.13/22.4 ✗,
+    // standard64 27.31/44.8 ✓. balanced32 streamed 6/6 in measurement — but 6/6 is a probability,
+    // and a declaration has to hold on the run that goes the other way.
+    check("26b every tier whose FALLBACK busts budget pins the gate",
+          LTX2Profile.compact24.recommendedForcedStreamGate
+              && LTX2Profile.balanced32.recommendedForcedStreamGate
+              && !LTX2Profile.standard64.recommendedForcedStreamGate,
+          "compact24=\(LTX2Profile.compact24.recommendedForcedStreamGate) "
+              + "balanced32=\(LTX2Profile.balanced32.recommendedForcedStreamGate) "
+              + "standard64=\(LTX2Profile.standard64.recommendedForcedStreamGate)")
+
     // A config persisted BEFORE this key existed must still decode — and as bf16, the only
     // encoder that existed then (the bernini d02cfa1 rule).
     let legacyEnc = #"{"repo":"xocialize/ltx-2.5-mlx","family":"ltx25","quant":"int8"}"#
@@ -298,7 +311,7 @@ func ltx25PackageGate() {
           "still \(direct.resolvedStreamingOptions.gatePolicy.rawValue) — use forceStreamGate")
 
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (33/33)"
+          ? "[ltx25-package-gate] PASS ✅ (34/34)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

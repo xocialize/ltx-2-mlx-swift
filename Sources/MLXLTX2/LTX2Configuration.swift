@@ -87,10 +87,22 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     /// 47.3–68.1 s against `.auto`'s 46.5–69.0 s — overlapping spreads, no stall penalty. The
     /// expected memory-for-time trade did not materialise, because a spurious fallback ALSO costs
     /// time (it loads 18.38 GiB).
-    /// ⚠️ Headroom scales with N, so this is a SMALL-N remedy: standard64 clears N_min by 4.8× and
-    /// has no need of it.
+    /// 🚨 **THE RULE IS NOT "small N" — it is "does the FALLBACK still fit".** An earlier version of
+    /// this advised `compact24` only, reasoning from N headroom. That was wrong and it was
+    /// load-bearing: `.auto` may decline to stream on ANY run, and a tier whose budget is met only
+    /// while streaming busts outright when it does. Measured resident (fallback) peaks against
+    /// budget:
+    ///
+    ///     compact24    31.92  vs 16.8   🚨 busts       → PIN
+    ///     balanced32   33.13  vs 22.4   🚨 busts       → PIN
+    ///     standard64   27.31  vs 44.8   ✅ still fits  → `.auto` is safe
+    ///
+    /// So `balanced32` must be pinned too, even though it streamed 6/6 in measurement — 6/6 is a
+    /// probability, and the declaration has to hold on the run that goes the other way.
+    /// `standard64` genuinely does not need it: its fallback is admissible, so the gate is free to
+    /// choose.
     public var recommendedForcedStreamGate: Bool {
-        switch self { case .compact24: true; default: false }
+        switch self { case .compact24, .balanced32: true; default: false }
     }
 }
 
