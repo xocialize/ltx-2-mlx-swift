@@ -42,13 +42,19 @@ public final class MLXLTX2Package: ModelPackage {
                 weightLicense: .ltx2Community,
                 portCodeLicense: .apache2),
             provenance: Provenance(
-                // The ORIGIN of these tensors, which is a three-link chain: Lightricks trained
-                // LTX-2.3; dgrauet converted it to MLX (mlx-forge) and published this repo; we
-                // mirror that conversion verbatim at `xocialize/ltx-2.3-mlx`. Provenance names
-                // the conversion because that is where these exact bytes come from — the served
-                // repo (`LTX2Configuration.repo`) is our mirror, and conflating the two would
-                // let the mirror launder its origin.
-                sourceRepo: "dgrauet/ltx-2.3-mlx",
+                // ⟲ **CORRECTED 2026-08-21.** This read `dgrauet/ltx-2.3-mlx`, describing our tree
+                // as a verbatim mirror of that conversion. It is not: **we converted 2.3 from
+                // `Lightricks/LTX-2` ourselves**, and the result happened to come out byte-identical
+                // because the conversion approach converged on dgrauet's. Same bytes, independent
+                // origin.
+                //
+                // 🔑 **Byte-identity does NOT establish lineage.** Confronted with matching blob
+                // sizes I concluded "verbatim mirror" and nearly left this field wrong —
+                // identical output is equally consistent with copying and with two conversions
+                // that agree. A deterministic pipeline over the same input SHOULD agree; that is
+                // the pipeline working, not evidence of provenance. Lineage is a fact about
+                // process, and bytes cannot witness it.
+                sourceRepo: "Lightricks/LTX-2",
                 revision: "main",
                 tier: 3),  // multi-component pipeline (Gemma + connector + DiT + VAE)
             requirements: RequirementsManifest(

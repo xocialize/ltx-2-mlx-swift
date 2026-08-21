@@ -55,14 +55,25 @@ public enum LTXGranuleLayout {
     }
 
     @discardableResult
+    /// ⚠️ **`sourceRepo`/`sourceRevision` were SILENTLY DROPPED here until 2026-08-21.** The kit's
+    /// `GranuleLayout.write` has always accepted them, and the CLI could have passed them — but
+    /// this wrapper did not forward them, so every tree laid out through the LTX path came out
+    /// UNSTAMPED regardless of what the caller asked for. The 2.5 trees had to be re-laid before
+    /// they could be hosted.
+    ///
+    /// 🔑 A pass-through that omits a parameter is worse than one that never offered it: the
+    /// capability appears to exist at both ends, so nobody looks in the middle.
     public static func write(
         safetensors: URL, outputDir: URL,
         blockPrefix: String = ltxBlockPrefix,
+        sourceRepo: String? = nil,
+        sourceRevision: String? = nil,
         progress: ((Int, Int) -> Void)? = nil
     ) throws -> GranuleLayout.Result {
         try GranuleLayout.write(
             safetensors: safetensors, outputDir: outputDir, blockPrefix: blockPrefix,
-            orderRank: forwardRank, progress: progress)
+            orderRank: forwardRank, sourceRepo: sourceRepo, sourceRevision: sourceRevision,
+            progress: progress)
     }
 }
 
