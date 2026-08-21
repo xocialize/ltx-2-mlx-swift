@@ -242,11 +242,55 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// encoder (`-q8` on 2.5). They are different repos with different suffixes and different
     /// footprints — see `LTXFamily.transformerRepoSuffix` vs `textEncoderRepoSuffix`.
     ///
-    /// Default `.bf16` keeps existing configs byte-identical. ⚠️ **Only affects REPO resolution**
-    /// (what `weightSources` materializes). When `ltxDirectory` is set you are naming a tree
-    /// directly, so point it at the sibling (`…-q8/`) instead — `LTX2Pipeline.gemma4Dir` derives
-    /// the encoder from `ltxDirectory` and this axis cannot override an explicit path.
-    public var textEncoderQuant: Quant = .bf16
+    /// 🔑 **TRI-STATE: `nil` (the default) means FOLLOW THE PROFILE'S ADVICE.** A non-nil value is
+    /// an explicit override and always wins. Read the resolved value from
+    /// `effectiveTextEncoderQuant`, never from this field.
+    ///
+    /// Auto-following is deliberate (operator decision 2026-08-21): on `compact24`/`balanced32` the
+    /// int8 encoder is not a preference, it is **load-bearing** — with the DiT streamed, 2.5's peak
+    /// is set by a geometry-independent ~24.8 GB encoder floor that is over both budgets, and int8
+    /// takes it to 14.6 / 15.4 GB (AB-R-0090/0106). A caller who picks a low tier and leaves this
+    /// alone should get a configuration that FITS rather than one that silently busts the governor.
+    ///
+    /// ⚠️ **This changes nothing for configs persisted before it existed.** The advice is `.bf16`
+    /// on `standard64`/`max128` — the old default — and 2.5 was never admissible on the low tiers,
+    /// so no persisted 2.5 config can be sitting on a profile whose advice differs.
+    ///
+    /// ⚠️ **Only affects REPO resolution** (what `weightSources` materializes). When `ltxDirectory`
+    /// is set you are naming a tree directly, so point it at the sibling (`…-q8/`) instead —
+    /// `LTX2Pipeline.gemma4Dir` derives the encoder from `ltxDirectory` and neither this axis nor
+    /// the profile can override an explicit path.
+    public var textEncoderQuant: Quant?
+
+    /// Resolved text-encoder precision: explicit override → profile advice → `.bf16`.
+    public var effectiveTextEncoderQuant: Quant {
+        textEncoderQuant ?? profile?.recommendedTextEncoderQuant ?? .bf16
+    }
+
+    /// 🔑 **TRI-STATE: `nil` (the default) means FOLLOW THE PROFILE'S ADVICE.** `true`/`false` is an
+    /// explicit override and always wins — the escape hatch for measurement and for callers who
+    /// know what they are doing.
+    ///
+    /// Auto-following matters because `.auto` is not safe to DECLARE a low tier on: the runtime
+    /// gate compares measured IO against measured compute, and at `compact24`'s N the compute
+    /// estimate is noisy enough to flip the verdict — PEAK swung 14.6 ↔ 33.6 GB across three runs,
+    /// 1 in 3 falling back over budget (AB-R-0105). Pinning costs nothing measurable.
+    ///
+    /// ⚠️ Setting `streamingOptions.gatePolicy` directly does NOT survive resolution — use this.
+    /// `resolvedStreamingOptions` is what the wrapper forwards.
+    public var forceStreamGate: Bool?
+
+    /// Streaming options as actually forwarded: `streamingOptions` with `gatePolicy` resolved from
+    /// the override, else the profile's advice, else left as-is.
+    public var resolvedStreamingOptions: BlockStreamingOptions {
+        var o = streamingOptions
+        if let forced = forceStreamGate {
+            o.gatePolicy = forced ? .forceStream : .auto
+        } else if profile?.recommendedForcedStreamGate == true {
+            o.gatePolicy = .forceStream
+        }
+        return o
+    }
 
     /// The granule tree for the configured quant, when streaming is enabled.
     public var resolvedGranuleDirectory: URL? {
@@ -301,9 +345,11 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
         // that is what it must keep decoding as (the bernini d02cfa1 pattern — a new key must never
         // become mandatory for configs that predate it).
         family = try c.decodeIfPresent(LTXFamily.self, forKey: .family) ?? .ltx23
-        // Absent ⇒ `.bf16`, the only encoder that existed when configs were first persisted (the
-        // same bernini d02cfa1 rule as `family`: a new key must never become mandatory).
-        textEncoderQuant = try c.decodeIfPresent(Quant.self, forKey: .textEncoderQuant) ?? .bf16
+        // Absent ⇒ nil ⇒ FOLLOW THE PROFILE. Safe for configs persisted before this key existed:
+        // the advice is `.bf16` on standard64/max128 (the old behaviour) and 2.5 was never
+        // admissible on the low tiers, so no persisted 2.5 config sits on a profile that advises
+        // otherwise. (The bernini d02cfa1 rule still holds — a new key never becomes mandatory.)
+        textEncoderQuant = try c.decodeIfPresent(Quant.self, forKey: .textEncoderQuant)
         repo = try c.decode(String.self, forKey: .repo)
         revision = try c.decodeIfPresent(String.self, forKey: .revision)
         gemmaRepo = try c.decodeIfPresent(String.self, forKey: .gemmaRepo)
@@ -350,7 +396,9 @@ extension LTX2Configuration: WeightSourcing {
     /// `textEncoderQuant` names one. Everything but the encoder is identical in that tree (the
     /// sibling symlinks the rest back), so this swaps the encoder and nothing else.
     public var effectiveComponentsRepo: String {
-        guard let suffix = family.textEncoderRepoSuffix(for: textEncoderQuant) else { return repo }
+        guard let suffix = family.textEncoderRepoSuffix(for: effectiveTextEncoderQuant) else {
+            return repo
+        }
         return repo + suffix
     }
 

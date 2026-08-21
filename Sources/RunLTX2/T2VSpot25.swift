@@ -84,23 +84,36 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     // Measured 2026-08-16: 2.5's whole-run peak is geometry-INDEPENDENT at ~24.8 GB (256×256×9
     // and 512×288×121 agree to 0.01 GB), i.e. it is the encoder, not the decode window — so this
     // is the only knob that can move 2.5 below balanced32.
-    let encTree = env["LTX_ENC"] == "q8" ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    // LTX_ENC is an OVERRIDE now, not the selector: unset ⇒ nil ⇒ the profile's advice decides
+    // (compact24/balanced32 → int8). The tree is then derived from the config's OWN resolution
+    // rather than re-implemented here — re-deriving it would let this harness pass while the
+    // shipping resolution was broken, which is the failure mode `--ltx25-package-gate` case 18
+    // exists to prevent.
+    let encOverride: Quant? = switch env["LTX_ENC"] {
+        case "q8", "int8": .int8
+        case "bf16": .bf16
+        default: nil
+    }
     var cfg = LTX2Configuration(
         quant: quant,
-        ltxDirectory: URL(fileURLWithPath: "\(base)/\(encTree)"),
+        ltxDirectory: nil,            // set below, from the RESOLVED encoder precision
         transformerPath: transformerPath,
         gemmaDirectory: nil,          // 2.5's Gemma-4 encoder lives INSIDE the components tree
         modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
         profile: profile)
+    cfg.textEncoderQuant = encOverride
+    let encTree = cfg.effectiveTextEncoderQuant == .int8 ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
+    cfg.ltxDirectory = URL(fileURLWithPath: "\(base)/\(encTree)")
     if streamed {
         cfg.streamedBlocks = true
         cfg.granuleRootDirectory = granuleRoot
-        // Set the gate policy through the CONFIG axis (forwarded by MLXLTX2Package), not the
-        // pipeline's `LTX_STREAM_GATE` env — that env exists for callers that drive
-        // `LTX2Pipeline` directly (`--e2e25`). Going through the config is what proves the
-        // shipping wrapper actually forwards it: gate the WIRING, not just the component.
-        if env["LTX_STREAM_GATE"] == "force" || profile.recommendedForcedStreamGate {
-            cfg.streamingOptions.gatePolicy = .forceStream
+        // ⚠️ `forceStreamGate`, NOT `streamingOptions.gatePolicy` — the latter does not survive
+        // resolution (package-gate case 33). Unset ⇒ nil ⇒ the profile decides; LTX_STREAM_GATE is
+        // the explicit escape hatch in both directions.
+        switch env["LTX_STREAM_GATE"] {
+        case "force": cfg.forceStreamGate = true
+        case "auto":  cfg.forceStreamGate = false
+        default:      break            // follow the profile
         }
     }
 
@@ -110,7 +123,7 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let lane = streamed ? "STREAMED" : "RESIDENT"
     print("[t2v-spot25] request \(width)×\(height)×\(frames)f \(quantName) · tier=\(profile.rawValue)"
         + " · DiT lane: \(lane) · encoder: \(encTree) · mode: \(i2v ? "i2v" : "t2v")"
-        + " · gate: \(cfg.streamingOptions.gatePolicy.rawValue)")
+        + " · gate: \(cfg.resolvedStreamingOptions.gatePolicy.rawValue)")
     if streamed { print("[t2v-spot25] granules \(granuleTree.path)") }
 
     // Prewarm off the config's OWN prewarmPaths — which, when streamedBlocks is set, deliberately

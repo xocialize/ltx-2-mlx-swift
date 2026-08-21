@@ -193,10 +193,13 @@ func ltx25PackageGate() {
               && enc.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
           "transformer=\(enc.effectiveTransformerRepo ?? "nil") components=\(enc.effectiveComponentsRepo)")
 
+    // No profile ⇒ nothing to follow ⇒ bf16, the pre-existing behaviour.
     var bf = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx")
-    check("21 default encoder is bf16 and rides the components repo unchanged",
-          bf.textEncoderQuant == .bf16 && bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
-          "\(bf.textEncoderQuant.rawValue) → \(bf.effectiveComponentsRepo)")
+    check("21 no profile ⇒ encoder resolves bf16 and rides the components repo unchanged",
+          bf.textEncoderQuant == nil && bf.effectiveTextEncoderQuant == .bf16
+              && bf.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx",
+          "override=\(bf.textEncoderQuant?.rawValue ?? "nil") → "
+              + "\(bf.effectiveTextEncoderQuant.rawValue) → \(bf.effectiveComponentsRepo)")
 
     // int4 encoder was REJECTED by the gate (AB-D-0010, 0.996728 vs a 0.999879 bf16 floor).
     // Deriving `-q4` would name a tree that must never be built, let alone loaded.
@@ -233,18 +236,69 @@ func ltx25PackageGate() {
     // encoder that existed then (the bernini d02cfa1 rule).
     let legacyEnc = #"{"repo":"xocialize/ltx-2.5-mlx","family":"ltx25","quant":"int8"}"#
     let decoded = try? JSONDecoder().decode(LTX2Configuration.self, from: Data(legacyEnc.utf8))
-    check("27 legacy config without the key decodes as bf16 encoder",
-          decoded?.textEncoderQuant == Quant.bf16,
-          "\(decoded.map { $0.textEncoderQuant.rawValue } ?? "DECODE FAILED")")
+    check("27 legacy config without the key decodes as FOLLOW-PROFILE (nil), not a pinned value",
+          decoded != nil && decoded?.textEncoderQuant == nil
+              && decoded?.effectiveTextEncoderQuant == .bf16,
+          "override=\(decoded?.textEncoderQuant?.rawValue ?? "nil") "
+              + "effective=\(decoded.map { $0.effectiveTextEncoderQuant.rawValue } ?? "DECODE FAILED")")
 
     let round = try? JSONDecoder().decode(
         LTX2Configuration.self, from: JSONEncoder().encode(enc))
-    check("28 textEncoderQuant survives a Codable round-trip",
-          round?.textEncoderQuant == .int8 && round?.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
-          "\(round.map { $0.textEncoderQuant.rawValue } ?? "DECODE FAILED")")
+    check("28 an EXPLICIT textEncoderQuant survives a Codable round-trip",
+          round?.textEncoderQuant == Quant.int8
+              && round?.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8",
+          "\(round?.textEncoderQuant?.rawValue ?? "DECODE FAILED")")
+
+    // ───── AUTO-FOLLOW (operator decision 2026-08-21: save users from themselves) ─────
+    // 🔑 The point of these cases is that picking a low TIER and touching nothing else yields a
+    // configuration that FITS. Before auto-follow it yielded one that busts the governor, silently.
+    var lowTier = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .compact24)
+    lowTier.quant = .int8
+    check("29 compact24 AUTO-FOLLOWS to the int8 encoder + a pinned gate",
+          lowTier.effectiveTextEncoderQuant == .int8
+              && lowTier.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx-q8"
+              && lowTier.resolvedStreamingOptions.gatePolicy == .forceStream,
+          "enc=\(lowTier.effectiveTextEncoderQuant.rawValue) "
+              + "repo=\(lowTier.effectiveComponentsRepo) "
+              + "gate=\(lowTier.resolvedStreamingOptions.gatePolicy.rawValue)")
+
+    // …and it must reach weightSources, not just the computed property.
+    check("30 auto-follow reaches weightSources",
+          lowTier.weightSources.first { $0.role == "components" }?.repo
+              == "xocialize/ltx-2.5-mlx-q8",
+          "\(lowTier.weightSources.first { $0.role == "components" }?.repo ?? "nil")")
+
+    // The ESCAPE HATCH: an explicit override beats the profile, in both directions. This is what
+    // makes auto-follow safe to ship — a tester can always get back to the unadvised configuration.
+    var override = lowTier
+    override.textEncoderQuant = .bf16
+    override.forceStreamGate = false
+    check("31 explicit overrides BEAT the profile advice (the escape hatch)",
+          override.effectiveTextEncoderQuant == .bf16
+              && override.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx"
+              && override.resolvedStreamingOptions.gatePolicy == .auto,
+          "enc=\(override.effectiveTextEncoderQuant.rawValue) "
+              + "gate=\(override.resolvedStreamingOptions.gatePolicy.rawValue)")
+
+    // High tiers must NOT auto-follow into int8 — the advice there is bf16, the reproducible arm.
+    var highTier = LTX2Configuration(family: .ltx25, repo: "xocialize/ltx-2.5-mlx", profile: .standard64)
+    check("32 standard64 auto-follows to bf16/auto — unchanged from before auto-follow",
+          highTier.effectiveTextEncoderQuant == .bf16
+              && highTier.effectiveComponentsRepo == "xocialize/ltx-2.5-mlx"
+              && highTier.resolvedStreamingOptions.gatePolicy == .auto,
+          "enc=\(highTier.effectiveTextEncoderQuant.rawValue) "
+              + "gate=\(highTier.resolvedStreamingOptions.gatePolicy.rawValue)")
+
+    // ⚠️ streamingOptions.gatePolicy is NOT the knob — resolution overwrites it. If this ever
+    // stops being true, callers setting it directly will silently get the profile's policy.
+    var direct = lowTier
+    direct.streamingOptions.gatePolicy = .auto
+    check("33 setting streamingOptions.gatePolicy directly does NOT survive resolution",
+          direct.resolvedStreamingOptions.gatePolicy == .forceStream,
+          "still \(direct.resolvedStreamingOptions.gatePolicy.rawValue) — use forceStreamGate")
 
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (28/28)"
+          ? "[ltx25-package-gate] PASS ✅ (33/33)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

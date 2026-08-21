@@ -99,3 +99,52 @@ already called out a 96%-of-budget declaration as unsafe (bf16 on standard64, AB
 one at least sat *below* its profile's frame cap, where this sits *at* compact24's own clamped
 envelope (512×288×121), so there is no headroom hiding in an untested geometry. One prompt was
 tested; activation is content-sensitive.
+
+---
+
+# AUTO-FOLLOW shipped (2026-08-21) — and the compact24 i2v note the UI should carry
+
+**Operator decision: the profile's advice is now FOLLOWED automatically**, "to save users from
+themselves". Picking a low tier and touching nothing else yields a configuration that FITS; before
+this it yielded one that busts the governor, silently.
+
+| axis | default | resolves to |
+|---|---|---|
+| `LTX2Configuration.textEncoderQuant` | `nil` | profile advice → `.bf16` |
+| `LTX2Configuration.forceStreamGate` | `nil` | profile advice → `.auto` |
+
+**Escape hatch (explicit override always wins, both directions):**
+
+```swift
+cfg.textEncoderQuant = .bf16     // ignore the tier's int8 advice
+cfg.forceStreamGate  = false     // ignore the tier's pinned-gate advice
+```
+
+Harness equivalents: `LTX_ENC=bf16|q8`, `LTX_STREAM_GATE=auto|force`. Unset ⇒ follow the profile.
+
+⚠️ **`streamingOptions.gatePolicy` is NOT the knob** — resolution overwrites it. Use
+`forceStreamGate`. Package-gate case 33 pins this so it cannot rot silently.
+
+⚠️ **Nothing changes for existing configs.** The advice is `.bf16`/`.auto` on `standard64`/`max128`
+— the old defaults — and 2.5 was never admissible on the low tiers, so no persisted 2.5 config can
+be sitting on a profile whose advice differs.
+
+Gate: **33/33**, mutation-tested ×2 — disabling auto-follow fails cases 29/30; letting the profile
+beat an explicit override fails case 31, the case that exists for it.
+
+## 📋 RECOMMENDED UI ITEM — warn on compact24 + i2v
+
+**compact24 i2v measures 15.49 GB against a 16.8 GB budget: 92%.** It PASSES and is allowed
+(operator decision), but the margin is lean enough that the UI should say so.
+
+Suggested behaviour: when the selected tier is `compact24` **and** the request carries an init image
+(i2v), surface a non-blocking advisory — something like *"Image-to-video on a 24 GB machine runs
+close to the memory limit; close other apps or choose a smaller output if generation fails."*
+
+Why it is worth a warning rather than silence:
+- 92% leaves ~1.3 GB. This repo already treats **96%** as unsafe to declare (bf16/standard64,
+  AB-R-0038) — and *that* case sat below its frame cap, whereas this sits **at** compact24's clamped
+  envelope (512×288×121), so no headroom is hiding in an untested geometry.
+- **One prompt was measured, and activation is content-sensitive.** The figure is a sample, not a
+  bound.
+- t2v on the same tier is 87% (14.58 GB), so the warning is specific to i2v — do not warn on both.
