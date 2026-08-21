@@ -616,6 +616,38 @@ extension LTX2Configuration: FootprintConfigured {
             && resolvedStreamingOptions.gatePolicy == .forceStream
     }
 
+    /// Expected weight bytes READ per run for the resolved lane (contract 1.35.0, AB-A-0013).
+    ///
+    /// 🔑 PERFORMANCE ONLY — never refuses. Deliberately separate from the crash floor
+    /// (`minSustainedReadBytesPerSecond`, declared on bf16 only): a slow volume makes a STREAMED
+    /// lane slow, not unsafe. Declaring the volume lets the ENGINE project I/O time from its own
+    /// measured B/s instead of every app re-deriving per-tier sweep arithmetic (AB-D-0038).
+    ///
+    /// **Streamed lanes re-read the swept set EVERY step** — only ~1.53 GiB of slots stay resident
+    /// against an 18.37 GiB sweep, so the working set cannot be carried between steps. **Resident
+    /// lanes read once, at load.** Measured: 33 s of I/O at 4.4 GiB/s inside a 47–68 s compact24
+    /// clip; the same clip is ~334 s of I/O on a ~475 MB/s volume, with correct output throughout.
+    ///
+    /// ⚠️ Steps are the SIGMA SCHEDULE, not a guess: one-stage tiers run `distilledSigmas`
+    /// (9 entries → 8 transitions); two-stage adds `stage2Sigmas` (4 → 3), so 11.
+    /// ⚠️ An `.auto` lane that falls back resident reads far LESS than this. Over-projecting I/O on
+    /// a fallback is the safe direction for an advisory (it never refuses), but do not read this
+    /// number as a measurement of a fallback run.
+    public var expectedWeightReadBytesPerRunHint: UInt64? {
+        guard family == .ltx25, let profile else { return nil }
+        // int8 sweep MEASURED from the live streamer: "sweep 18.37 GiB" at both compact24 and
+        // standard64. bf16 scaled by the on-disk DiT ratio (37.99 / 20.6 = 1.844) — 2.5's int8
+        // quantizes only the transformer-block Linears, which is exactly what gets swept.
+        let sweepInt8: UInt64 = 19_724_000_000
+        let sweepBf16: UInt64 = 36_380_000_000
+        if effectiveStreamedBlocks {
+            let steps: UInt64 = profile.oneStage ? 8 : 11
+            return (quant == .bf16 ? sweepBf16 : sweepInt8) * steps
+        }
+        // Resident: the checkpoint is read once at load. On-disk sizes.
+        return quant == .bf16 ? 37_990_000_000 : 20_600_000_000
+    }
+
     public var residentBytesHint: UInt64? {
         guard declaresStreamedFootprint, let profile else { return nil }
         switch profile {

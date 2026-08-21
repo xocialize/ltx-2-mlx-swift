@@ -443,8 +443,35 @@ func ltx25PackageGate() {
     check("47 no non-bf16 variant carries a floor (streaming degrades in TIME — app-side advisory)",
           offenders == 0, "\(offenders) offenders")
 
+    // ── 48-51 · EXPECTED READ VOLUME (contract 1.35.0, AB-A-0013 option b) ──────────────────
+    // 🔑 PERFORMANCE hint, never refuses — the counterpart to 44-47's crash floor. The engine
+    // projects I/O time from its own measured B/s, so the number's job is to be RIGHT about the
+    // lane, not conservative. Streamed lanes re-read the sweep every step; resident lanes read once.
+    var rdC = LTX2Configuration(family: .ltx25, profile: .compact24)
+    rdC.quant = .int8
+    var rdS = LTX2Configuration(family: .ltx25, profile: .standard64)
+    rdS.quant = .int8
+    var rdM = LTX2Configuration(family: .ltx25, profile: .max128)
+    rdM.quant = .bf16
+    var rd23 = LTX2Configuration(profile: .standard64)
+    rd23.quant = .int8
+    let rC: UInt64? = rdC.expectedWeightReadBytesPerRunHint
+    let rS: UInt64? = rdS.expectedWeightReadBytesPerRunHint
+    let rM: UInt64? = rdM.expectedWeightReadBytesPerRunHint
+    let r23: UInt64? = rd23.expectedWeightReadBytesPerRunHint
+    check("48 compact24 streamed = one-stage 8 steps x 18.37 GiB sweep (~158 GB/clip)",
+          rC == 19_724_000_000 * 8, show(rC))
+    check("49 standard64 streamed = TWO-stage 11 steps — the sigma schedule, not a guess",
+          rS == 19_724_000_000 * 11, show(rS))
+    // max128 does NOT stream (profile advice), so it reads its checkpoint ONCE. If this ever
+    // returns a per-step multiple, the streamed/resident branch has been inverted.
+    check("50 max128 is RESIDENT — reads the bf16 checkpoint once, not 11 sweeps",
+          rM == 37_990_000_000, show(rM))
+    check("51 2.3 declares no read hint — the sweep numbers are 2.5-measured (family-keyed)",
+          r23 == nil, show(r23))
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (47/47)"
+          ? "[ltx25-package-gate] PASS ✅ (51/51)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
