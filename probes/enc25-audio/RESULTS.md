@@ -51,18 +51,48 @@ more than **what** is said.
 and two different-but-equally-good renderings also correlate ~0. Suggestive of dose-response; one
 sentence, three points. Not banked.
 
-## NOT established — this is what decides the tier
+## ✅ OPERATOR VERDICT — blind, and the calibration arm answered the strong way (AB-D-0037)
 
-**Voice quality, naturalness and speaker plausibility.** WER structurally cannot see them, and this
-run proves it: the metric cannot separate bf16 from an encoder we rejected.
+> *"All 12 clips are great both visually and audio for clarity. I couldn't pick favorites from any
+> of the sets and there were visual and audio differences that were different but didn't evoke any
+> quality change."*
 
-Blind set: `~/Desktop/ltx25-enc-BLIND/` — 12 clips, `setN-A..D`, arm order shuffled per set, key
-withheld until after the verdict.
+**No arm preferred. No arm identifiable — poison included.** The clips genuinely differ (the
+operator says so, and the audio correlations and frame hashes agree); the differences carry no
+quality signal.
 
-🔑 **The poison arm is now a CALIBRATION arm, worth more than its original role.** Cannot tell it
-from bf16 by ear → encoder precision does not matter for audio, q8 trivially safe. Can tell it →
-the ear discriminates, and q8's position on that scale is the answer. Either way it is decisive,
-which is exactly what the WER leg failed to be.
+Pre-registered branch: *cannot tell poison from bf16 → encoder precision does not matter for audio,
+q8 trivially safe.* That is the branch that fired. **Both instruments now agree** — WER cannot
+separate the arms, and neither can the ear.
+
+✅ **int8 is CLEARED for speech.** AB-D-0035's auto-follow is validated on the audio axis, not just
+the video one. Phase 1's load-bearing gap is closed.
+
+## ⚠️ SCOPE — this does NOT license q4 generally, and the limit is in the test design
+
+**The prompts specified almost no visual content**: *"a person looks directly at the camera and says
+clearly: <sentence>"*. Verified by inspection — bf16 and poison both produce a talking head square
+to camera, differing only in background and face. That is the easiest possible adherence test.
+
+🔑 **A degraded encoder's failure mode is not ugliness, it is IGNORING THE PROMPT**, and a
+quality-preference judgement structurally cannot see that — the same distinction AB-R-0104 drew
+between preference and similarity. **Visual adherence under a degraded encoder remains untested**;
+AB-R-0104 (q8 only, real visual prompts) is still the evidence on the video axis.
+
+## 📋 OPPORTUNITY — the q4 encoder rejection deserves re-examination (NOT reversal)
+
+int4 was rejected on the connector gate (0.996728 vs a 0.999 bar) and **never perceptually tested**.
+It now has its first perceptual evidence — indistinguishable, blind — on a narrow prompt class.
+
+Why it is worth chasing: **under STREAMING the encoder is the binding memory term** — that is what
+took compact24 from 24.79 GB (bf16 encoder) to 14.57 (int8). q4 is **7.6 GB vs q8's 13 GB**, so it
+could directly relieve **compact24 i2v's 92%-of-budget thinness**.
+
+⚠️ Do not reverse on this receipt. Missing: an A/B on **visually specified** prompts judging
+**ADHERENCE**; the actual tier measurement (under eviction the encoder is largely outside the peak —
+AB-R-0034 measured int8 moving the resident-DiT peak by 0.18 GB — only the STREAMED regime makes it
+binding); and the cross-project rejection of the same problem class in `qwen-image-edit-swift`
+still stands.
 
 ## Reproducing
 
