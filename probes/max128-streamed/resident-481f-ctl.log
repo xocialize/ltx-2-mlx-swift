@@ -1,0 +1,8 @@
+[t2v-spot25] request 704×512×481f bf16 · tier=max128 · DiT lane: RESIDENT · encoder: ltx-2.5-mlx · mode: t2v · gate: auto
+[t2v-spot25] prewarm 8.5s (12 files)
+[t2v-spot25] phys-after-load=39.85 GB · post-run retain=0.44 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 554.3s  mp4 6.7 MB
+[t2v-spot25] SPLIT lane=RESIDENT mode=t2v quant=bf16 enc=bf16 · resident(held)=0.44 GB act=48.15 GB peak=48.60 GB · [afterLoad=39.85 retain=0.44 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.44 GB peakActivationBytes=48.15 GB
+[t2v-spot25] ACCEPTANCE tier=max128 budget=89.60 GB · measured stage-max 48.60 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point
