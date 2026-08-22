@@ -58,7 +58,21 @@ let package = Package(
         // removed; `ConvertibleToGeneratedContent` replaced the old dictionary type) and
         // upstream has not caught up, so leaving the trait on fails the build of an
         // adapter we never link. Upstream anticipated exactly this and made it a trait.
-        .package(path: "../mlx-swift-lm", traits: []),
+        // 🚨 URL + REVISION, NOT a path dep — a path dependency makes this package externally
+        // UNCONSUMABLE. Demonstrated 2026-08-22 (AB-T-0073): a fresh consumer resolving this repo
+        // fails with "package 'ltx-2-mlx-swift' is required using a revision-based requirement and
+        // it depends on local package 'mlx-swift-lm', which is not supported" — not by version, not
+        // by branch. That blocked consumer-app scaffolding outright.
+        //
+        // Pinned to a SHA, not a branch: `1441444` is upstream main and CONTAINS the Gemma-4 SPI
+        // (#530 / d667610, verified an ancestor). No release tag carries it yet — 3.31.4 predates
+        // both #530 and #387 — so a revision pin is the only way to get a consumable dependency.
+        // ⚠️ A fork-and-tag would be WORSE here, not better: SPM permits `unsafeFlags` in
+        // branch/revision-pinned deps but FORBIDS them in version-pinned ones, and mlx-swift-lm
+        // carries upstream's `unsafeFlags(["-w"])` (f1573a9/#334, not ours). Tagging would walk
+        // into that wall; a revision pin steps around it. Revert to a plain tag only once upstream
+        // ships one — and re-test consumability when doing so.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", revision: "1441444", traits: []),
         // mlx-swift-lm 3.x decoupled the HF stack — the consumer provides these for
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
