@@ -70,3 +70,62 @@ bring the same clip to **~95–100 GB**: a boundary row becoming a comfortable o
 with the budget rate deciding whether the governor agrees.
 
 ⚠️ Wall time at HD under streaming is **unmeasured**. Never quote the memory win without it.
+
+
+---
+
+# 10s MEASURED — 720p and 1080p (2026-08-22, AB-R-0118)
+
+Fresh boot, serial, interleaved. `LTX_ENVELOPE_OVERRIDE=1` throughout — **no acceptance numbers**.
+Every streamed arm verified STREAM from its last gate line; every `request` line verified at the
+geometry asked for.
+
+| arm | lane | peak | wall |
+|---|---|---|---|
+| 720p 241f streamed ×2 | STREAM | **44.94 / 44.86** | 926 / 977 s |
+| 720p 241f **resident** | resident | **50.79** | 875 s |
+| 1080p 241f streamed ×2 | STREAM | **97.54 / 96.96** | 3212 / 3353 s |
+
+## ✅ Falsification test PASSED
+
+Predicted ~43.7 GB for 10s@720p from frame-amortisation; **measured 44.94** — 121f → 241f costs
+**+1.24 GB for 2× frames**. Model holds. The 1080p projection (95–100) was likewise accurate at
+**97.54**.
+
+## 🚨 1080p landed in the MIDDLE band — AB-T-0076 provably gates the verdict
+
+| rate | budget | 97.54 |
+|---|---|---|
+| 0.7× | 89.6 | ❌ OVER by 7.9 |
+| 0.85× | 108.8 | ✅ WITHIN by 11.3 |
+
+Measuring did **not** dissolve the dependency. ⚠️ Which makes AB-T-0076's "do not pick the number
+that makes 1080p pass" warning more important, not less.
+
+## ⟲ RETRACTED — "streaming is worth ~37 GB at 720p"
+
+That compared 2.5-streamed against **LTX-2.3's** 80.36 GB receipt, which **predates
+`evictDiTBeforeDecode` on every tier** (2026-08-13) — two levers, not one.
+
+**Controlled, same binary, one variable: 50.79 resident vs 44.94 streamed = 5.85 GB.** The other
+~31 GB was DiT eviction, which both arms already get.
+
+🔑 **The benefit shrinks as resolution rises** — 20.5 GB at 704×512 (45.29→24.81), 5.85 GB at 720p.
+Streaming removes WEIGHTS, and as resolution grows the peak migrates from denoise (DiT resident) to
+decode (DiT already evicted), where there is no weight left to remove.
+
+⚠️ **What streaming buys at 1080p is UNMEASURED** — the resident 1080p arm was skipped deliberately
+(~134 GB on a 137 GB box, unattended). Do not claim a streaming win at 1080p.
+
+## Wall time — indicative only
+
+1080p **~54 min** vs 2.3's 51.9 min. Fresh boot is the worst case for timing and n=1 per arm; the
+720p reps (926/977 s) straddle the resident arm (875 s) closely enough that **no timing claim
+survives**. Same order as 2.3, never a delta.
+
+## Claim status
+
+- ✅ **10s@720p ≈ 45 GB — comfortable on max128 under either rate.** Quotable.
+- ⏸️ **10s@1080p = 97.54 GB — runs, and fits the MACHINE with ~39 GB spare** (2.3 had 4.3). Whether it
+  fits the TIER is AB-T-0076's call.
+- ❌ The ~37 GB streaming claim is retracted.
