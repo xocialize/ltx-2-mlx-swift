@@ -478,8 +478,38 @@ func ltx25PackageGate() {
     check("51 2.3 declares no read hint — the sweep numbers are 2.5-measured (family-keyed)",
           r23 == nil, show(r23))
 
+    // ── 53-56 · RUN STAGE PLAN (AB-R-0122; the pre-run list a stepper UI draws on first paint) ──
+    // 🚨 The plan's ONLY value is matching what the pipeline actually emits. These cases pin it
+    // against the MEASURED sequences (LTX_PROGRESS=1, 2026-08-22), so a pipeline change that adds
+    // or drops a phase fails here instead of silently desynchronising every host's stepper.
+    var planC = LTX2Configuration(family: .ltx25, profile: .compact24)
+    planC.quant = .int8
+    var planS = LTX2Configuration(family: .ltx25, profile: .standard64)
+    planS.quant = .int8
+    let idsOne: [String] = planC.plannedStages().map(\.id)
+    let idsTwo: [String] = planS.plannedStages().map(\.id)
+    // MEASURED one-stage: encode -> denoise -> decode -> postprocess
+    check("53 one-stage (compact24) plan matches the measured 4-phase sequence",
+          idsOne == ["encode", "denoise.1", "decode", "postprocess"], idsOne.joined(separator: ","))
+    // MEASURED two-stage: encode -> denoise(1/2) -> upsample -> denoise(2/2) -> decode -> postprocess
+    check("54 two-stage (standard64) plan matches the measured 6-phase sequence",
+          idsTwo == ["encode", "denoise.1", "upsample", "denoise.2", "decode", "postprocess"],
+          idsTwo.joined(separator: ","))
+    // i2v with an UNCACHED adapter must warn about the 4.93 GB in-run fetch (AB-R-0114) — a UI
+    // that omits it shows an unexplained stall.
+    let idsI2V: [String] = planS.plannedStages(initImage: true, adapterCached: false).map(\.id)
+    check("55 i2v with an uncached adapter prepends the fetch node",
+          idsI2V.first == "adapter" && idsI2V.count == idsTwo.count + 1, idsI2V.joined(separator: ","))
+    // ⚠️ Every phase the plan names must be one the progress plane can actually emit. An invented
+    // phase string would leave its node permanently un-lit.
+    let known: Set<String> = ["encode", "denoise", "upsample", "decode", "postprocess", "generate"]
+    let named: [String] = (planC.plannedStages() + planS.plannedStages()).compactMap(\.phase)
+    let unknown: [String] = named.filter { !known.contains($0) }
+    check("56 every planned phase is one RunProgress can emit (no invented phase names)",
+          unknown.isEmpty, unknown.isEmpty ? "all known" : unknown.joined(separator: ","))
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (52/52)"
+          ? "[ltx25-package-gate] PASS ✅ (56/56)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
