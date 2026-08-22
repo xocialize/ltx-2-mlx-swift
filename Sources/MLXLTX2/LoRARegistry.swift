@@ -43,6 +43,20 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     /// IC adapter also appends a reference-AUDIO stream (LipDub): the wrapper builds it from
     /// `ic.dubAudioPath` (falling back to the reference video's own track).
     public let audioReference: Bool?
+    /// Model families this adapter has been MEASURED to apply cleanly on, e.g. `["ltx-2.3",
+    /// "ltx-2.5"]`. Absent → assume the registry's top-level `base` only (2.3).
+    ///
+    /// 🔑 "Cleared" means the runtime low-rank ADD resolves real dense-key targets, changes the
+    /// output, and DETACHES exactly (`--lora-gate25`, AB-A-0015). ⚠️ It does **not** mean the
+    /// adapter's artistic effect was judged good on that family — that is a perceptual question
+    /// and remains the operator's. A host may safely OFFER a cleared adapter; it should not claim
+    /// the result is equivalent across families.
+    public let clearedFamilies: [String]?
+
+    /// Whether this adapter is cleared for a family (absent list → 2.3 only).
+    public func isCleared(for family: String) -> Bool {
+        clearedFamilies?.contains(family) ?? (family == "ltx-2.3")
+    }
 
     /// Effective input kind (absent → `.none`).
     public var inputKind: LoRAInputKind { input ?? .none }
@@ -53,7 +67,8 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
     public init(id: String, displayName: String, repo: String, weightFile: String,
                 defaultStrength: Float, trigger: String, input: LoRAInputKind? = nil,
                 kind: String? = nil, referenceDownscale: Int? = nil, stage2: String? = nil,
-                licenseGated: Bool? = nil, audioReference: Bool? = nil) {
+                licenseGated: Bool? = nil, audioReference: Bool? = nil,
+                clearedFamilies: [String]? = nil) {
         self.id = id
         self.displayName = displayName
         self.repo = repo
@@ -66,6 +81,7 @@ public struct LoRAEntry: Codable, Sendable, Equatable {
         self.stage2 = stage2
         self.licenseGated = licenseGated
         self.audioReference = audioReference
+        self.clearedFamilies = clearedFamilies
     }
 }
 

@@ -2395,6 +2395,11 @@ if args.contains("--connector-gate") {
     try ditPerTokenGate()
 } else if args.contains("--dit-full-gate") {
     try ditFullGate()
+} else if args.contains("--lora-gate25") {
+    // AB-A-0015: does a 2.3-authored runtime LoRA apply on the 2.5 DiT?
+    // usage: --lora-gate25 <lora.safetensors> [bf16|ditq8]
+    try loraGate25(loraPath: positional.first ?? "/Volumes/Satechi/Models/ltx-lora-cache/transition.safetensors",
+                   quant: positional.count > 1 ? positional[1] : "bf16")
 } else if args.contains("--lora-gate") {
     try loraGate(loraPath: positional.first ?? "/tmp/ltx_transition_lora.safetensors")
 } else if args.contains("--vae-decode-gate") {

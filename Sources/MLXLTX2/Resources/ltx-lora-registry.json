@@ -11,18 +11,26 @@
       "repo": "joyfox/LTX-2.3-Transition-LORA",
       "weightFile": "ltx2.3-transition.safetensors",
       "defaultStrength": 1.0,
-      "trigger": "zhuanchang"
+      "trigger": "zhuanchang",
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "omnicine",
-      "displayName": "OmniCine — dynamic cinematic motion (Singularity)",
+      "displayName": "OmniCine \u2014 dynamic cinematic motion (Singularity)",
       "kind": "plain",
       "status": "verified",
       "license": "apache-2.0",
       "repo": "WarmBloodAban/Singularity-LTX-2.3_OmniCine_V1",
       "weightFile": "Singularity-LTX-2.3_OmniCine_V1.safetensors",
       "defaultStrength": 1.0,
-      "trigger": ""
+      "trigger": "",
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "fantasy-anime",
@@ -33,11 +41,15 @@
       "repo": "vrgamedevgirl84/LTX_2.3_Fantasy_Anime_Style_LoRa",
       "weightFile": "Fantasy_Anime.safetensors",
       "defaultStrength": 1.0,
-      "trigger": "f4nt4sy4n1m6"
+      "trigger": "f4nt4sy4n1m6",
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "i2v-adapter",
-      "displayName": "Image→Video adapter (MachineDelusions)",
+      "displayName": "Image\u2192Video adapter (MachineDelusions)",
       "kind": "plain",
       "status": "verified",
       "license": "unspecified-community",
@@ -52,8 +64,12 @@
           "media": "image",
           "required": false,
           "ingest": "initImage",
-          "note": "first-frame anchor — rides the base model's i2v path (not IC reference tokens)"
+          "note": "first-frame anchor \u2014 rides the base model's i2v path (not IC reference tokens)"
         }
+      ],
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
       ]
     },
     {
@@ -74,9 +90,13 @@
         "targetsApplied": "1632/1632",
         "audioBranch": true,
         "loraGate": "PASS (on 0.783/off 0.99991/detach 1.0, finite, vmax 5.07)",
-        "note": "Card base_model tag says Lightricks/LTX-Video but header ss_base_model_version=ltx2 (ai-toolkit, 1000 steps/19 epochs) — real joint-AV LTX-2 arch; first PLAIN adapter with a full audio branch. License RESOLVED 2026-07-09 (repo discussion #2): author confirmed the LoRA is a derivative of LTX-2.3 under the LTX-2 Community License; full agreement text added upstream as LICENSE.txt (card frontmatter still says 'other'). Public repo, no gatedDownload. Card recommends i2v (initImage) to preserve product logos/text; t2v usable.",
-        "perceptualPass": "PASS 2026-07-08 (Xcode agent) — i2v @0.85, bf16 704x512x121 seed 42, run 153.6s peak 65.3GB. ALT. Executive No.26 bottle: chrome cap, ALT. wordmark, EXECUTIVE NO.26 / EXTRAIT DE PARFUM label text and TikTok badge preserved and legible across all 121 frames; plain white bg transformed to dark studio product-hero look with reflective surface + warm key light; coherent camera/botanical motion, no product warping; AAC audio track generated (audio branch). Status flipped pending-gate-acceptance -> verified."
-      }
+        "note": "Card base_model tag says Lightricks/LTX-Video but header ss_base_model_version=ltx2 (ai-toolkit, 1000 steps/19 epochs) \u2014 real joint-AV LTX-2 arch; first PLAIN adapter with a full audio branch. License RESOLVED 2026-07-09 (repo discussion #2): author confirmed the LoRA is a derivative of LTX-2.3 under the LTX-2 Community License; full agreement text added upstream as LICENSE.txt (card frontmatter still says 'other'). Public repo, no gatedDownload. Card recommends i2v (initImage) to preserve product logos/text; t2v usable.",
+        "perceptualPass": "PASS 2026-07-08 (Xcode agent) \u2014 i2v @0.85, bf16 704x512x121 seed 42, run 153.6s peak 65.3GB. ALT. Executive No.26 bottle: chrome cap, ALT. wordmark, EXECUTIVE NO.26 / EXTRAIT DE PARFUM label text and TikTok badge preserved and legible across all 121 frames; plain white bg transformed to dark studio product-hero look with reflective surface + warm key light; coherent camera/botanical motion, no product warping; AAC audio track generated (audio branch). Status flipped pending-gate-acceptance -> verified."
+      },
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "sci-fi-cinema",
@@ -96,13 +116,17 @@
         "targetsApplied": "1632/1632",
         "audioBranch": true,
         "loraGate": "PASS (on 0.709/off 0.99991/detach 1.0, finite, vmax 4.45)",
-        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' — metadata wins. License RESOLVED 2026-07-09: LTX-2 Community per the author's product-ad discussion #2 statement ('same stance applies to my other LTX-2.3 based LoRA/checkpoint work'); LICENSE.txt (full agreement text) added upstream. Public repo, no gatedDownload. Card strength range 0.6-1.1 → default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass.",
-        "perceptualPass": "PASS 2026-07-08 (Xcode agent) — t2v @0.85, bf16 704x512x121 seed 42, run 90.1s peak 65.6GB, NEON TOKYO 2077 cityscape prompt. Strong cyberpunk/neon sci-fi grading, futuristic megacity with holographic signage + wet reflective streets, coherent aerial motion no warping; in-scene text partial ('2077' billboard legible, word-signs stylized as typical for diffusion); AAC audio generated (audio branch). Status flipped pending-gate-acceptance -> verified."
-      }
+        "note": "Second SOLRICKS joint-AV plain adapter (same recipe as product-ad: ai-toolkit, rank 16, full audio branch; ss_base_model_version=ltx2, 1000 steps/28 epochs). TRIGGER: card table says 'srx_scifilm' but ss_tag_frequency + the card's own example prompts say 'srx_scififilm' \u2014 metadata wins. License RESOLVED 2026-07-09: LTX-2 Community per the author's product-ad discussion #2 statement ('same stance applies to my other LTX-2.3 based LoRA/checkpoint work'); LICENSE.txt (full agreement text) added upstream. Public repo, no gatedDownload. Card strength range 0.6-1.1 \u2192 default 0.85. Repo's two weight files share sshs_model_hash (identical step-1000 checkpoint); using the card-suggested filename. t2v style LoRA (futuristic cities, spacecraft, cyberpunk, holograms); card sample prompts available for the perceptual pass.",
+        "perceptualPass": "PASS 2026-07-08 (Xcode agent) \u2014 t2v @0.85, bf16 704x512x121 seed 42, run 90.1s peak 65.6GB, NEON TOKYO 2077 cityscape prompt. Strong cyberpunk/neon sci-fi grading, futuristic megacity with holographic signage + wet reflective streets, coherent aerial motion no warping; in-scene text partial ('2077' billboard legible, word-signs stylized as typical for diffusion); AAC audio generated (audio branch). Status flipped pending-gate-acceptance -> verified."
+      },
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "lipdub",
-      "displayName": "LipDub — audio-driven lip re-animation (Lightricks)",
+      "displayName": "LipDub \u2014 audio-driven lip re-animation (Lightricks)",
       "kind": "ic",
       "status": "verified",
       "license": "LTX-2-community",
@@ -145,7 +169,7 @@
     },
     {
       "id": "ingredients",
-      "displayName": "Ingredients — reference-sheet consistency (Lightricks)",
+      "displayName": "Ingredients \u2014 reference-sheet consistency (Lightricks)",
       "kind": "ic",
       "status": "verified",
       "license": "LTX-2-community",
@@ -166,7 +190,7 @@
           "group": "sheet",
           "ingest": "loopedStillVideo",
           "describable": true,
-          "describeNote": "describe the sheet's elements (characters, props, location) — feeds the 'Reference sheet:' half of the prompt",
+          "describeNote": "describe the sheet's elements (characters, props, location) \u2014 feeds the 'Reference sheet:' half of the prompt",
           "note": "ONE finished composite sheet (clean panels, black bg, no text); tiled to >=121 frames matching output length. Alternative: provide subject_images and the app builds the sheet."
         },
         {
@@ -176,7 +200,7 @@
           "required": false,
           "group": "sheet",
           "ingest": "sheetBuilder",
-          "note": "up to 6 character/prop images — composed into a sheet (native-aspect top-row panels, black gutters, built oversized ~1456x825 then downscaled); per-image descriptions feed the dual-part prompt"
+          "note": "up to 6 character/prop images \u2014 composed into a sheet (native-aspect top-row panels, black gutters, built oversized ~1456x825 then downscaled); per-image descriptions feed the dual-part prompt"
         },
         {
           "role": "location_image",
@@ -198,15 +222,15 @@
         "targetsApplied": "480/480",
         "audioBranch": false,
         "loraGate": "PASS (on 0.833/off 0.99991/detach 1.0, finite)",
-        "note": "card says dev-base-trained — perceptual verify on distilled at P3",
+        "note": "card says dev-base-trained \u2014 perceptual verify on distilled at P3",
         "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit",
         "liveGate": "IC-P3-FIXTURE PASS 2026-07-03 (768x448x121 seed42 bf16, Unconstrained): identity transfer STRONG (hair/suit/stripe/harness match the sheet, frame-consistent), no layout bleed, action+audio synced, no sheet-text bleed. Blemish (non-blocking, base-model quirk): quoted dialogue burned in as a small caption. SPLIT: floor 40.19 / peak 79.58 / act 39.39 GB, run 434s (IC seq = target+ref tokens, one full-res stage). Artifacts: LTX_TESTING/fixtures/ic-p3-result-bf16-768x448-121f.mp4",
-        "int4Datum": "2026-07-03 same geometry: floor 13.52 / act 38.65 / peak 52.17 GB — IC ACTIVATION IS QUANT-INDEPENDENT (~39 GB bf16 AND int4; it is reference-token activation, not weights). Quant lowers the floor, never the activation ceiling."
+        "int4Datum": "2026-07-03 same geometry: floor 13.52 / act 38.65 / peak 52.17 GB \u2014 IC ACTIVATION IS QUANT-INDEPENDENT (~39 GB bf16 AND int4; it is reference-token activation, not weights). Quant lowers the floor, never the activation ceiling."
       }
     },
     {
       "id": "union-control",
-      "displayName": "Union Control — pose/depth/canny structural control (Lightricks)",
+      "displayName": "Union Control \u2014 pose/depth/canny structural control (Lightricks)",
       "kind": "ic",
       "status": "gate-verified",
       "license": "LTX-2-community",
@@ -225,7 +249,7 @@
           "required": true,
           "ingest": "videoClip",
           "defaultStrength": 1.0,
-          "note": "extracted control-signal clip — pose skeleton render, depth map, or canny edges; the active signal is chosen by WHICH extraction you feed (union adapter accepts all three). Reference runs at 0.5x output resolution (referenceDownscale 2 — embedded in the checkpoint metadata)."
+          "note": "extracted control-signal clip \u2014 pose skeleton render, depth map, or canny edges; the active signal is chosen by WHICH extraction you feed (union adapter accepts all three). Reference runs at 0.5x output resolution (referenceDownscale 2 \u2014 embedded in the checkpoint metadata)."
         }
       ],
       "verification": {
@@ -243,7 +267,7 @@
     },
     {
       "id": "cameraman-v2",
-      "displayName": "Cameraman v2 — camera-motion transfer (Cseti)",
+      "displayName": "Cameraman v2 \u2014 camera-motion transfer (Cseti)",
       "kind": "ic",
       "status": "eval-only",
       "license": "research-only-noncommercial",
@@ -262,7 +286,7 @@
           "required": true,
           "ingest": "videoClip",
           "defaultStrength": 1.0,
-          "note": "raw video carrying the desired camera motion — NO extractor; >=960x512 recommended for reliable transfer"
+          "note": "raw video carrying the desired camera motion \u2014 NO extractor; >=960x512 recommended for reliable transfer"
         },
         {
           "role": "init_image",
@@ -280,7 +304,7 @@
         "targetsApplied": "480/480",
         "audioBranch": false,
         "loraGate": "PASS (on 0.786/off 0.99991/detach 1.0, finite)",
-        "functionalEval": "PASS 2026-07-03 (int4 768x448x121, video-clip reference via LTX_IC_TEST): camera tracking arc TRANSFERRED to a different prompt scene, coherent + prompt-adherent. SPLIT floor 12.23 / act 26.36 / peak 38.59 GB, run 72s warm. NOT card-faithful (ref below the >=960x512 rec; skip one-stage eval config vs declared clean) — quality pass pending a compliant reference. Status stays eval-only (license)."
+        "functionalEval": "PASS 2026-07-03 (int4 768x448x121, video-clip reference via LTX_IC_TEST): camera tracking arc TRANSFERRED to a different prompt scene, coherent + prompt-adherent. SPLIT floor 12.23 / act 26.36 / peak 38.59 GB, run 72s warm. NOT card-faithful (ref below the >=960x512 rec; skip one-stage eval config vs declared clean) \u2014 quality pass pending a compliant reference. Status stays eval-only (license)."
       }
     }
   ]

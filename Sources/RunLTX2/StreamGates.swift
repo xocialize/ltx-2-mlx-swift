@@ -614,3 +614,70 @@ func streamBudgetGate(quant: String, videoN: Int, budgetGB: Double, steps: Int) 
         : "[stream-budget-gate] FAIL ❌ (peak above budget)")
     if !pass { exit(1) }
 }
+
+// MARK: - LoRA-on-2.5 gate (AB-A-0015)
+
+/// Does a 2.3-authored runtime LoRA apply cleanly on the **2.5** DiT?
+///
+/// 🔑 WHY A SEPARATE ARM. `--lora-gate` is hardcoded to 2.3: 2.3 weights and the 2.3 `dit_full`
+/// golden. It cannot answer this. The upstream family claim (LTX-2 / 2.3 / 2.5 are one
+/// 22B-distilled family, keys remapped) is a CLAIM — this measures it.
+///
+/// ⚠️ NO GOLDEN COMPARISON, deliberately. There is no 2.5 `dit_full` golden, and one is not needed:
+/// the DiT's own correctness is gated elsewhere (`--dit-tiny-kf25`, `--gemma4-gate`). The question
+/// here is narrower — does the low-rank ADD resolve the same dense-key targets after 2.5's deltas?
+/// So the un-LoRA'd forward IS the reference, which makes this self-contained.
+///
+/// The deciding number is **targets resolved**. 2.5 differs from 2.3 by 84 vs 86 keys/block
+/// (`ff_bias: false`) and 59 vs 58 globals (the keyframes embedding). If a 2.3 LoRA resolves ZERO
+/// targets the dialect does not carry; if it resolves the SAME count it does.
+func loraGate25(loraPath: String, quant: String) throws {
+    let base = "/Volumes/Satechi/Models/xocialize"
+    let tree = URL(fileURLWithPath: "\(base)/ltx-2.5-mlx")
+    let weights = quant == "ditq8"
+        ? URL(fileURLWithPath: "\(base)/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+        : tree.appendingPathComponent("transformer-distilled.safetensors")
+
+    print("[lora-gate25] lora: \(loraPath)")
+    print("[lora-gate25] DiT: \(weights.lastPathComponent) (\(quant))")
+    let inputs = try DiTInputs.forLTX25(tree: tree)
+    let dit = try DiT.load(weightsPath: weights, config: DiTConfig(), computeDtype: .bfloat16)
+
+    func fwd() -> (MLXArray, MLXArray) {
+        let (v, a) = ditAV(dit,
+            videoLatent: inputs.videoLatent, audioLatent: inputs.audioLatent, sigma: inputs.sigma,
+            videoText: inputs.videoText, audioText: inputs.audioText,
+            videoPositions: inputs.videoPositions, audioPositions: inputs.audioPositions,
+            keyframesMask: inputs.keyframesMask)
+        eval(v, a); return (v, a)
+    }
+
+    // 1. Baseline — the reference for this arm.
+    let (vBase, _) = fwd()
+
+    // 2. Apply. TARGETS RESOLVED is the architectural verdict.
+    try LTX2LoRA.apply(URL(fileURLWithPath: loraPath), strength: 1.0, to: dit)
+    let targets = dit.loraTargetCount
+    print("[lora-gate25] targets resolved: \(targets)")
+
+    let (vOn, aOn) = fwd()
+    let onVsBase = cosine(vOn, vBase)
+    let vMax = vOn.asType(.float32).max().item(Float.self)
+    let aMax = aOn.asType(.float32).max().item(Float.self)
+    let finite = vMax.isFinite && aMax.isFinite
+    print(String(format: "[lora-gate25] lora-ON vs base: video cosine=%.6f  finite=%@",
+                 onVsBase, finite ? "yes" : "no"))
+
+    // 3. Detach must restore EXACTLY — an add that does not fully reverse would poison any
+    //    subsequent generation in the same process, which is exactly what a UI picker does.
+    LTX2LoRA.detach(dit)
+    let (vOff2, _) = fwd()
+    let restoreCos = cosine(vOff2, vBase)
+    print(String(format: "[lora-gate25] detach vs base: video cosine=%.6f", restoreCos))
+
+    // ⚠️ `targets > 0` is the arch-fit bar. A LoRA that resolves nothing would "pass" a
+    // finite/detach check trivially while doing NOTHING — hence it is asserted first.
+    let pass = targets > 0 && finite && onVsBase < 0.9999 && restoreCos >= 0.99999
+    print(pass ? "[lora-gate25] PASS ✅" : "[lora-gate25] FAIL ❌")
+    if !pass { exit(1) }
+}
