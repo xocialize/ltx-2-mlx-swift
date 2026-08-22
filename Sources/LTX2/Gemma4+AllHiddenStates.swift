@@ -51,8 +51,16 @@ extension Gemma4TextModel {
         var states: [MLXArray] = [h]
         states.reserveCapacity(inner.config.numHiddenLayers + 1)
 
-        for layer in inner.layers {
+        // Per-layer progress. ENCODE is the longest SILENT stretch in a 2.5 run — a bf16 12B
+        // forward with no sub-reporting, which leaves a UI with nothing to animate against for
+        // tens of seconds. The loop already exists for the watchdog `eval` and the cancellation
+        // check, so the heartbeat is free: 48 steps at zero extra compute.
+        // ⚠️ Report BEFORE the layer runs, so step 1 lands immediately rather than after the
+        // first layer's latency — the point is liveness, not accounting.
+        let layerCount = inner.layers.count
+        for (layerIndex, layer) in inner.layers.enumerated() {
             try Task.checkCancellation()
+            LTX2Progress.report(.encode, step: layerIndex + 1, totalSteps: layerCount)
             // No per-layer inputs, no KV sharing, no position offset: the LTX checkpoint has
             // PLE, MoE and KV-sharing all disabled, so every layer is self-contained and the
             // returned shared-KV / offset values are unused.

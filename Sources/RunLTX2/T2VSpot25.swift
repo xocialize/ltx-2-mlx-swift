@@ -179,6 +179,19 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
                  warm.count, streamed ? ", transformer excluded by streamedBlocks" : ""))
 
     let sampler = PhysSampler(); sampler.start()
+    // LTX_PROGRESS=1 observes the ENGINE's RunProgress plane — deliberately NOT the core's
+    // LTX2Progress sink, which `MLXLTX25Package.run` rebinds for its own forwarding. Watching the
+    // engine plane proves the whole chain (core -> wrapper -> contract) and prints exactly what a
+    // UI would receive. Diagnostic only; unbound by default so gates and measurements are unchanged.
+    let wantProgress = ProcessInfo.processInfo.environment["LTX_PROGRESS"] == "1"
+    let progressSink: RunProgress.Sink = { r in
+        let n = r.phase.rawValue
+        var line = "[progress] \(n)"
+        if let s = r.step, let t = r.totalSteps { line += " \(s)/\(t)" } else { line += " (no sub-steps)" }
+        if let st = r.stage, let ts = r.totalStages { line += "  stage \(st)/\(ts)" }
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
     let pkg = MLXLTX25Package(configuration: cfg)
     try await pkg.load()
     Memory.clearCache()
@@ -217,7 +230,9 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
 
     sampler.resetMax()
     let r0 = Date()
-    let resp = try await pkg.run(request(frames)) as! T2VResponse
+    let resp = try await RunProgress.$sink.withValue(wantProgress ? progressSink : nil) {
+        try await pkg.run(request(frames))
+    } as! T2VResponse
     if let save = env["LTX_T2V_SAVE"], !save.isEmpty {
         try resp.video.data.write(to: URL(fileURLWithPath: (save as NSString).expandingTildeInPath))
     }

@@ -50,8 +50,12 @@ extension Gemma3Model {
         h = h * scale.asType(h.dtype)
 
         var states: [MLXArray] = [h]
-        for layer in layers {
+        // Per-layer progress, mirroring the 2.5 tap: the loop already exists for the watchdog
+        // eval and the cancellation check, so the encode heartbeat costs nothing.
+        let layerCount = layers.count
+        for (layerIndex, layer) in layers.enumerated() {
             try Task.checkCancellation()
+            LTX2Progress.report(.encode, step: layerIndex + 1, totalSteps: layerCount)
             h = layer(h, mask: mask, cache: nil)
             // Per-layer materialization keeps each Metal command buffer below the
             // macOS GPU watchdog (~10s) — without it, all layers fuse into one
