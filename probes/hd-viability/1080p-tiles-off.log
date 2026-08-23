@@ -1,0 +1,19 @@
+[t2v-spot25] request 1920×1088×241f bf16 · tier=max128 · DiT lane: STREAMED · encoder: ltx-2.5-mlx · mode: t2v · gate: auto
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/bf16
+[t2v-spot25] prewarm 2.7s (11 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1920x1088). MEASUREMENT ONLY; not an acceptance number.
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+[BlockStreamer] gate: N=4089 · S=5.14 GiB/s vs C(N)=3.97 GiB/s → N_min≈3159 → STREAM (hidden)
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1920x1088). MEASUREMENT ONLY; not an acceptance number.
+[t2v-spot25] phys-after-load=5.88 GB · post-run retain=0.80 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+[BlockStreamer] gate: N=63491 · S=4.99 GiB/s vs C(N)=0.05 GiB/s → N_min≈597 → STREAM (hidden)
+[t2v-spot25] run 3056.1s  mp4 17.9 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=bf16 enc=bf16 · resident(held)=0.80 GB act=96.36 GB peak=97.16 GB · [afterLoad=5.88 retain=0.80 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.80 GB peakActivationBytes=96.36 GB
+[t2v-spot25] ACCEPTANCE tier=max128 budget=89.60 GB · measured stage-max 97.16 GB → ❌ OVER
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

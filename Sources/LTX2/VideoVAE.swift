@@ -82,7 +82,23 @@ public struct VideoVAEDecoder {
     /// architectural spatial RF = 15.12 latent cells/side; halo 16 is BIT-EXACT (max|Δ|=0 — MLX
     /// convs are shape-invariant across window widths here); influence decays fast, so small halos
     /// are perceptually exact: halo 4 → 67.8 dB min seam PSNR, halo 5 → 74.0 dB (temporal chunking
-    /// shipped at 66.2 dB). Default halo 5. ⚠️ The lever is 4K-only by arithmetic: at 704×512 the
+    /// shipped at 66.2 dB). Default halo 5.
+    ///
+    /// ⟲ **"4K-only" is RETIRED (2026-08-23, AB-D-0041) — MEASURED at 1080p: −47% peak at 121f
+    /// (93.68 → 49.30 GB) and −38% at 241f, perceptually cleared by the operator with SSIM 0.999193
+    /// / PSNR 58.19 dB.** At 121f untiled is OVER budget and tiled is within by 40 GB, so here
+    /// tiling is a PRECONDITION, not an optimisation.
+    /// 🔑 The old note reasoned from the WINDOW-WIDTH fraction (a 2-tile split of a 60-cell axis
+    /// still spans ~67% of it) and concluded "marginal". But peak tracks tile **AREA** — 2×2 gives
+    /// ~53% of the grid's cells — so one-axis reasoning about a two-dimensional quantity
+    /// understated the benefit by roughly the square.
+    /// ⚠️ Scope of the clearance: **2×2 only, 1080p only, halo 5 only** (halo 16 is unavailable
+    /// there — a 62-cell window against a 60-cell axis), one prompt, one seed. Costs ~9–18% wall,
+    /// measured but not claimed (fresh boot, n=1).
+    ///
+    /// The ORIGINAL arithmetic below is still correct about what it measured — whether tiling pays
+    /// for its halo OVERHEAD — which is a different question from how much peak it removes:
+    /// at 704×512 the
     /// latent (22×16) is smaller than the bit-exact halo, and even at halo 5 tiling only pays once
     /// window ≪ grid — 1080p is marginal, 4K (120×68) is the target. Crop math is pure (no
     /// temporal analog of drop-first): latent window [w0, w0+win) → keep px [32·(a−w0), 32·(a−w0)
