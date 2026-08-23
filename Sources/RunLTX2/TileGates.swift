@@ -39,6 +39,8 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
     }
     if args.contains("--vae-rf-probe") {
         try vaeRFProbe(pruna: pruna)
+    } else if args.contains("--retake-mask-gate") {
+        try retakeMaskGate()
     } else if args.contains("--vae-encode-tile-probe") {
         try vaeEncodeTileProbe()
     } else if args.contains("--vae-encode-tile-gate") {
@@ -519,4 +521,62 @@ func vaeEncodeTileGate() throws {
     let pass = idMax == 0 && cosSpatial >= 0.999 && cosTemporal >= 0.995 && cosPoison < 0.95
     print(pass ? "[vae-encode-tile-gate] PASS ✅" : "[vae-encode-tile-gate] FAIL ❌")
     if !pass { exit(1) }
+}
+
+// MARK: - --retake-mask-gate (pure, no weights — AB-R-0133 piece 2)
+
+/// Pins the span→mask derivation to the oracle's TemporalRegionMask semantics: a token is
+/// regenerated iff its START time ∈ [start, end). Boundary indices are asserted EXACTLY —
+/// hand-derived from the causal frame math — so an off-by-one (midpoint instead of start,
+/// inclusive end, feather applied twice) fails on the specific index it corrupts.
+func retakeMaskGate() throws {
+    var failures: [String] = []
+    func check(_ name: String, _ ok: Bool, _ detail: String) {
+        print("[retake-mask-gate] \(ok ? "✅" : "❌") \(name) — \(detail)")
+        if !ok { failures.append(name) }
+    }
+
+    // VIDEO: F=16 latent, H=W=2, fps 24, span [1.0, 3.0).
+    // Latent frame k starts at pixel frame max(8k−7, 0) → seconds (8k−7)/24 for k≥1, 0 for k=0.
+    // ≥1.0 ⇒ 8k−7 ≥ 24 ⇒ k ≥ 4;  <3.0 ⇒ 8k−7 < 72 ⇒ k ≤ 9.  So frames 4…9 → 6×4 = 24 tokens.
+    let vm = RetakeMask.videoSpan(F: 16, H: 2, W: 2, fps: 24, start: 1.0, end: 3.0)
+    let vFlat = vm.reshaped(16, 4)
+    let perFrame = vFlat.sum(axis: 1)   // (16,) tokens set per latent frame
+    eval(perFrame)
+    let counts = (0 ..< 16).map { perFrame[$0].item(Float.self) }
+    check("video span [1,3) selects latent frames 4…9 exactly",
+          counts == [0,0,0,0, 4,4,4,4,4,4, 0,0,0,0,0,0],
+          "perFrame=\(counts.map { Int($0) })")
+
+    // AUDIO: T=100 (4 s at 25 tok/s), span [1.0, 3.0).
+    // Token i starts at max(4i−3,0)·160/16000 s. ≥1.0 ⇒ i ≥ 26; <3.0 ⇒ i ≤ 75. Count 50.
+    let am = RetakeMask.audioSpan(tokens: 100, start: 1.0, end: 3.0)
+    eval(am)
+    let aTotal = am.sum().item(Float.self)
+    let aFirst = am[0, 26, 0].item(Float.self), aBefore = am[0, 25, 0].item(Float.self)
+    let aLast = am[0, 75, 0].item(Float.self), aAfter = am[0, 76, 0].item(Float.self)
+    check("audio span [1,3) selects tokens 26…75 exactly",
+          aTotal == 50 && aFirst == 1 && aBefore == 0 && aLast == 1 && aAfter == 0,
+          "total=\(Int(aTotal)) edges=(\(Int(aBefore)),\(Int(aFirst))…\(Int(aLast)),\(Int(aAfter)))")
+
+    // Degenerate spans: whole clip / empty.
+    let vAll = RetakeMask.videoSpan(F: 4, H: 1, W: 1, fps: 24, start: 0, end: 1e9)
+    let vNone = RetakeMask.videoSpan(F: 4, H: 1, W: 1, fps: 24, start: 5, end: 5)
+    eval(vAll, vNone)
+    check("whole-span → all ones, empty span → all zeros",
+          vAll.sum().item(Float.self) == 4 && vNone.sum().item(Float.self) == 0,
+          "all=\(vAll.sum().item(Float.self)) none=\(vNone.sum().item(Float.self))")
+
+    // Frame 0 is the causal image frame (start time 0): a span starting at 0 must include it,
+    // a span starting anywhere >0 must not — the boundary the causal fix exists for.
+    let v0 = RetakeMask.videoSpan(F: 4, H: 1, W: 1, fps: 24, start: 0, end: 0.01)
+    let v1 = RetakeMask.videoSpan(F: 4, H: 1, W: 1, fps: 24, start: 0.001, end: 1)
+    eval(v0, v1)
+    check("causal frame 0: included iff start == 0",
+          v0[0, 0, 0].item(Float.self) == 1 && v1[0, 0, 0].item(Float.self) == 0,
+          "start0=\(v0[0, 0, 0].item(Float.self)) start>0=\(v1[0, 0, 0].item(Float.self))")
+
+    print(failures.isEmpty ? "[retake-mask-gate] PASS ✅ (4/4)"
+                           : "[retake-mask-gate] FAIL ❌ \(failures.count)")
+    if !failures.isEmpty { exit(1) }
 }

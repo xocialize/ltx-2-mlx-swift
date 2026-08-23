@@ -2511,7 +2511,7 @@ if args.contains("--connector-gate") {
     benchVerdictSelfTest()   // BenchAnalysis.swift: v2 verdict logic vs the harness's past failures
 } else if args.contains("--bench-e2e") {
     try await benchE2E()
-} else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") || args.contains("--vae-mux-bench") || args.contains("--vae-encode-tile-gate") || args.contains("--vae-encode-tile-probe") {
+} else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") || args.contains("--vae-mux-bench") || args.contains("--vae-encode-tile-gate") || args.contains("--vae-encode-tile-probe") || args.contains("--retake-mask-gate") {
     try await tileGatesMain(args: args, positional: Array(positional))  // TileGates.swift (spatial tiling)
 } else if args.contains("--t2v-spot") {
     let ints = positional.compactMap { Int($0) }
