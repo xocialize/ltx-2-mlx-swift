@@ -129,8 +129,22 @@ public final class MLXLTX25Package: ModelPackage {
                         + "Joint audio-video DiT with a Gemma-4 12B text encoder, a 128-ch video VAE, "
                         + "and a BigVGAN/BWE audio vocoder; two-stage distilled with a latent "
                         + "upsampler. Supports i2v via `initImage` (first-frame conditioning). "
-                        + "Output is an MP4 with synced 48kHz audio. Runs on 64 GB and 128 GB tiers "
-                        + "only — the bf16 DiT floor puts 2.5 out of reach of 24/32 GB (AB-D-0015).")
+                        + "Output is an MP4 with synced 48kHz audio. Ships on ALL FOUR tiers "
+                        + "(AB-D-0035): the low tiers auto-follow to the int8 encoder + streamed "
+                        + "DiT; standard64 reaches 1280×704 and max128 1920×1088 with automatic "
+                        + "decode tiling."),
+                // ⟲ The old text said "64/128 GB tiers only (AB-D-0015)" — superseded by AB-D-0035
+                // a fortnight ago; fixed while adding the surface below rather than shipped stale.
+                VEditContract.descriptor(
+                    name: "ltx-2.5-vedit",
+                    summary: "Local retake/extend on the SAME distilled checkpoint (Desktop-parity, "
+                        + "AB-R-0133): regenerate a temporal span of a source clip "
+                        + "(modes replace_video / replace_audio / replace_audio_and_video, span via "
+                        + "metaData retake.start/retake.duration) or extend it (mode extend, "
+                        + "extend.seconds) with a 0.5 s blend feather. Source dims snap DOWN to "
+                        + "/32 — the user's footage is never upscaled.",
+                    modes: [VEditModes.replaceVideo, VEditModes.replaceAudio,
+                            VEditModes.replaceAudioAndVideo, VEditModes.extend])
             ]
         )
     }

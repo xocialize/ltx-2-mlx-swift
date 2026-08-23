@@ -529,8 +529,21 @@ func ltx25PackageGate() {
     check("56 every planned phase is one RunProgress can emit (no invented phase names)",
           unknown.isEmpty, unknown.isEmpty ? "all known" : unknown.joined(separator: ","))
 
+    // ── 57-58 · videoEdit surface (retake/extend, AB-R-0133) ────────────────────────────────
+    let veditSurface = m.surfaces.first { $0.capability == .videoEdit }
+    check("57 2.5 manifest declares the videoEdit surface, and capabilities derives it",
+          veditSurface != nil && m.capabilities.contains(.videoEdit)
+              && m.capabilities.contains(.textToVideo),
+          "surfaces=\(m.surfaces.map(\.capability))")
+    // The mode STRINGS are the wire contract with the app — pin them so a rename breaks here,
+    // not in a shipped picker.
+    let veditModes = Set((veditSurface?.supportedModes ?? []).map(\.rawValue))
+    check("58 videoEdit modes are the Desktop-parity set",
+          veditModes == ["replace_video", "replace_audio", "replace_audio_and_video", "extend"],
+          veditModes.sorted().joined(separator: ","))
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (56/56)"
+          ? "[ltx25-package-gate] PASS ✅ (58/58)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

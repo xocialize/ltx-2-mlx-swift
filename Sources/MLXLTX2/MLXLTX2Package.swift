@@ -113,7 +113,9 @@ public final class MLXLTX2Package: ModelPackage {
         )
     }
 
-    private let configuration: Configuration
+    // `internal` so the VideoEditRun extension (same module) reads the profile for the
+    // envelope clamp; was private, and nothing outside the module can see it either way.
+    let configuration: Configuration
     private var pipeline: LTX2Pipeline?
     // Per-request runtime-LoRA state (the "extend" capability): curated registry + lazy HF cache,
     // plus the currently-applied selection so an unchanged request doesn't re-apply.
@@ -197,6 +199,11 @@ public final class MLXLTX2Package: ModelPackage {
         // CancellationError (never PackageError) to the engine's cancelled-vs-failed lanes.
         try Task.checkCancellation()
         guard let pipeline else { throw PackageError.notLoaded }
+        // `.videoEdit` (retake/extend, AB-R-0133): its own branch — the T2V path below is
+        // untouched, so nothing about existing generation changes shape.
+        if request.capability == .videoEdit, let vedit = request as? VEditRequest {
+            return try await runVideoEdit(vedit, pipeline: pipeline)
+        }
         guard request.capability == .textToVideo, let t2v = request as? T2VRequest else {
             throw PackageError.unsupportedCapability(request.capability)
         }
