@@ -449,10 +449,34 @@ public final class LTX2Pipeline {
         // LTX_VAE_TILES ("2" → 2×2, "2x3" → tilesH×tilesW) + LTX_VAE_SHALO (spatial halo, default 5
         // ≈ 74 dB seam; 16 = bit-exact). Composes inside each temporal chunk (outer temporal,
         // inner spatial).
-        let tileSpec = (env["LTX_VAE_TILES"] ?? "1").split(separator: "x").compactMap { Int($0) }
-        let tilesH = tileSpec.first ?? 1
-        let tilesW = tileSpec.count > 1 ? tileSpec[1] : tilesH
         let sHalo = env["LTX_VAE_SHALO"].flatMap { Int($0) } ?? 5
+
+        // 🔑 AUTO-TILE FROM THE LATENT GRID (2026-08-23, AB-D-0041/AB-R-0130). Tiling is no longer
+        // caller-opt-in: at geometries where it pays it is GUARANTEED, which is what makes the
+        // tiled footprint DECLARABLE. Exactly the rule streaming already follows — compact24 may
+        // declare streamed numbers only because `.forceStream` is pinned (AB-R-0107). An opt-in
+        // lever cannot back a declaration: it fails OPEN the moment a caller does not use it.
+        //
+        // The threshold is the halo arithmetic, not a tuned constant. A 2x2 split replaces one
+        // full-grid decode with four windows of (axis/2 + 2*halo); that is only smaller than the
+        // grid when `axis > 4*halo`. Below it the window MEETS OR EXCEEDS the grid and tiling does
+        // strictly more work for nothing — at 704x512 (grid 22x16) the window would be 21x18.
+        //
+        //   704x512   grid 22x16 -> no-op (16 <= 20)
+        //   1280x704  grid 40x22 -> 2x2   (measured 42.03 -> 33.55 GB)
+        //   1920x1088 grid 60x34 -> 2x2   (measured 93.68 -> 49.30 GB)
+        //
+        // ⚠️ 2x2 ONLY, deliberately. 3x3/4x4 measured lower (33.84 / 27.56) but 2x2 already puts
+        // every geometry comfortably inside budget, and higher counts add seams — 2 internal seam
+        // lines vs 4 vs 6 — where **only 2x2 has been perceptually cleared** (AB-D-0041). Halo
+        // re-decode also grows: total decoded area is 2.1x the grid at 2x2, 3.5x at 4x4.
+        // ⚠️ `LTX_VAE_TILES` remains an override for measurement, in BOTH directions ("1" disables).
+        let gridH = spatial.dim(3), gridW = spatial.dim(4)
+        let autoTile = (gridW > 4 * sHalo && gridH > 4 * sHalo) ? 2 : 1
+        let tileSpec = (env["LTX_VAE_TILES"] ?? String(autoTile))
+            .split(separator: "x").compactMap { Int($0) }
+        let tilesH = tileSpec.first ?? autoTile
+        let tilesW = tileSpec.count > 1 ? tileSpec[1] : tilesH
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else {
             let px = vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo)

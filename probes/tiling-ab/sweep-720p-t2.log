@@ -1,0 +1,20 @@
+[t2v-spot25] request 1280×704×241f int8 · tier=standard64 · DiT lane: STREAMED · encoder: ltx-2.5-mlx · mode: t2v · gate: auto
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 2.1s (12 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1280x704). MEASUREMENT ONLY; not an acceptance number.
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=1769 · S=4.68 GiB/s vs C(N)=9.96 GiB/s → N_min≈3762 → FALL BACK (resident)
+[BlockStreamer] fell back resident: 18.38 GiB in 5.2s (3.55 GiB/s)
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1280x704). MEASUREMENT ONLY; not an acceptance number.
+[t2v-spot25] phys-after-load=2.82 GB · post-run retain=0.68 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] gate: N=18648 · S=4.65 GiB/s vs C(N)=0.21 GiB/s → N_min≈831 → STREAM (hidden)
+[t2v-spot25] run 650.6s  mp4 5.3 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=bf16 · resident(held)=0.59 GB act=32.96 GB peak=33.54 GB · [afterLoad=2.82 retain=0.68 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.59 GB peakActivationBytes=32.96 GB
+[t2v-spot25] ACCEPTANCE tier=standard64 budget=44.80 GB · measured stage-max 33.54 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

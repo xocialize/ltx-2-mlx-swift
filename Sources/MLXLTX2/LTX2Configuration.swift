@@ -21,8 +21,22 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     /// i2v at the cap MEASURED too (--i2v-spot 2026-07-01): 481f + 4.9 GB adapter peaks 72.73 GB.
     case max128
 
-    public var maxWidth: Int  { switch self { case .compact24: 512; case .balanced32: 576; default: 704 } }
-    public var maxHeight: Int { switch self { case .compact24: 288; case .balanced32: 320; default: 512 } }
+    /// ⟲ RAISED 2026-08-23 on evidence (AB-R-0130), the way `maxFrames` was: the previous 704x512
+    /// ceiling was set 2026-07-01 with the tier system and never revisited, while eviction, the
+    /// int8 encoder, streaming and now decode TILING all cut the footprint underneath it.
+    ///
+    /// 🚨 THE NEW CEILINGS DEPEND ON TILING, WHICH IS WHY TILING IS NOW AUTOMATIC rather than
+    /// opt-in (`LTX2Pipeline.decodePixels`). Measured, streamed, 2x2:
+    ///   standard64 1280x704  -> 33.55 GB of 44.8  (75%; untiled was 42.03 = 94%, uncomfortably thin)
+    ///   max128     1920x1088 -> 49.30 GB of 89.6  (55%; untiled 93.68 is OVER budget)
+    /// ⚠️ At max128 untiled 1080p does NOT fit. The declaration below is only honest because the
+    /// pipeline tiles by construction at these grids.
+    public var maxWidth: Int  {
+        switch self { case .compact24: 512; case .balanced32: 576; case .standard64: 1280; case .max128: 1920 }
+    }
+    public var maxHeight: Int {
+        switch self { case .compact24: 288; case .balanced32: 320; case .standard64: 704; case .max128: 1088 }
+    }
     public var maxFrames: Int {
         // max128 241→481 (BRIDGE-LTX-005): 704×512×480f bf16 t2v measured 67.61 GB — the old cap
         // left ~60 GB of a 128 GB budget unused. 481 sits ON a measured point (8n+1 frame grid).

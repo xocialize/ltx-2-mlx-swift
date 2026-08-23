@@ -1,0 +1,14 @@
+[t2v-spot25] request 1920×1088×481f bf16 · tier=max128 · DiT lane: STREAMED · encoder: ltx-2.5-mlx · mode: t2v · gate: auto
+[t2v-spot25] granules /Volumes/Satechi/Models/ltx-granules-25/bf16
+[t2v-spot25] prewarm 2.1s (12 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1920x1088). MEASUREMENT ONLY; not an acceptance number.
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+[BlockStreamer] gate: N=4089 · S=5.09 GiB/s vs C(N)=6.36 GiB/s → N_min≈5107 → FALL BACK (resident)
+[BlockStreamer] fell back resident: 34.58 GiB in 9.1s (3.82 GiB/s)
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 704x512, running 1920x1088). MEASUREMENT ONLY; not an acceptance number.
+[t2v-spot25] phys-after-load=5.88 GB · post-run retain=3.10 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
