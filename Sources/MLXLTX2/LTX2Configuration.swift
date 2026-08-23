@@ -116,7 +116,18 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     /// `standard64` genuinely does not need it: its fallback is admissible, so the gate is free to
     /// choose.
     public var recommendedForcedStreamGate: Bool {
-        switch self { case .compact24, .balanced32: true; default: false }
+        // 🚨 THE RULE IS "CAN THE DECLARATION SURVIVE THE FALLBACK", not "does this tier stream".
+        // ⟲ 2026-08-23: max128 ADDED, standard64 deliberately NOT — the gate caught an over-broad
+        // first attempt to pin everything. Checked against the raised caps:
+        //   standard64 1280x704: streamed 33.55, resident 31.80, declared 34.8 -> covers BOTH,
+        //                        so `.auto` stays safe and no pin is warranted.
+        //   max128 1920x1088:    streamed 74.39, resident at the 481f corner UNMEASURED (it ran
+        //                        +3.4 GB over streamed at 121f, extrapolating to ~77.8 > the 75.3
+        //                        declaration) -> the fallback could bust, so it MUST pin.
+        // ⚠️ Pinning is not free of meaning: it removes a lane. Apply it only where the fallback
+        // genuinely threatens the declaration, or the rule degrades into "pin everything" and
+        // stops catching anything.
+        switch self { case .compact24, .balanced32, .max128: true; case .standard64: false }
     }
 
     /// Whether this tier should STREAM the DiT blocks by default.
@@ -134,7 +145,14 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     ///     the price of ~6× read amplification — and max128's streamed behaviour is UNMEASURED.
     ///     Do not default to an unmeasured configuration just because it is available.
     public var recommendedStreamedBlocks: Bool {
-        switch self { case .max128: false; default: true }
+        // ⟲ max128 flipped false -> true 2026-08-23 (operator decision). Its envelope now reaches
+        // 1920x1088x481, and the ONLY lane measured across that corner is streamed+tiled (74.39 GB).
+        // The resident lane at the frame cap is unmeasured, and resident ran +3.4 GB heavier at
+        // 121f — extrapolating it would put the corner near 77.8, ABOVE the old 76 declaration.
+        // 🔑 Rather than declare from an extrapolated corner, the tier now streams so the
+        // declaration rests on numbers we actually took. AB-R-0116 independently measured max128
+        // streamed at less than half its resident peak, so this costs nothing.
+        switch self { default: true }
     }
 }
 
@@ -666,14 +684,25 @@ extension LTX2Configuration: FootprintConfigured {
     }
 
     public var residentBytesHint: UInt64? {
-        guard declaresStreamedFootprint, let profile else { return nil }
+        guard let profile else { return nil }
+        // 🔑 standard64's resident term is LANE-INDEPENDENT and measured so: `evictDiTBeforeDecode`
+        // is on for every tier, so the DiT is gone before the decode peak and the held term is tiny
+        // in BOTH lanes — 0.59 GB streamed, 0.58 GB resident at its raised cap. It therefore needs
+        // no streaming guard.
+        // ⚠️ EVERY OTHER CASE STILL DOES. Dropping the guard wholesale broke two things the gates
+        // caught: an explicit stream-off on a LOW tier must get nothing (so the quant numbers
+        // refuse it — fail closed, case 42), and 2.3 must keep its own hints (family-keyed,
+        // case 43). Scope the exemption to exactly the tier that earned it.
+        if family == .ltx25, profile == .standard64 { return 800_000_000 }
+        guard declaresStreamedFootprint else { return nil }
         switch profile {
-        case .compact24, .balanced32:
-            // Measured resident while streaming: 0.41–0.63 GB (slots + globals + LoRA factors)
-            // across all 18 runs (AB-R-0106). Declared 0.8 GB.
-            return 800_000_000
         default:
-            return nil   // standard64/max128: the quant-keyed resident stays the honest envelope
+            // Measured resident while streaming: 0.41–0.63 GB on the low tiers (AB-R-0106) and
+            // 0.59 / 0.77 GB at the raised standard64 / max128 caps. Declared 0.8 GB for all —
+            // the streamed resident term is slots + globals + LoRA factors, which barely moves
+            // with geometry. ⟲ standard64/max128 previously returned nil (falling back to the
+            // quant-keyed 23 / 40 GB resident); that was correct only while they ran resident.
+            return 800_000_000
         }
     }
 
@@ -689,12 +718,30 @@ extension LTX2Configuration: FootprintConfigured {
             // compact24's corridor is inherently narrow — the operator accepted the 92% measurement
             // explicitly (AB-D-0035), and headroom-over-measured beats distance-from-budget here:
             // the budget side is exact arithmetic, the measurement side is content-sensitive.
+            // ⟲ standard64/max128 ADDED 2026-08-23 with the raised caps. Each is the WORST
+            // corner of its own envelope, measured streamed+tiled — not a smaller geometry
+            // extrapolated. ⚠️ The corners are what bind: at 1080p the peak is NOT flat across
+            // frames the way it was at 704x512 (49.30 -> 60.35 -> 74.39 from 121f to 481f), so
+            // declaring from 121f would have under-charged max128 by 25 GB.
+            //   standard64 1280x704x241  worst 33.55 (0.59 + 32.96) -> charge 0.8 + 34.0 = 34.8 (78% of 44.8)
+            //   max128     1920x1088x481  worst 74.39 (0.77 + 73.62) -> charge 0.8 + 74.5 = 75.3 (84% of 89.6)
+            // ⚠️ max128's 84% is against the CONSERVATIVE 0.7x figure; the governor asks Metal,
+            // which answers ~84% of capacity (AB-R-0119), so the real headroom is far larger.
             switch profile {
             case .compact24:  return 15_400_000_000
             case .balanced32: return 17_200_000_000
-            default: break    // standard64 streams by default too, but declares below
+            case .max128:     return 74_500_000_000
+            case .standard64: break   // declared unguarded below — see why
             }
         }
+        // 🔑 standard64 declares OUTSIDE the streaming guard, deliberately. The guard exists because
+        // a streamed-only number fails OPEN when the lane falls back — but standard64's charge
+        // covers BOTH lanes at its raised cap: streamed 33.54, resident 31.80, declared 34.0. So it
+        // is honest without a pin, which is why case 26b keeps it as the unpinned negative.
+        // ⚠️ compact24/balanced32/max128 are NOT like this — their numbers are streamed-only and
+        // stay guarded, which is what forces their pin.
+        if family == .ltx25, profile == .standard64 { return 34_000_000_000 }
+
         switch family {
         case .ltx25:
             switch profile {

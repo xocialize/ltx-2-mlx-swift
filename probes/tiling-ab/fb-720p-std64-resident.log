@@ -1,0 +1,10 @@
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 1280x704, running 1280x704). MEASUREMENT ONLY; not an acceptance number.
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 1280x704, running 1280x704). MEASUREMENT ONLY; not an acceptance number.
+[t2v-spot25] request 1280×704×161f int8 · tier=standard64 · DiT lane: RESIDENT · encoder: ltx-2.5-mlx · mode: t2v · gate: auto
+[t2v-spot25] prewarm 12.5s (13 files)
+[t2v-spot25] phys-after-load=22.13 GB · post-run retain=0.58 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 657.5s  mp4 5.3 MB
+[t2v-spot25] SPLIT lane=RESIDENT mode=t2v quant=int8 enc=bf16 · resident(held)=0.58 GB act=31.22 GB peak=31.80 GB · [afterLoad=22.13 retain=0.58 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.58 GB peakActivationBytes=31.22 GB
+[t2v-spot25] ACCEPTANCE tier=standard64 budget=44.80 GB · measured stage-max 31.80 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

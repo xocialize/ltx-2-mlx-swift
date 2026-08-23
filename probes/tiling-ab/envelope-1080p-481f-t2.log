@@ -12,3 +12,9 @@
 [t2v-spot25] phys-after-load=5.88 GB · post-run retain=3.10 GB (both reported for comparison; the DECLARE line below uses neither)
 [BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
 [BlockStreamer] streaming set 0 from bf16
+[BlockStreamer] gate: N=124941 · S=5.06 GiB/s vs C(N)=0.01 GiB/s → N_min≈321 → STREAM (hidden)
+[t2v-spot25] run 11159.1s  mp4 35.4 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=bf16 enc=bf16 · resident(held)=0.77 GB act=73.62 GB peak=74.39 GB · [afterLoad=5.88 retain=3.10 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.77 GB peakActivationBytes=73.62 GB
+[t2v-spot25] ACCEPTANCE tier=max128 budget=89.60 GB · measured stage-max 74.39 GB → ✅ WITHIN
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point

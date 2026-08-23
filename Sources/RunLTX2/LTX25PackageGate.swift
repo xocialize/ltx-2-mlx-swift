@@ -225,21 +225,29 @@ func ltx25PackageGate() {
     // ───── gate policy + Codable back-compat ─────
     check("25 gate policy defaults to .auto (no silent behaviour change)",
           bf.streamingOptions.gatePolicy == .auto, "\(bf.streamingOptions.gatePolicy.rawValue)")
-    check("26 profiles ADVISE the measured low-tier settings",
+    // ⟲ The GATE half moved 2026-08-23 (every tier pins now); the ENCODER half did NOT and is
+    // still the load-bearing distinction — int8 on the low tiers, bf16 on the high ones.
+    check("26 profiles ADVISE the measured encoder settings (int8 low / bf16 high)",
           LTX2Profile.compact24.recommendedTextEncoderQuant == .int8
-              && LTX2Profile.compact24.recommendedForcedStreamGate
+              && LTX2Profile.balanced32.recommendedTextEncoderQuant == .int8
               && LTX2Profile.standard64.recommendedTextEncoderQuant == .bf16
-              && !LTX2Profile.standard64.recommendedForcedStreamGate,
-          "compact24=int8/forced · standard64=bf16/auto")
+              && LTX2Profile.max128.recommendedTextEncoderQuant == .bf16,
+          "compact24/balanced32=int8 · standard64/max128=bf16")
 
     // 🚨 THE PIN RULE IS "does the FALLBACK still fit", not "is N small". Every tier whose budget
     // is met ONLY while streaming must pin the gate, or an .auto decline busts it outright.
     // Measured resident (fallback) peaks: compact24 31.92/16.8 ✗, balanced32 33.13/22.4 ✗,
     // standard64 27.31/44.8 ✓. balanced32 streamed 6/6 in measurement — but 6/6 is a probability,
     // and a declaration has to hold on the run that goes the other way.
-    check("26b every tier whose FALLBACK busts budget pins the gate",
+    // ⟲ max128 ADDED 2026-08-23 for the same reason, one axis over: at its raised 1920x1088 cap the
+    // resident corner (481f) is UNMEASURED and extrapolates ABOVE its declaration, so `.auto` could
+    // bust it. standard64 stays UNPINNED and is the load-bearing negative — its declaration (34.8)
+    // covers BOTH its streamed 33.55 and its resident 31.80, so pinning would remove a lane for
+    // nothing. Without a negative case this rule degrades into "pin everything".
+    check("26b a tier pins IFF its fallback could bust the declaration",
           LTX2Profile.compact24.recommendedForcedStreamGate
               && LTX2Profile.balanced32.recommendedForcedStreamGate
+              && LTX2Profile.max128.recommendedForcedStreamGate
               && !LTX2Profile.standard64.recommendedForcedStreamGate,
           "compact24=\(LTX2Profile.compact24.recommendedForcedStreamGate) "
               + "balanced32=\(LTX2Profile.balanced32.recommendedForcedStreamGate) "
@@ -295,7 +303,9 @@ func ltx25PackageGate() {
 
     // High tiers must NOT auto-follow into int8 — the advice there is bf16, the reproducible arm.
     var highTier = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .standard64)
-    check("32 standard64 auto-follows to bf16/auto — unchanged from before auto-follow",
+    // standard64 keeps bf16 AND `.auto` — its declaration covers both lanes at the raised cap
+    // (streamed 33.55 / resident 31.80 vs 34.8 declared), so it needs no pin.
+    check("32 standard64 auto-follows to bf16/auto — still unpinned at the raised cap",
           highTier.effectiveTextEncoderQuant == .bf16
               && highTier.effectiveComponentsRepo == "mlx-community/ltx-2.5-mlx"
               && highTier.resolvedStreamingOptions.gatePolicy == .auto,
@@ -313,11 +323,14 @@ func ltx25PackageGate() {
     // ───── streaming as the DEFAULT for advised tiers (operator decision 2026-08-21) ─────
     var stream = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
     stream.quant = .int8
-    check("34 advised tiers stream by default; max128 does NOT",
+    // ⟲ max128 flipped 2026-08-23: EVERY tier streams. Its envelope reaches 1920x1088x481 and the
+    // only lane measured across that corner is streamed+tiled (74.39 GB); the resident corner is
+    // unmeasured and extrapolates ABOVE the old declaration.
+    check("34 EVERY tier streams by default (max128 flipped with the raised cap)",
           LTX2Profile.compact24.recommendedStreamedBlocks
               && LTX2Profile.balanced32.recommendedStreamedBlocks
               && LTX2Profile.standard64.recommendedStreamedBlocks
-              && !LTX2Profile.max128.recommendedStreamedBlocks,
+              && LTX2Profile.max128.recommendedStreamedBlocks,
           "compact24/balanced32/standard64=on · max128=off (fits resident; streamed is UNMEASURED there)")
 
     // 🔑 THE POINT OF THE WIRING: streaming REPLACES the transformer download. Fetching both would
@@ -332,11 +345,14 @@ func ltx25PackageGate() {
               == "xocialize/ltx-2.5-granules",
           "\(stream.weightSources.first { $0.role == "granules" }?.repo ?? "nil")")
 
-    // …and the converse: a non-streaming tier must still fetch the transformer and NOT granules.
+    // …and the converse. ⟲ No tier is non-streaming by ADVICE any more, so this now exercises the
+    // EXPLICIT override — which is the path that still matters: a caller who opts out must get the
+    // checkpoint, not granules, or they would stream against weights they never fetched.
     var resident = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .max128)
     resident.quant = .int8
+    resident.streamedBlocks = false          // explicit opt-out, not profile advice
     let rroles = Set(resident.weightSources.map(\.role))
-    check("37 a non-streaming tier fetches the transformer and NOT granules",
+    check("37 an EXPLICITLY non-streaming config fetches the transformer and NOT granules",
           rroles.contains("transformer-int8") && !rroles.contains("granules"),
           "roles=\(rroles.sorted())")
 
@@ -378,10 +394,15 @@ func ltx25PackageGate() {
     var fpStd = fpLow; fpStd.profile = .standard64
     var fpMax = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .max128)
     fpMax.quant = .bf16
-    check("41 standard64 falls to quant numbers (covers .auto fallback); max128 charge unchanged",
-          fpStd.residentBytesHint == nil && fpStd.peakActivationBytesHint == nil
-              && fpMax.residentBytesHint == nil
-              && fpMax.peakActivationBytesHint == 36_000_000_000,
+    // ⟲ REPLACED 2026-08-23. Both high tiers now declare from the WORST corner of their RAISED
+    // envelope, measured streamed+tiled — standard64 1280x704x241 -> 33.55, max128 1920x1088x481
+    // -> 74.39. ⚠️ The corner is what binds: at 1080p the peak is NOT flat across frames (49.30 ->
+    // 60.35 -> 74.39), so a 121f-based declaration would have under-charged max128 by ~25 GB.
+    check("41 standard64 and max128 declare from their measured streamed+tiled corners",
+          fpStd.residentBytesHint == 800_000_000
+              && fpStd.peakActivationBytesHint == 34_000_000_000
+              && fpMax.residentBytesHint == 800_000_000
+              && fpMax.peakActivationBytesHint == 74_500_000_000,
           "std hints=(\(fpStd.residentBytesHint.map(String.init) ?? "nil"),"
               + "\(fpStd.peakActivationBytesHint.map(String.init) ?? "nil")) "
               + "max128 act=\(fpMax.peakActivationBytesHint.map(String.init) ?? "nil")")
@@ -463,10 +484,10 @@ func ltx25PackageGate() {
           rC == 19_724_000_000 * 8, show(rC))
     check("49 standard64 streamed = TWO-stage 11 steps — the sigma schedule, not a guess",
           rS == 19_724_000_000 * 11, show(rS))
-    // max128 does NOT stream (profile advice), so it reads its checkpoint ONCE. If this ever
-    // returns a per-step multiple, the streamed/resident branch has been inverted.
-    check("50 max128 is RESIDENT — reads the bf16 checkpoint once, not 11 sweeps",
-          rM == 37_990_000_000, show(rM))
+    // ⟲ max128 now STREAMS by advice, so it sweeps per step rather than reading the checkpoint
+    // once. The resident branch is still covered — case 37 exercises the explicit opt-out.
+    check("50 max128 STREAMS by advice — 11 sweeps of the measured bf16 granule set",
+          rM == 37_106_000_000 * 11, show(rM))
     // ⚠️ bf16 streamed is max128's OVERRIDE lane (its profile advises resident). The sweep here is
     // the MEASURED bind-line figure — 34.56 GiB — not the on-disk ratio, which was ~2% out.
     var rdMs = LTX2Configuration(family: .ltx25, profile: .max128)
