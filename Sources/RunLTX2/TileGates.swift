@@ -39,6 +39,10 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
     }
     if args.contains("--vae-rf-probe") {
         try vaeRFProbe(pruna: pruna)
+    } else if args.contains("--vae-encode-tile-probe") {
+        try vaeEncodeTileProbe()
+    } else if args.contains("--vae-encode-tile-gate") {
+        try vaeEncodeTileGate()
     } else if args.contains("--vae-tile-gate") {
         try vaeTileGate(pruna: pruna)
     } else if args.contains("--vae-tile-bench") {
@@ -408,4 +412,111 @@ func vaeRFProbe(pruna: Bool) throws {
                      h, ma, cos, minPSNR, farL, farR, Date().timeIntervalSince(t)))
         Memory.clearCache()
     }
+}
+
+// MARK: - --vae-encode-tile-probe (scale sweep: is parity tile-size-limited?)
+
+func vaeEncodeTileProbe() throws {
+    let tree = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let enc = try VideoVAEEncoder.load(path: tree.appendingPathComponent("vae_encoder.safetensors"))
+    MLXRandom.seed(0x2026_0823)
+    func fixture(_ f: Int, _ h: Int, _ w: Int) -> MLXArray {
+        let tt = MLXArray(0 ..< f).reshaped(1, 1, f, 1, 1).asType(.float32)
+        let yy = MLXArray(0 ..< h).reshaped(1, 1, 1, h, 1).asType(.float32)
+        let xx = MLXArray(0 ..< w).reshaped(1, 1, 1, 1, w).asType(.float32)
+        let ph = MLXRandom.uniform(low: 0.0, high: Float.pi * 2, [3, 1, 1, 1]).reshaped(1, 3, 1, 1, 1)
+        let px = MLX.sin(xx * 0.05 + yy * 0.031 + tt * 0.4 + ph) * 0.6
+            + MLX.sin(xx * 0.011 - yy * 0.017 + ph) * 0.35
+        eval(px); return px
+    }
+    // A: spatial-only at VENDOR proportions — 9f, 1088x1920 px = latent 2x34x60, tiles 24/2 → 2x3
+    let a = fixture(9, 1088, 1920)
+    let refA = enc.encode(a).asType(.float32); eval(refA)
+    let tA = enc.encodeTiled(a, tiling: EncodeTiling(
+        height: .init(tileSize: 24, overlap: 2), width: .init(tileSize: 24, overlap: 2))).asType(.float32)
+    print(String(format: "[probe] SPATIAL vendor 768/64 @1088x1920: cosine=%.6f", cosine(tA, refA)))
+    // B: spatial at HALF vendor tile (384px/64) same fixture → artifact fraction doubles
+    let tB = enc.encodeTiled(a, tiling: EncodeTiling(
+        height: .init(tileSize: 12, overlap: 2), width: .init(tileSize: 12, overlap: 2))).asType(.float32)
+    print(String(format: "[probe] SPATIAL 384/64  @1088x1920: cosine=%.6f", cosine(tB, refA)))
+    // C: temporal-only at vendor 80/24 (latent 10/3) — 121f, 256x384 px
+    let c = fixture(121, 256, 384)
+    let refC = enc.encode(c).asType(.float32); eval(refC)
+    let tC = enc.encodeTiled(c, tiling: EncodeTiling(frames: .init(tileSize: 10, overlap: 3))).asType(.float32)
+    print(String(format: "[probe] TEMPORAL vendor 80/24 @121f: cosine=%.6f", cosine(tC, refC)))
+    // D: bigger spatial overlap at small tiles — 192px tiles, overlap 4 latent (128px)
+    let d = fixture(33, 256, 384)
+    let refD = enc.encode(d).asType(.float32); eval(refD)
+    let tD = enc.encodeTiled(d, tiling: EncodeTiling(
+        height: .init(tileSize: 6, overlap: 4), width: .init(tileSize: 8, overlap: 4))).asType(.float32)
+    print(String(format: "[probe] SPATIAL small 192px ov128: cosine=%.6f", cosine(tD, refD)))
+}
+
+// MARK: - --vae-encode-tile-gate (Desktop-parity prerequisite, AB-R-013/// Does `encodeTiled` reproduce the untiled `encode` AT THE SHIPPING CONFIG?
+///
+/// 🔑 CALIBRATED BY THE SCALE PROBE (`--vae-encode-tile-probe`, 2026-08-23): parity is
+/// TILE-SIZE-limited, exactly as the vendor's 64px-overlap minimum implies — the conv edge-artifact
+/// zone is a fixed width, so its share of a tile shrinks as tiles grow:
+///     768px tiles → 0.999198 · 384px → 0.997816 · 192px → 0.988027 · 192px but ov=128px → 0.999118
+/// So the gate pins the VENDOR config at realistic geometry, not a synthetic small-tile layout —
+/// a small-tile bar would either fail correct code or pass with a meaninglessly loose threshold.
+///
+/// ⚠️ TEMPORAL tiling is intrinsically lossier: 0.997107 at the vendor's own 80/24. Each temporal
+/// tile restarts causality on its own first frame; the mask zeroes that frame and the weights
+/// normalisation heals the ramp, but positions 1..ramp still blend causally-different latents.
+/// The vendor SHIPS this — it is the same class of accepted approximation as halo-5 decode
+/// (~74 dB). The temporal bar is therefore 0.995 (measured 0.9971 + margin), NOT 0.999, and the
+/// difference is doctrine, not sloppiness: parity with the VENDOR's product, per AB-R-0133.
+func vaeEncodeTileGate() throws {
+    let tree = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let enc = try VideoVAEEncoder.load(path: tree.appendingPathComponent("vae_encoder.safetensors"))
+    MLXRandom.seed(0x2026_0823)
+    // Smooth low-frequency content, NOT white noise — noise has no spatial coherence, so a seam
+    // (a coherence defect) would be invisible in it and the poison arm could pass.
+    func fixture(_ f: Int, _ h: Int, _ w: Int) -> MLXArray {
+        let tt = MLXArray(0 ..< f).reshaped(1, 1, f, 1, 1).asType(.float32)
+        let yy = MLXArray(0 ..< h).reshaped(1, 1, 1, h, 1).asType(.float32)
+        let xx = MLXArray(0 ..< w).reshaped(1, 1, 1, 1, w).asType(.float32)
+        let ph = MLXRandom.uniform(low: 0.0, high: Float.pi * 2, [3, 1, 1, 1]).reshaped(1, 3, 1, 1, 1)
+        let px = MLX.sin(xx * 0.05 + yy * 0.031 + tt * 0.4 + ph) * 0.6
+            + MLX.sin(xx * 0.011 - yy * 0.017 + ph) * 0.35
+        eval(px); return px
+    }
+
+    // 1 — identity fast path: tiling larger than the grid must BE the untiled encode.
+    let small = fixture(33, 256, 384)
+    let refSmall = enc.encode(small).asType(.float32); eval(refSmall)
+    let identity = enc.encodeTiled(small, tiling: EncodeTiling(
+        frames: .init(tileSize: 32, overlap: 4), height: .init(tileSize: 32, overlap: 4),
+        width: .init(tileSize: 32, overlap: 4)))
+    let idMax = MLX.abs(identity.asType(.float32) - refSmall).max().item(Float.self)
+    print(String(format: "[vae-encode-tile-gate] identity: maxAbs=%.6f", idMax))
+
+    // 2 — SPATIAL at the vendor config and 1080p-class geometry (2×3 tiles of 768px, ov 64px).
+    let hd = fixture(9, 1088, 1920)
+    let refHD = enc.encode(hd).asType(.float32); eval(refHD)
+    let spatial = enc.encodeTiled(hd, tiling: EncodeTiling(
+        height: .init(tileSize: 24, overlap: 2), width: .init(tileSize: 24, overlap: 2))).asType(.float32)
+    let cosSpatial = cosine(spatial, refHD)
+    print(String(format: "[vae-encode-tile-gate] SPATIAL vendor 768/64 @1088×1920: cosine=%.6f", cosSpatial))
+
+    // 3 — TEMPORAL at the vendor config (80f/24f = latent 10/3) across 121f.
+    let long = fixture(121, 256, 384)
+    let refLong = enc.encode(long).asType(.float32); eval(refLong)
+    let temporal = enc.encodeTiled(long, tiling: EncodeTiling(
+        frames: .init(tileSize: 10, overlap: 3))).asType(.float32)
+    let cosTemporal = cosine(temporal, refLong)
+    print(String(format: "[vae-encode-tile-gate] TEMPORAL vendor 80/24 @121f: cosine=%.6f", cosTemporal))
+
+    // 4 — POISON: zero overlap. No ramps, no healing → seams. If this scores near the parity
+    // arms the gate cannot see seams and every number above is meaningless (AB-L-0017).
+    let latP = enc.encodeTiled(small, tiling: EncodeTiling(
+        frames: .init(tileSize: 3, overlap: 0), height: .init(tileSize: 4, overlap: 0),
+        width: .init(tileSize: 6, overlap: 0))).asType(.float32)
+    let cosPoison = cosine(latP, refSmall)
+    print(String(format: "[vae-encode-tile-gate] POISON ov0: cosine=%.6f", cosPoison))
+
+    let pass = idMax == 0 && cosSpatial >= 0.999 && cosTemporal >= 0.995 && cosPoison < 0.95
+    print(pass ? "[vae-encode-tile-gate] PASS ✅" : "[vae-encode-tile-gate] FAIL ❌")
+    if !pass { exit(1) }
 }

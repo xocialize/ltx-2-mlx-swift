@@ -450,3 +450,128 @@ public struct VideoVAEEncoder {
         return y.reshaped(B, F, H / ps, W / ps, C * ps * ps)
     }
 }
+
+// MARK: - Tiled ENCODE (Desktop-parity prerequisite — AB-R-0133)
+//
+// Port of ltx_core `VideoEncoder.tiled_encode` + `prepare_tiles_for_encoding`: split on the
+// LATENT grid, encode overlapping PIXEL tiles independently through the normal causal forward,
+// then feather-blend the latent tiles with separable 1-D trapezoid masks and normalize by the
+// accumulated weights.
+//
+// 🔑 WHY BLEND, NOT HALO-CROP (our decode idiom): the oracle blends, and retake conditions on
+// latents encoded this way — matching the vendor keeps seam behaviour and numbers comparable.
+// The causal boundary self-heals by construction: a temporal tile that starts mid-video re-runs
+// the causal front-pad on ITS OWN first frame (wrong history), and the temporal mask's
+// `leftStartsFromZero` zeroes exactly that first latent position, so the previous tile's ramp
+// supplies it instead.
+//
+// ⚠️ Deviation from the oracle, deliberate: we ALWAYS accumulate a weights buffer and divide.
+// The oracle skips it when masks are provably complementary (interior spatial ramps sum to 1);
+// dividing by exactly-1.0 is a no-op, and this spares porting `masks_are_complementary`. The
+// temporal causal ramps are NOT complementary, so the division is load-bearing there.
+
+/// Per-axis tiling in LATENT units. `tileSize == 0` → untiled on that axis.
+public struct EncodeTileAxis: Sendable, Equatable {
+    public let tileSize: Int
+    public let overlap: Int
+    public init(tileSize: Int = 0, overlap: Int = 0) {
+        self.tileSize = tileSize; self.overlap = overlap
+    }
+}
+
+public struct EncodeTiling: Sendable, Equatable {
+    public let frames: EncodeTileAxis   // latent frames (pixel frames = 1 + 8·(t−1))
+    public let height: EncodeTileAxis   // latent rows   (× 32 px)
+    public let width: EncodeTileAxis    // latent cols   (× 32 px)
+    public init(frames: EncodeTileAxis = .init(), height: EncodeTileAxis = .init(),
+                width: EncodeTileAxis = .init()) {
+        self.frames = frames; self.height = height; self.width = width
+    }
+    /// The vendor default (`TileSizeConfig.default()`): 80f/24f · 768px/64px · 768px/64px,
+    /// expressed on the latent grid (÷8 temporal, ÷32 spatial) = 10/3 · 24/2 · 24/2.
+    /// ⚠️ Their guard: encode needs ≥16 frames / ≥64 px of overlap to bury the symmetric-pad
+    /// edge artifacts — on the latent grid that is ≥2 everywhere. Keep overlaps ≥2.
+    public static let vendorDefault = EncodeTiling(
+        frames: .init(tileSize: 10, overlap: 3),
+        height: .init(tileSize: 24, overlap: 2),
+        width: .init(tileSize: 24, overlap: 2))
+}
+
+struct EncodeInterval { let start: Int, end: Int, leftRamp: Int, rightRamp: Int }
+
+/// `split_by_size` — first tile ramps (0, ov), interior (ov, ov), last (ov, 0); the last tile
+/// may be short. Untiled (or dim ≤ size) → one full-span interval with no ramps.
+func encodeIntervals(dim: Int, axis: EncodeTileAxis) -> [EncodeInterval] {
+    let size = axis.tileSize, ov = axis.overlap
+    guard size > 0, dim > size else { return [EncodeInterval(start: 0, end: dim, leftRamp: 0, rightRamp: 0)] }
+    precondition(ov >= 0 && ov < size, "overlap must satisfy 0 <= overlap < tileSize")
+    let amount = (dim + size - 2 * ov - 1) / (size - ov)
+    var out = [EncodeInterval(start: 0, end: size, leftRamp: 0, rightRamp: ov)]
+    for i in 1 ..< max(1, amount - 1) {
+        out.append(EncodeInterval(start: i * (size - ov), end: i * (size - ov) + size,
+                                  leftRamp: ov, rightRamp: ov))
+    }
+    if amount > 1 {
+        out.append(EncodeInterval(start: (amount - 1) * (size - ov), end: dim,
+                                  leftRamp: ov, rightRamp: 0))
+    }
+    return out
+}
+
+/// `compute_trapezoidal_mask_1d` — linear fade over the ramps. Spatial ramps exclude both
+/// endpoints (values k/(ov+1)), so opposing ramps sum to exactly 1; the temporal causal variant
+/// (`leftStartsFromZero`) includes 0 (values k/ov), zeroing the tile's causally-wrong first
+/// latent frame outright.
+func trapezoidMask(length: Int, leftRamp: Int, rightRamp: Int, leftStartsFromZero: Bool) -> [Float] {
+    var m = [Float](repeating: 1, count: length)
+    let l = max(0, min(leftRamp, length)), r = max(0, min(rightRamp, length))
+    if l > 0 {
+        for k in 0 ..< l {
+            m[k] = leftStartsFromZero ? Float(k) / Float(l) : Float(k + 1) / Float(l + 1)
+        }
+    }
+    if r > 0 {
+        for k in 0 ..< r { m[length - r + k] *= Float(r - k) / Float(r + 1) }
+    }
+    return m
+}
+
+extension VideoVAEEncoder {
+    /// Tiled encode: pixels (B,3,F,H,W) in [-1,1] → latent (B,128,F',H',W'), numerically ≈ the
+    /// untiled `encode` (interior tiles are bit-identical work; only the blend ramps differ).
+    public func encodeTiled(_ pixels: MLXArray, tiling: EncodeTiling = .vendorDefault) -> MLXArray {
+        let f = pixels.dim(2), h = pixels.dim(3), w = pixels.dim(4)
+        precondition((f - 1) % 8 == 0 && h % 32 == 0 && w % 32 == 0,
+                     "encodeTiled needs F=8k+1 and H,W multiples of 32 (got \(f)×\(h)×\(w))")
+        let lt = (f - 1) / 8 + 1, lh = h / 32, lw = w / 32
+        let tIv = encodeIntervals(dim: lt, axis: tiling.frames)
+        let hIv = encodeIntervals(dim: lh, axis: tiling.height)
+        let wIv = encodeIntervals(dim: lw, axis: tiling.width)
+        if tIv.count == 1 && hIv.count == 1 && wIv.count == 1 { return encode(pixels) }
+
+        let B = pixels.dim(0)
+        var latentSum = MLXArray.zeros([B, 128, lt, lh, lw])
+        var weightSum = MLXArray.zeros([B, 128, lt, lh, lw])
+        for t in tIv { for y in hIv { for x in wIv {
+            // latent interval → pixel in_coords (map_temporal_slice / map_spatial_slice)
+            let pf0 = t.start * 8, pf1 = 1 + (t.end - 1) * 8
+            let tile = pixels[0..., 0..., pf0 ..< pf1, (y.start * 32) ..< (y.end * 32),
+                              (x.start * 32) ..< (x.end * 32)]
+            var lat = encode(tile).asType(.float32)           // (B,128,t,h,w)
+            let mt = MLXArray(trapezoidMask(length: t.end - t.start, leftRamp: t.leftRamp,
+                                            rightRamp: t.rightRamp, leftStartsFromZero: true))
+            let mh = MLXArray(trapezoidMask(length: y.end - y.start, leftRamp: y.leftRamp,
+                                            rightRamp: y.rightRamp, leftStartsFromZero: false))
+            let mw = MLXArray(trapezoidMask(length: x.end - x.start, leftRamp: x.leftRamp,
+                                            rightRamp: x.rightRamp, leftStartsFromZero: false))
+            let mask = mt.reshaped(1, 1, t.end - t.start, 1, 1)
+                * mh.reshaped(1, 1, 1, y.end - y.start, 1)
+                * mw.reshaped(1, 1, 1, 1, x.end - x.start)
+            lat = lat * mask
+            latentSum[0..., 0..., t.start ..< t.end, y.start ..< y.end, x.start ..< x.end] += lat
+            weightSum[0..., 0..., t.start ..< t.end, y.start ..< y.end, x.start ..< x.end] += mask
+            eval(latentSum, weightSum)                         // watchdog + free the tile graph
+        } } }
+        return latentSum / MLX.maximum(weightSum, MLXArray(Float(1e-8)))
+    }
+}
