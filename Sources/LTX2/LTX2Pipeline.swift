@@ -717,10 +717,20 @@ public final class LTX2Pipeline {
         // one-stage: this IS the largest stage. `denoiser` arms the gate (tiled or not).
         let engine = denoiser(dit, F: fLat, H: hLat, W: wLat, positions: videoPositions,
                               untiledTokens: nv + audioT, audioTokens: audioT)
+        // FIRST-LATENT-FRAME KEYFRAMES MASK (AB-T-0090). The oracle populates this in
+        // `create_initial_state` (`ltx_core/tools.py:184`) for EVERY state, on EVERY pipeline —
+        // "the reference implementation marks it unconditionally -- independently of whether any
+        // keyframe slots exist". The causal video encoder makes the target's first latent frame
+        // cover ONE pixel frame while later frames cover 8, which puts it in the same token class
+        // as a generated keyframe slot. Inert on 2.3 (no such weight in the checkpoint).
+        let kfMask = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: nv, tokensPerLatentFrame: hLat * wLat)
+            : nil
         let (vfinal, afinalOpt) = try DenoiseLoop.run(
             dit: engine, videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: videoPositions, audioPositions: audioPositions, label: "")
+            videoPositions: videoPositions, audioPositions: audioPositions,
+            keyframesMask: kfMask, label: "")
         // The loop returns nil audio only on the audio-free (DFR round) path; this one always
         // supplies an audio latent, so the unwrap cannot fail.
         let afinal = afinalOpt!
@@ -792,12 +802,25 @@ public final class LTX2Pipeline {
         let audioLatent = MLXRandom.normal([1, audioT, 128])
         _ = try ensureDiT()
         armStreamingGate(largestStageTokens: nv + audioT)  // one-stage i2v
+        // FIRST-LATENT-FRAME KEYFRAMES MASK (AB-T-0090). The oracle populates this in
+        // `create_initial_state` (`ltx_core/tools.py:184`) for EVERY state, on EVERY pipeline —
+        // "the reference implementation marks it unconditionally -- independently of whether any
+        // keyframe slots exist". The causal video encoder makes the target's first latent frame
+        // cover ONE pixel frame while later frames cover 8, which puts it in the same token class
+        // as a generated keyframe slot. Inert on 2.3 (no such weight in the checkpoint).
+        // ⚠️ Independent of `videoMask`: the denoise mask says which tokens are CONDITIONED,
+        // this says which are the first-latent-frame token class. i2v conditions frame 0 AND
+        // marks it; the two masks coincide here by coincidence, not by rule.
+        let kfMask = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: nv, tokensPerLatentFrame: frame0)
+            : nil
         let (vfinal, afinalOpt) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent, sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
             videoPositions: Positions.video(F: fLat, H: hLat, W: wLat, fps: Float(fps)),
             audioPositions: Positions.audio(tokens: audioT),
-            videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask)
+            videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask,
+            keyframesMask: kfMask)
         let afinal = afinalOpt!   // audio always supplied here (see t2v)
         eval(vfinal, afinal)
         quiesceStreaming()      // stop granule IO before the decode phase
@@ -893,6 +916,21 @@ public final class LTX2Pipeline {
             targetPositions: Positions.audio(tokens: audioT),
             references: audioReferences)
 
+        // FIRST-LATENT-FRAME KEYFRAMES MASK (AB-T-0090). The oracle populates this in
+        // `create_initial_state` (`ltx_core/tools.py:184`) for EVERY state, on EVERY pipeline —
+        // "the reference implementation marks it unconditionally -- independently of whether any
+        // keyframe slots exist". The causal video encoder makes the target's first latent frame
+        // cover ONE pixel frame while later frames cover 8, which puts it in the same token class
+        // as a generated keyframe slot. Inert on 2.3 (no such weight in the checkpoint).
+        // IC layout is TARGET-FIRST with references appended (`ICVideoState.build`), so the
+        // target's first latent frame is still tokens [0, hLat*wLat) and the appended reference
+        // tokens get 0 — matching the oracle, whose reference/keyframe-image conditionings all
+        // call `extend_keyframes_mask(..., marked=False)` while only keyframe SLOTS use
+        // `marked=True` (`ltx_core/conditioning/types/`).
+        let kfMask = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: state.latent.dim(1),
+                                                 tokensPerLatentFrame: hLat * wLat)
+            : nil
         let (vfull, afull) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: state.latent, audioLatent0: audioState.latent,
             sigmas: Positions.distilledSigmas,
@@ -902,7 +940,7 @@ public final class LTX2Pipeline {
             videoDenoiseMask: references.isEmpty ? nil : state.denoiseMask,
             audioCleanLatent: audioReferences.isEmpty ? nil : audioState.clean,
             audioDenoiseMask: audioReferences.isEmpty ? nil : audioState.denoiseMask,
-            label: "ic-")
+            keyframesMask: kfMask, label: "ic-")
         let vfinal = state.slice(vfull)
         let afinal = audioState.slice(afull!)   // audio always supplied here (see t2v)
         eval(vfinal, afinal)

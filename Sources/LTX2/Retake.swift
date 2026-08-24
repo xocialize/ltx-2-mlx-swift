@@ -115,14 +115,23 @@ extension LTX2Pipeline {
             return (mode == .replaceVideo) ? zerosA : aSpan
         }()
 
-        // 4. Noise + conditioned single-stage denoise (distilled sigmas, mirroring i2v: no
-        //    keyframes mask — TemporalRegionMask touches only the denoise mask, and our shipping
-        //    one-stage i2v does the same).
+        // 4. Noise + conditioned single-stage denoise (distilled sigmas).
+        //
+        // ⚠️ This comment used to read "mirroring i2v: no keyframes mask — TemporalRegionMask
+        // touches only the denoise mask, and our shipping one-stage i2v does the same". The first
+        // clause is true and the conclusion did not follow (AB-T-0090). `TemporalRegionMask` adds
+        // no keyframe SLOTS, but the oracle keeps slots and the first-latent-frame mask strictly
+        // separate: `create_initial_state` marks the first frame unconditionally, before any
+        // conditioning is applied. Citing i2v as precedent propagated one omission into four
+        // pipelines — t2v, i2v, icT2V and here.
         if let seed { MLXRandom.seed(seed) }
         let videoLatent = MLXRandom.normal([1, nv, 128])
         let audioLatent = MLXRandom.normal([1, audioT, 128])
         _ = try ensureDiT()
         armStreamingGate(largestStageTokens: nv + audioT)
+        let kfMask = isLTX25
+            ? Self.firstLatentFrameKeyframesMask(totalTokens: nv, tokensPerLatentFrame: hLat * wLat)
+            : nil
         let (vfinal, afinalOpt) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: videoLatent, audioLatent0: audioLatent,
             sigmas: Positions.distilledSigmas,
@@ -131,7 +140,8 @@ extension LTX2Pipeline {
             audioPositions: Positions.audio(tokens: audioT),
             videoCleanLatent: cleanVideo, videoDenoiseMask: videoMask,
             audioCleanLatent: cleanAudio ?? MLXArray.zeros([1, audioT, 128]),
-            audioDenoiseMask: audioMask)
+            audioDenoiseMask: audioMask,
+            keyframesMask: kfMask)
         let afinal = afinalOpt!
         eval(vfinal, afinal)
         quiesceStreaming()
