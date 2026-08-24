@@ -69,14 +69,33 @@ than by step count.
 
 ---
 
-## 4. ⚠️ "Render frames" often reports nothing, and it is slowest exactly then
+## 4. "Render frames" now reports a counter — but you learn the total only when it starts
 
-Frame decoding only reports a counter for **long clips**. A short clip at **high resolution** — the
-case where decoding takes longest — reports nothing at all.
+**This section previously warned that this node reports nothing at high resolution. That is fixed.**
+Frame decoding used to count **chunks**, and chunking only engages on long clips — so a short clip at
+high resolution, the case where decoding takes *longest*, reported nothing at all.
 
-**So the one node most likely to look stuck is the one least able to prove it isn't.** Design for
-it: this node needs the strongest "still working" affordance — a continuing pulse, an elapsed timer,
-or copy that sets the expectation ("this step takes the longest").
+It now counts **decode windows**, which is the work it actually does: `chunks × spatial tiles`. HD
+geometries are tiled 2×2, so the units were there all along. Concretely:
+
+| Geometry | Windows reported | Before |
+|---|---|---|
+| 1920×1088 × 121f | **4** (1 chunk × 4 tiles) | nothing |
+| 704×512, short | **1** (honest 1/1) | nothing |
+| 704×512, long clip | chunks × 1 | same as before |
+
+**One thing to design for:** the *total* is not in the plan up front. It depends on resolution,
+frame count, and decode-tuning overrides, so `RunStage.expectedSubSteps` is `nil` for this node
+while `emitsSubSteps` is `true`. Render it **indeterminate until its first report**, which carries
+the real denominator; from then on it is an ordinary counted node. Promising a number in the plan
+that the run then contradicts would be worse than promising none.
+
+The denominator is **constant within a run** and steps are strictly increasing, so a stepper will
+never jump backwards (gated: `--decode-progress-gate` case 4).
+
+⚠️ It is still the slowest node at HD (AB-R-0118 measured the HD peak as decode-bound), and 4 steps
+over many minutes is a *coarse* counter. Keep the "still working" affordance — an elapsed timer or
+copy setting the expectation — and do not treat 4 steps as a smooth bar.
 
 ---
 

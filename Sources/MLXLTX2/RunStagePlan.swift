@@ -101,6 +101,14 @@ public extension LTX2Configuration {
                 id: "denoise.1", phase: "denoise", occurrence: 1, title: "Generate",
                 detail: "First pass — composing the video and audio.",
                 emitsProgress: true, emitsSubSteps: true, expectedSubSteps: s1))
+            // upsample stays a BARE MARKER, deliberately (AB-T-0079 explicitly scoped it as
+            // "do it only if a natural loop exists; do NOT manufacture one"). It is one encoder
+            // call plus one upsampler call. The upsampler does contain `for i in 0..<4` res-block
+            // loops, but those are an implementation detail, not user-visible units of work —
+            // emitting 8 ticks for a step that finishes in seconds is precisely the fake heartbeat
+            // the ticket forbids, and a UI would render it as progress. Decode was fixed because
+            // its units (decode windows) are real; this one has none, so it stays honest and
+            // indeterminate.
             stages.append(RunStage(
                 id: "upsample", phase: "upsample", title: "Upscale",
                 detail: "Raising the latent to the target resolution.",
@@ -116,14 +124,22 @@ public extension LTX2Configuration {
                 emitsProgress: true, emitsSubSteps: true, expectedSubSteps: s1))
         }
 
-        // ⚠️ decode reports per-chunk ONLY on long clips: chunking requires
-        // `latentFrames > vaeChunkFrames + 2*halo`, which is FALSE at e.g. 1080p x 121f (16 vs 18).
-        // So `emitsSubSteps` is deliberately false here — the plan must not promise counts the run
-        // will not deliver, and this is exactly the case where decode is slowest (AB-R-0118).
+        // decode now ALWAYS reports countable sub-steps (AB-T-0079). It used to report per-CHUNK
+        // only, and chunking requires `latentFrames > vaeChunkFrames + 2*halo` — false at
+        // 1080p x 121f (16 vs 18), i.e. silent exactly where decode is slowest (AB-R-0118). The
+        // fix was not a new counter but a better unit: the phase counts DECODE WINDOWS
+        // (chunks x spatial tiles), and HD geometries are tiled 2x2, so the units were already
+        // there. A short 704x512 clip is one window and honestly reports 1/1.
+        //
+        // `expectedSubSteps` stays nil ON PURPOSE. The count is chunks x tiles, which depends on
+        // resolution, frame count, and the LTX_VAE_CHUNK / LTX_VAE_HALO / LTX_VAE_TILES overrides —
+        // none of which this plan is given. Promising a number here that the run then contradicts
+        // would be worse than promising none: render the node indeterminate until its first report
+        // carries the real total.
         stages.append(RunStage(
             id: "decode", phase: "decode", title: "Render frames",
             detail: "Decoding latents to pixels and audio.",
-            emitsProgress: true, emitsSubSteps: false, expectedSubSteps: nil))
+            emitsProgress: true, emitsSubSteps: true, expectedSubSteps: nil))
         stages.append(RunStage(
             id: "postprocess", phase: "postprocess", title: "Finish",
             detail: "Muxing video and audio into the final file.",

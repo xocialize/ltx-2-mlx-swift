@@ -109,15 +109,37 @@ public struct VideoVAEDecoder {
     /// compiled graph shape across all tile positions instead of a ragged edge shape. The first
     /// window still starts at cell 0 (clamp), so global-edge zero-padding matches the whole-frame
     /// decode exactly.
-    public func decodeSpatialTiled(_ latent: MLXArray, tilesH: Int, tilesW: Int, halo: Int) -> MLXArray {
+    /// How many REAL decode windows `decodeSpatialTiled` will run for this grid and tile spec.
+    /// Shared by the progress denominator so the count a UI is promised is the count the loop
+    /// actually performs — `tileBounds` drops empty tiles, so `tilesH * tilesW` is not always it.
+    public static func spatialTileCount(gridH: Int, gridW: Int, tilesH: Int, tilesW: Int) -> Int {
+        let nh = max(1, tilesH), nw = max(1, tilesW)
+        guard nh > 1 || nw > 1 else { return 1 }
+        return tileBounds(gridH, nh).count * tileBounds(gridW, nw).count
+    }
+
+    /// `progressTotal > 0` opts into per-tile `.decode` reporting, numbered from `progressBase`.
+    /// Each report corresponds to one FINISHED decode window — a real unit of work, not a
+    /// synthesised tick (AB-T-0079: a fake heartbeat is worse than an honest indeterminate node,
+    /// because a UI renders it as progress).
+    public func decodeSpatialTiled(_ latent: MLXArray, tilesH: Int, tilesW: Int, halo: Int,
+                                   progressBase: Int = 0, progressTotal: Int = 0) -> MLXArray {
         let nh = max(1, tilesH), nw = max(1, tilesW), h = max(0, halo)
-        guard nh > 1 || nw > 1 else { return decode(latent) }
+        guard nh > 1 || nw > 1 else {
+            let px = decode(latent)
+            // Untiled is ONE real window. Reporting 1/1 is honest; inventing more is not.
+            if progressTotal > 0 {
+                LTX2Progress.report(.decode, step: progressBase + 1, totalSteps: progressTotal)
+            }
+            return px
+        }
         let H = latent.dim(3), W = latent.dim(4)
         let rows = VideoVAEDecoder.tileBounds(H, nh), cols = VideoVAEDecoder.tileBounds(W, nw)
         let winH = min(H, (rows.map { $0.1 - $0.0 }.max() ?? H) + 2 * h)
         let winW = min(W, (cols.map { $0.1 - $0.0 }.max() ?? W) + 2 * h)
         let prof = MLXProfiler.shared
         var rowStrips: [MLXArray] = []
+        var tileIndex = 0
         for (r0, r1) in rows {
             var pieces: [MLXArray] = []
             for (c0, c1) in cols {
@@ -131,6 +153,10 @@ public struct VideoVAEDecoder {
                 eval(px)
                 prof.end(span)
                 pieces.append(px)
+                tileIndex += 1
+                if progressTotal > 0 {
+                    LTX2Progress.report(.decode, step: progressBase + tileIndex, totalSteps: progressTotal)
+                }
                 Memory.clearCache()   // keep the pool tile-bound (the decode's dominant allocation)
             }
             let strip = pieces.count == 1 ? pieces[0] : MLX.concatenated(pieces, axis: 4)
@@ -197,25 +223,37 @@ public struct VideoVAEDecoder {
         let F = latent.dim(2)
         let chunk = max(1, chunkFrames), h = max(1, halo)
         guard F > chunk else {
-            let px = decodeSpatialTiled(latent, tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
+            let tiles = VideoVAEDecoder.spatialTileCount(gridH: latent.dim(3), gridW: latent.dim(4),
+                                                         tilesH: spatialTilesH, tilesW: spatialTilesW)
+            let px = decodeSpatialTiled(latent, tilesH: spatialTilesH, tilesW: spatialTilesW,
+                                        halo: spatialHalo, progressBase: 0, progressTotal: tiles)
             eval(px)
             try sink(px)
             return
         }
         let prof = MLXProfiler.shared
         let totalChunks = (F + chunk - 1) / chunk
+        // ONE denominator for the whole phase: chunks x tiles, counted from the innermost loop.
+        // Reporting chunks here AND tiles inside would put two different totals on the same phase
+        // and make a stepper jump backwards. Spatial dims are identical across chunks, so
+        // tilesPerChunk is constant; when it is 1 this degrades exactly to the old per-chunk
+        // cadence, so long-clip runs are unchanged (AB-T-0079).
+        let tilesPerChunk = VideoVAEDecoder.spatialTileCount(gridH: latent.dim(3), gridW: latent.dim(4),
+                                                             tilesH: spatialTilesH, tilesW: spatialTilesW)
+        let totalUnits = totalChunks * tilesPerChunk
         var chunkIndex = 0
         var a = 0
         while a < F {
             try Task.checkCancellation()   // MVP-READINESS M3: per-chunk cancel point
             chunkIndex += 1
-            LTX2Progress.report(.decode, step: chunkIndex, totalSteps: totalChunks)
             let b = min(a + chunk, F)
             let ws = max(0, a - h), we = min(F, b + h)
             let hl = a - ws, hr = we - b
             let span = prof.begin("vae-decode", "chunk[\(a),\(b))", note: "window[\(ws),\(we)) halo(\(hl),\(hr))")
             var px = decodeSpatialTiled(latent[0..., 0..., ws ..< we],           // (1,3,8W−7,H,W)
-                                        tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo)
+                                        tilesH: spatialTilesH, tilesW: spatialTilesW, halo: spatialHalo,
+                                        progressBase: (chunkIndex - 1) * tilesPerChunk,
+                                        progressTotal: totalUnits)
             let startTrim = (a == 0) ? 0 : 8 * hl - 7
             let endTrim = (b == F) ? 0 : 8 * hr
             px = px[0..., 0..., startTrim ..< (px.dim(2) - endTrim)]

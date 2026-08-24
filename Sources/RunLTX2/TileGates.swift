@@ -47,6 +47,8 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
         try a2vContractGate()
     } else if args.contains("--keyframes-reach-gate") {
         try keyframesReachGate()
+    } else if args.contains("--decode-progress-gate") {
+        try decodeProgressGate(pruna: pruna)
     } else if args.contains("--vae-encode-tile-probe") {
         try vaeEncodeTileProbe()
     } else if args.contains("--vae-encode-tile-gate") {
@@ -346,7 +348,7 @@ func vaeTileBench(widthPx: Int, heightPx: Int, fLat: Int, tilesH: Int, tilesW: I
     }
 }
 
-private func loadDecoder(pruna: Bool) throws -> VideoVAEDecoder {
+func loadDecoder(pruna: Bool) throws -> VideoVAEDecoder {
     let file = pruna ? "vae_decoder_pruna.safetensors" : "vae_decoder.safetensors"
     let url = URL(fileURLWithPath: "\(vaeModelsDir)/\(file)")
     prewarmFiles([url])

@@ -479,7 +479,16 @@ public final class LTX2Pipeline {
         let tilesW = tileSpec.count > 1 ? tileSpec[1] : tilesH
         let fLat = spatial.dim(2)
         guard chunk > 0, fLat > chunk + 2 * halo else {
-            let px = vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo)
+            // 🔑 AB-T-0079 — THE DEAD ZONE. This branch is the WHOLE-CLIP decode, and it used to
+            // report a single bare marker. The chunking threshold is a FRAME-COUNT test on a phase
+            // whose cost is RESOLUTION-driven, so it is false exactly where decode is slowest:
+            // 1080p x 121f is fLat 16 vs chunk+2*halo 18 -> no chunks, no reports, and AB-R-0118
+            // measured the HD peak as decode-bound. The countable units were there all along —
+            // the spatial tiles this very call runs (2x2 = 4 windows at 1080p).
+            let tiles = VideoVAEDecoder.spatialTileCount(gridH: gridH, gridW: gridW,
+                                                         tilesH: tilesH, tilesW: tilesW)
+            let px = vae!.decodeSpatialTiled(spatial, tilesH: tilesH, tilesW: tilesW, halo: sHalo,
+                                             progressBase: 0, progressTotal: tiles)
             try sink(px)
             return
         }
