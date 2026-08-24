@@ -94,11 +94,26 @@ extension MLXLTX2Package {
         let muxAudio: MLXArray?
         let muxRate: Double
         if mode == VEditModes.replaceVideo, let src = sourceAudio {
-            muxAudio = src; muxRate = 16000
+            // FrameCodec's AAC writer rejects 16 kHz ("Cannot Encode Media", found by the e2e
+            // smoke) — upsample the reader's 16 kHz to 48 kHz with linear interpolation. The
+            // source is already band-limited to 8 kHz by the reader, so this loses nothing
+            // further; still a V1 caveat vs demuxing the original 48 kHz track untouched.
+            let t = src.dim(2)
+            let a = src.asType(.float32)
+            let nxt = MLX.concatenated([a[0..., 0..., 1 ..< t], a[0..., 0..., (t - 1) ..< t]], axis: 2)
+            let up = MLX.stacked([a, a * (2.0 / 3.0) + nxt * (1.0 / 3.0),
+                                  a * (1.0 / 3.0) + nxt * (2.0 / 3.0)], axis: 3)
+                .reshaped(1, 2, 3 * t)
+            eval(up)
+            muxAudio = up; muxRate = 48000
         } else {
             muxAudio = out.audio; muxRate = 48000
         }
-        let mp4 = try await encodeMP4(frames: out.video, fps: fps, audio: muxAudio,
+        // (B,C,F,H,W) → channels-last (B,F,H,W,C), exactly as the T2V mux path does — passing
+        // the raw pipeline layout hands the writer width=dim(3)=H and made AVFoundation refuse
+        // the session outright ("Cannot Open"; found by the e2e smoke).
+        let framesCL = out.video.transposed(0, 2, 3, 4, 1)
+        let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio,
                                 audioSampleRate: muxRate)
         return VEditResponse(video: Video(format: .mp4, data: mp4,
                                           durationSeconds: Double(out.video.dim(1)) / fps,

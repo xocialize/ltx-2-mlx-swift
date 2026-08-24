@@ -2395,6 +2395,8 @@ if args.contains("--connector-gate") {
     try ditPerTokenGate()
 } else if args.contains("--dit-full-gate") {
     try ditFullGate()
+} else if args.contains("--retake-smoke") {
+    try await retakeSmoke()
 } else if args.contains("--lora-gate25") {
     // AB-A-0015: does a 2.3-authored runtime LoRA apply on the 2.5 DiT?
     // usage: --lora-gate25 <lora.safetensors> [bf16|ditq8]
