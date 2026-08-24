@@ -1,25 +1,22 @@
 # RESUME — next session starts here
 
-> ✅ **LTX-2.5 is PUBLISHED, gate-green, ADMISSIBLE ON ALL FOUR TIERS, and Phase 1 + most of
-> Phase 2 are closed.** Everything committed and pushed; three repos clean.
+> ✅ **2026-08-23/24 — DESKTOP PARITY DELIVERED.** Local retake/extend on the DISTILLED checkpoint
+> ships as the `.videoEdit` surface (modes `replace_video`/`replace_audio`/`replace_audio_and_video`/
+> `extend`, span via `metaData retake.start/duration`, `extend.seconds`). Built on the new TILED VAE
+> ENCODE (vendor scheme, gated) + span masks on `runConditioned`. E2e smoke on real weights PASSES
+> (held 0.9926/0.9882, regenerated 0.9496). Board: **package 58/58 · retake-mask 4/4 ·
+> vae-encode-tile · retake-smoke**.
 >
-> ▶️ **NEXT = PHASE 2d, `probes/max128-streamed/run-max128-streamed.sh`** — the last unmeasured
-> tier+mode. It is a memory ACCEPTANCE measurement, so it **needs the dedicated slot**: serial only,
-> no `MLX_PROFILE`, no burn-in, worst-case never mean. Harness is staged, parses, smoke-tested,
-> and aborts if another `RunLTX2` is live.
-
-## ⏸️ Paused for an operator reboot
-
-Nothing running. `mlxengine-video-ltx`, `ltx-2-mlx-swift`, `ltx-2-mlx` all clean and pushed.
-Granules present: **35 G bf16 · 19 G q8** at `/Volumes/Satechi/Models/ltx-granules-25/`.
-
-🚨 **Two traps the 9f smoke test found — read before quoting ANY number from that run:**
-1. **The SPLIT line's `lane=` reports the CONFIG, not the gate outcome.** At 9f the gate fell back
-   resident on both passes and still printed `lane=STREAMED, peak 44.10 GB` — a RESIDENT number
-   under a STREAMED label. **Confirm the LAST `[BlockStreamer] gate:` line says STREAM first.**
-2. **Read the bind line for sweep sizes, never scale them.** bf16's sweep is **34.56 GiB**
-   (measured); scaling the on-disk DiT ratio gave 36.38e9, ~2% out, because int8 quantizes only the
-   block Linears while the sweep also carries tensors that never quantize.
+> 🔑 **The Desktop-parity gap list is now: a2v only** (deferred by choice — their API covers it; the
+> frozen-audio two-stage is the same machinery as retake). ⟲ Two label-vs-mechanism corrections en
+> route: retake needs NO dev+CFG (their shipping path is distilled — AB-A-0021 thread), and
+> camera_motion is NINE PROMPT SUFFIXES, not a LoRA (AB-R-0134) — parity is a dictionary in the
+> app's preset layer. cameraman-v2's NC licence stands but is a DIFFERENT, stronger feature.
+>
+> ⏭️ NEXT (port side, none app-blocking): a2v · the MPS comparison (env verified incl. mpsgraph_zc;
+> agree geometry+instrument first, AB-R-0131) · AB-T-0079/0080 progress dead zones + resolved
+> geometry · tiling time-cost on a burned-in box. ⚠️ Perceptual acceptance of retake is the
+> OPERATOR's, via the app driving real retakes — the smoke proves the contract, not the look.
 
 ## Where things stand
 
