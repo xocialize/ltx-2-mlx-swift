@@ -52,9 +52,38 @@ memory headroom, and a system-pressure signal for the "don't launch other apps" 
 **Static facts worth putting on the card** — known before the run starts: output size and length,
 quality tier, and whether weights are being streamed from disk.
 
-🚨 **Show the ACTUAL output size, not what was requested.** The pipeline silently reduces geometry
-to what the machine can handle — ask for 1280×704 on most tiers today and you get 704×512. The user
-must not discover that in the exported file.
+🚨 **Show the ACTUAL output size, not what was requested — and there is now an API for it.**
+
+```swift
+let geo = configuration.resolvedGeometry(width: 1200, height: 704, numFrames: 24)
+geo.summary          // "1200×704×24f → 1152×704×17f"
+geo.changed          // true
+geo.deliveredFrames  // 17   ← what the FILE will contain
+geo.notes            // ["snapped down to /64 for the two-stage spatial upsampler",
+                     //  "frames land on the 8k+1 grid (24 → 17)"]
+```
+
+`run()` calls this same function, so the preview cannot drift from the run. Call it alongside
+`plannedStages()` — both answer "what will this run do?" before it starts.
+
+**Three transforms are applied, and all three used to be invisible:**
+
+| Transform | Example |
+|---|---|
+| Tier envelope clamp | 1920×1088 → 1280×704 on standard64 |
+| Latent-grid snap (/32, or **/64** on two-stage tiers) | 1200 → 1152 |
+| 8k+1 frame grid | **24 frames → 17** |
+
+The frame one surprises people most: only exact 8k+1 counts (9, 17, 25, 33, …121) round-trip;
+anything else is reduced to the previous one. Use `deliveredFrames`, never the requested count, for
+duration and length copy.
+
+Show `notes` when `changed` is true — a reduced size the user understands is very different from one
+they discover in the exported file.
+
+⚠️ Currently request-derived, so it covers text/image-to-video. Retake, extend and a2v derive their
+geometry from the SOURCE clip instead (retake snaps /32, a2v /64), so their resolved size is not
+predictable from the request alone.
 
 ---
 

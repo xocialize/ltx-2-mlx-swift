@@ -244,33 +244,37 @@ public final class MLXLTX2Package: ModelPackage {
         }
         try Task.checkCancellation()
 
-        let fps = t2v.fps ?? 24
-        var h = t2v.height ?? 512, wd = t2v.width ?? 704, nf = t2v.numFrames ?? 9
-        // Tier profile (LOW-TIER-PLAN T3): CLAMP the request to the profile's envelope (what makes
-        // the declared `peakActivationBytesHint` honest), select the one-stage path on low tiers,
-        // and set the VAE decode window. `LTX_ONE_STAGE=1` forces one-stage for headless measurement.
+        // Geometry comes from the SHARED resolver (AB-T-0080), not from rules repeated here. A
+        // host can call `configuration.resolvedGeometry(...)` to learn the real output size before
+        // starting; that preview is only trustworthy because this is the same code path.
+        //
+        // ⚠️ MEASUREMENT-ONLY HATCH — `LTX_ENVELOPE_OVERRIDE=1` lifts the RESOLUTION clamp so a
+        // geometry the profile does NOT permit can be measured (the 720p/1080p viability runs).
+        // 🚨 A number from an overridden run can NEVER be an acceptance number: acceptance means
+        // "measured stage-max <= budget AT A GEOMETRY THE PROFILE ALLOWS", and this deliberately
+        // runs one it does not. Its only legitimate use is deciding whether a cap should MOVE —
+        // the same evidence-first path by which maxFrames went 241 -> 481.
+        // ⚠️ The FRAME cap is deliberately still enforced: the viability question is resolution,
+        // and lifting two envelope axes at once makes an over-budget result unattributable.
+        let envelopeOverride = ProcessInfo.processInfo.environment["LTX_ENVELOPE_OVERRIDE"] == "1"
+        let geo = configuration.resolvedGeometry(
+            width: t2v.width, height: t2v.height, numFrames: t2v.numFrames, fps: t2v.fps,
+            envelopeOverride: envelopeOverride)
+        let fps = geo.fps
+        let h = geo.height, wd = geo.width, nf = geo.numFrames
         if let p = configuration.profile {
-            // ⚠️ MEASUREMENT-ONLY HATCH — `LTX_ENVELOPE_OVERRIDE=1` lifts the RESOLUTION clamp so a
-            // geometry the profile does NOT permit can be measured (the 720p/1080p viability runs).
-            // 🚨 A number from an overridden run can NEVER be an acceptance number: acceptance means
-            // "measured stage-max <= budget AT A GEOMETRY THE PROFILE ALLOWS", and this deliberately
-            // runs one it does not. Its only legitimate use is deciding whether a cap should MOVE —
-            // the same evidence-first path by which maxFrames went 241 -> 481.
-            // ⚠️ The FRAME cap is deliberately still enforced: the viability question is resolution,
-            // and lifting two envelope axes at once makes an over-budget result unattributable.
-            if ProcessInfo.processInfo.environment["LTX_ENVELOPE_OVERRIDE"] == "1" {
+            if envelopeOverride {
                 FileHandle.standardError.write(Data(
                     ("⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows "
                      + "\(p.maxWidth)x\(p.maxHeight), running \(wd)x\(h)). MEASUREMENT ONLY; "
                      + "not an acceptance number.\n").utf8))
-                nf = min(nf, p.maxFrames)
-            } else {
-                wd = min(wd, p.maxWidth); h = min(h, p.maxHeight); nf = min(nf, p.maxFrames)
             }
-            wd = max(64, (wd / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
             pipeline.vaeChunkFrames = p.vaeChunkFrames
             pipeline.evictDiTBeforeDecode = p.evictDiTBeforeDecode
             pipeline.loraFactorQuantBits = p.loraFactorQuantBits
+        }
+        if geo.changed {
+            MLXProfiler.shared.note("resolved geometry: \(geo.summary) — \(geo.notes.joined(separator: "; "))")
         }
         let oneStage = configuration.profile?.oneStage
             ?? (ProcessInfo.processInfo.environment["LTX_ONE_STAGE"] == "1")

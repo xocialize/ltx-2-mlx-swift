@@ -147,3 +147,106 @@ public extension LTX2Configuration {
         return stages
     }
 }
+
+/// What a run will ACTUALLY produce, resolved from a request before the run starts (AB-T-0080).
+///
+/// The pipeline silently transforms geometry in three ways, and a caller previously discovered all
+/// of them in the exported file:
+///   * the tier envelope CLAMPS width/height/frames,
+///   * spatial dims snap DOWN to the latent grid,
+///   * frame counts snap DOWN to the 8k+1 grid — asking for 24 frames delivers **17**.
+public struct ResolvedGeometry: Sendable, Equatable {
+    /// Geometry the pipeline will run at.
+    public let width: Int, height: Int, numFrames: Int
+    /// Pixel frames the FILE will contain. Differs from `numFrames` whenever the request was not
+    /// already on the 8k+1 grid: the pipeline rounds to whole latent frames and emits `8·F−7`.
+    public let deliveredFrames: Int
+    public let fps: Double
+    /// Exactly what was asked for, so a host can explain the difference rather than just show it.
+    public let requestedWidth: Int, requestedHeight: Int, requestedNumFrames: Int
+
+    public var widthChanged: Bool { width != requestedWidth }
+    public var heightChanged: Bool { height != requestedHeight }
+    public var framesChanged: Bool { deliveredFrames != requestedNumFrames }
+    public var changed: Bool { widthChanged || heightChanged || framesChanged }
+
+    /// Human-readable reasons, in the order they were applied. Empty when nothing changed.
+    public let notes: [String]
+
+    public var summary: String {
+        changed
+            ? "\(requestedWidth)×\(requestedHeight)×\(requestedNumFrames)f → "
+              + "\(width)×\(height)×\(deliveredFrames)f"
+            : "\(width)×\(height)×\(deliveredFrames)f"
+    }
+}
+
+public extension LTX2Configuration {
+    /// Resolve a request to the geometry a run will actually use and deliver.
+    ///
+    /// 🔑 THIS IS THE SINGLE SOURCE OF TRUTH — `MLXLTX2Package.run` calls it rather than repeating
+    /// the rules. A resolver that merely *describes* the pipeline drifts from it, and a geometry
+    /// preview that disagrees with the run is worse than none.
+    ///
+    /// - Parameter envelopeOverride: mirrors `LTX_ENVELOPE_OVERRIDE=1`, the measurement-only hatch
+    ///   that lifts the RESOLUTION clamp (never the frame clamp).
+    func resolvedGeometry(width: Int? = nil, height: Int? = nil, numFrames: Int? = nil,
+                          fps: Double? = nil, envelopeOverride: Bool = false) -> ResolvedGeometry {
+        let reqW = width ?? 704, reqH = height ?? 512, reqF = numFrames ?? 9
+        var w = reqW, h = reqH, nf = reqF
+        var notes: [String] = []
+
+        if let p = profile {
+            if envelopeOverride {
+                if nf > p.maxFrames {
+                    notes.append("frames clamped to the \(p.rawValue) cap (\(p.maxFrames)); the "
+                        + "override lifts resolution only")
+                }
+                nf = min(nf, p.maxFrames)
+            } else {
+                if w > p.maxWidth || h > p.maxHeight {
+                    notes.append("clamped to the \(p.rawValue) envelope "
+                        + "(\(p.maxWidth)×\(p.maxHeight))")
+                }
+                if nf > p.maxFrames {
+                    notes.append("frames clamped to the \(p.rawValue) cap (\(p.maxFrames))")
+                }
+                w = min(w, p.maxWidth); h = min(h, p.maxHeight); nf = min(nf, p.maxFrames)
+            }
+            let preSnapW = w, preSnapH = h
+            w = max(64, (w / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
+            if w != preSnapW || h != preSnapH {
+                notes.append("snapped down to the /32 latent grid")
+            }
+
+            // ⚠️ TWO-STAGE NEEDS /64, NOT /32. The shipping spatial-x2 upsampler requires an EVEN
+            // stage-2 latent grid, so a /32-but-not-/64 target makes `resolveTwoStageGeometry`
+            // THROW — after the text encode has already run. Before this, a 1200-wide request on
+            // standard64 snapped to 1184 (latent 37, odd) and the run FAILED rather than being
+            // reduced. Resolving to a runnable geometry is the whole point of this API.
+            //
+            // Applied only when two-stage will actually run: the one-stage tiers have no upsampler
+            // in the loop, and compact24's 288 ceiling is an odd latent (9) that is perfectly legal
+            // there.
+            if !(profile?.oneStage ?? false) {
+                let pre = (w, h)
+                w = max(64, (w / 64) * 64); h = max(64, (h / 64) * 64)
+                if (w, h) != pre {
+                    notes.append("snapped down to /64 for the two-stage spatial upsampler")
+                }
+            }
+        }
+
+        // Frames: the pipeline rounds UP to whole latent frames and emits 8·F−7 pixels, so any
+        // request off the 8k+1 grid comes back SHORTER (24 → 17).
+        let fLat = (nf + 7) / 8
+        let delivered = 8 * fLat - 7
+        if delivered != reqF {
+            notes.append("frames land on the 8k+1 grid (\(reqF) → \(delivered))")
+        }
+
+        return ResolvedGeometry(
+            width: w, height: h, numFrames: nf, deliveredFrames: delivered, fps: fps ?? 24,
+            requestedWidth: reqW, requestedHeight: reqH, requestedNumFrames: reqF, notes: notes)
+    }
+}

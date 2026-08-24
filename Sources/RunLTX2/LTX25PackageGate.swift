@@ -547,8 +547,57 @@ func ltx25PackageGate() {
     check("59 audio_to_video is declared (the a2v Desktop-parity surface)",
           veditModes.contains("audio_to_video"), veditModes.sorted().joined(separator: ","))
 
+    // ── 60-66 · RESOLVED GEOMETRY (AB-T-0080) ───────────────────────────────────────────────
+    // The pipeline silently transforms a request three ways — envelope clamp, /32 (and /64) snap,
+    // and the 8k+1 frame grid — and a caller used to discover all three in the exported file.
+    // `resolvedGeometry` is the SINGLE SOURCE OF TRUTH: `run()` calls it, so these cases constrain
+    // the shipping path and not a parallel description of it.
+    let gStd = planS.resolvedGeometry(width: 1920, height: 1088, numFrames: 121)
+    check("60 an over-envelope HD request is clamped to the standard64 ceiling, and says so",
+          gStd.width == 1280 && gStd.height == 704 && gStd.changed
+              && gStd.notes.contains { $0.contains("envelope") },
+          "\(gStd.summary) notes=\(gStd.notes)")
+
+    // 🔑 THE DEFECT THIS API EXISTS TO STOP. 1200 snapped to /32 gives 1184 = latent 37, ODD, and
+    // the spatial-x2 second stage REJECTS an odd stage-2 latent grid — so the run threw
+    // `badGeometry` AFTER the text encode. A resolver that reported 1184 would be reporting a
+    // geometry that cannot run.
+    let gOdd = planS.resolvedGeometry(width: 1200, height: 704, numFrames: 33)
+    check("61 a width whose /32 snap is an ODD latent resolves to a RUNNABLE /64 geometry",
+          gOdd.width % 64 == 0 && (gOdd.width / 32) % 2 == 0 && gOdd.width == 1152,
+          "\(gOdd.width) (latent \(gOdd.width / 32))")
+    check("62 …and the reduction is explained, not silent",
+          gOdd.notes.contains { $0.contains("/64") }, gOdd.notes.joined(separator: "; "))
+
+    // Two-stage requires an even latent on BOTH axes; assert the invariant the upsampler enforces.
+    let evenBoth = (gStd.width / 32) % 2 == 0 && (gStd.height / 32) % 2 == 0
+    check("63 every two-stage resolution lands on an even latent grid (what x2 requires)",
+          evenBoth, "\(gStd.width / 32)×\(gStd.height / 32)")
+
+    // ⚠️ One-stage tiers must NOT get the /64 rule: compact24's 288 ceiling is latent 9 — odd, and
+    // perfectly legal with no upsampler in the loop. Applying /64 everywhere would silently drop
+    // compact24 from 288 to 256.
+    let gC = planC.resolvedGeometry(width: 512, height: 288, numFrames: 33)
+    check("64 one-stage tiers keep /32 (compact24 288 = odd latent 9 is legal there)",
+          gC.height == 288 && gC.width == 512, gC.summary)
+
+    // The 8k+1 grid: asking for 24 frames delivers 17. Silent today, and very visible in the file.
+    let gF = planS.resolvedGeometry(width: 704, height: 512, numFrames: 24)
+    check("65 frames report the DELIVERED 8k+1 count (24 → 17), with a reason",
+          gF.deliveredFrames == 17 && gF.framesChanged
+              && gF.notes.contains { $0.contains("8k+1") },
+          "delivered=\(gF.deliveredFrames) notes=\(gF.notes)")
+
+    // Discrimination: a request already on-grid and inside the envelope must report NO change.
+    // Without this, a resolver that always claimed "changed" would pass every case above.
+    let gClean = planS.resolvedGeometry(width: 704, height: 512, numFrames: 33)
+    check("66 an in-envelope, on-grid request is reported UNCHANGED (no false alarms)",
+          !gClean.changed && gClean.notes.isEmpty && gClean.deliveredFrames == 33
+              && gClean.width == 704 && gClean.height == 512,
+          "\(gClean.summary) notes=\(gClean.notes)")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (59/59)"
+          ? "[ltx25-package-gate] PASS ✅ (66/66)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
