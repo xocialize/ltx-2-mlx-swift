@@ -21,6 +21,27 @@ public enum VEditModes {
     public static let replaceAudio: Mode = "replace_audio"
     public static let replaceAudioAndVideo: Mode = "replace_audio_and_video"
     public static let extend: Mode = "extend"
+    /// a2v — generate video AGAINST a supplied audio track (the track is held frozen and comes
+    /// back unmodified). The audio rides `VEditRequest.video`: a clip whose audio drives the
+    /// generation, or an audio-only container (no video track ⇒ geometry falls back to the
+    /// request's width/height/numFrames, then to defaults). Filed as AB-A-0023 — the contract has
+    /// no audio-input field yet, the same reason retake's span rides metaData.
+    public static let audioToVideo: Mode = "audio_to_video"
+}
+
+/// Lift the 16 kHz reader output to 48 kHz by linear interpolation. FrameCodec's AAC writer
+/// REJECTS 16 kHz outright ("Cannot Encode Media", found by the e2e smoke), and the source is
+/// already band-limited to 8 kHz by the reader, so this loses nothing further — it is still a V1
+/// caveat versus demuxing the original 48 kHz track untouched.
+func upsample16to48(_ src: MLXArray) -> MLXArray {
+    let t = src.dim(2)
+    let a = src.asType(.float32)
+    let nxt = MLX.concatenated([a[0..., 0..., 1 ..< t], a[0..., 0..., (t - 1) ..< t]], axis: 2)
+    let up = MLX.stacked([a, a * (2.0 / 3.0) + nxt * (1.0 / 3.0),
+                          a * (1.0 / 3.0) + nxt * (2.0 / 3.0)], axis: 3)
+        .reshaped(1, src.dim(1), 3 * t)
+    eval(up)
+    return up
 }
 
 extension MLXLTX2Package {
@@ -41,6 +62,14 @@ extension MLXLTX2Package {
             nominalFPS = Double(try await track.load(.nominalFrameRate))
         }
         let fps = vedit.fps ?? nominalFPS
+
+        // a2v takes only the AUDIO from the container, so it branches before the frame read: an
+        // audio-only container has no video track to decode, and even for a real clip the source
+        // frames are never used (the video is generated from noise against the track).
+        if (vedit.mode ?? VEditModes.replaceAudioAndVideo) == VEditModes.audioToVideo {
+            return try await runAudioToVideo(vedit, pipeline: pipeline, source: tmp,
+                                            sourceDuration: srcDuration, natural: natural, fps: fps)
+        }
 
         // 2. Geometry: SOURCE-derived dims snap DOWN to /32 and never upscale (the vendor's
         //    video_resolution.py rule — opposite to generation's snap-UP /64), then clamp to the
@@ -104,18 +133,7 @@ extension MLXLTX2Package {
         let muxAudio: MLXArray?
         let muxRate: Double
         if mode == VEditModes.replaceVideo, let src = sourceAudio {
-            // FrameCodec's AAC writer rejects 16 kHz ("Cannot Encode Media", found by the e2e
-            // smoke) — upsample the reader's 16 kHz to 48 kHz with linear interpolation. The
-            // source is already band-limited to 8 kHz by the reader, so this loses nothing
-            // further; still a V1 caveat vs demuxing the original 48 kHz track untouched.
-            let t = src.dim(2)
-            let a = src.asType(.float32)
-            let nxt = MLX.concatenated([a[0..., 0..., 1 ..< t], a[0..., 0..., (t - 1) ..< t]], axis: 2)
-            let up = MLX.stacked([a, a * (2.0 / 3.0) + nxt * (1.0 / 3.0),
-                                  a * (1.0 / 3.0) + nxt * (2.0 / 3.0)], axis: 3)
-                .reshaped(1, 2, 3 * t)
-            eval(up)
-            muxAudio = up; muxRate = 48000
+            muxAudio = upsample16to48(src); muxRate = 48000
         } else {
             muxAudio = out.audio; muxRate = 48000
         }
@@ -126,7 +144,60 @@ extension MLXLTX2Package {
         let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio,
                                 audioSampleRate: muxRate)
         return VEditResponse(video: Video(format: .mp4, data: mp4,
-                                          durationSeconds: Double(out.video.dim(1)) / fps,
+                                          // framesCL is (B,F,H,W,C) — dim(1) is FRAMES here.
+                                          // `out.video` is (B,C,F,H,W), so its dim(1) is the
+                                          // channel count and reported 3/fps for every edit.
+                                          durationSeconds: Double(framesCL.dim(1)) / fps,
                                           frameRate: fps))
     }
+
+    /// a2v — generate video against a supplied audio track (`VEditModes.audioToVideo`).
+    ///
+    /// Mirrors LTX Desktop's `DistilledA2VPipeline` contract: two-stage distilled, audio frozen in
+    /// both stages, and the ORIGINAL waveform muxed back rather than the VAE round-trip.
+    func runAudioToVideo(_ vedit: VEditRequest, pipeline: LTX2Pipeline, source: URL,
+                         sourceDuration: Double, natural: CGSize, fps: Double) async throws -> VEditResponse {
+        // Geometry. Unlike retake there is no source video to match, so an explicit request wins,
+        // then the container's natural size, then the t2v default. Snap DOWN to /64, not /32: the
+        // spatial-x2 upsampler we ship needs the stage-2 latent grid even, and a /32-but-not-/64
+        // target would fail `resolveTwoStageGeometry` after the text encode had already run.
+        var w = vedit.width ?? Int(natural.width)
+        var h = vedit.height ?? Int(natural.height)
+        if let p = configuration.profile { w = min(w, p.maxWidth); h = min(h, p.maxHeight) }
+        w = max(64, (w / 64) * 64); h = max(64, (h / 64) * 64)
+
+        // Duration follows the AUDIO when the caller doesn't pin frames — a2v's premise is that
+        // the track is the ground truth, so the default is "cover the track", clamped to the tier.
+        var frames = vedit.numFrames ?? Int((sourceDuration * fps).rounded())
+        if let p = configuration.profile { frames = min(frames, p.maxFrames) }
+        frames = max(9, ((frames - 1) / 8) * 8 + 1)                       // 8k+1 grid
+
+        // Read the track at exactly the video's span. A longer track is truncated here, and a
+        // shorter one is zero-padded downstream in `encodeFrozenAudio` (Desktop pads too).
+        let waveform = try await AudioInput.referenceWaveform(
+            url: source, maxSeconds: Double(frames) / fps)
+
+        let forward: LTX2Progress.Sink = { e in
+            RunProgress.report(RunPhase(rawValue: e.phase.rawValue),
+                               step: e.step, totalSteps: e.totalSteps,
+                               stage: e.stage, totalStages: e.totalStages)
+        }
+        let out = try await LTX2Progress.$sink.withValue(forward) {
+            () async throws -> LTX2Pipeline.Output in
+            try await pipeline.audioToVideo(
+                prompt: vedit.prompt, audioWaveform: waveform,
+                height: h, width: w, numFrames: frames, fps: fps, seed: vedit.seed)
+        }
+
+        // `Output.audio` is the ORIGINAL 16 kHz waveform (a2v returns the track untouched), so it
+        // still needs the 48 kHz lift the AAC writer demands.
+        let muxAudio = out.audio.map { upsample16to48($0) }
+        let framesCL = out.video.transposed(0, 2, 3, 4, 1)                // (B,C,F,H,W) → (B,F,H,W,C)
+        let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio,
+                                      audioSampleRate: 48000)
+        return VEditResponse(video: Video(format: .mp4, data: mp4,
+                                          durationSeconds: Double(framesCL.dim(1)) / fps,
+                                          frameRate: fps))
+    }
+
 }

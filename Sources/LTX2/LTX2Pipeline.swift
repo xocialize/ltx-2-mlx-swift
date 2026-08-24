@@ -923,26 +923,29 @@ public final class LTX2Pipeline {
     /// Two-stage distilled t2v (the `generate --distilled` flow): stage-1 denoise at
     /// HALF resolution → unpatchify → encoder-stats denorm → upsampler 2× → renorm →
     /// re-patchify → stage-2 refine at full resolution. Requires `supportsTwoStage`.
-    public func t2vTwoStage(
-        prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
-        fps: Double = 24, seed: UInt64? = nil, streaming: StreamingSinks? = nil,
-        isolation: isolated (any Actor)? = #isolation
-    ) async throws -> Output {
-        guard hasEncoder, hasUpsampler else {
-            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed,
-                                 streaming: streaming)
-        }
+    /// Resolved stage-1/stage-2 latent grids for a two-stage run. Extracted verbatim out of
+    /// `t2vTwoStage` so `audioToVideo` reuses the SAME validation instead of a second copy that
+    /// can drift — the variant math is the part that silently denoises at the wrong resolution
+    /// when it is wrong, so it gets exactly one implementation.
+    struct TwoStageGeometry {
+        let variant: Upsampler.Variant
+        let fLat1: Int, hLat1: Int, wLat1: Int, fps1: Double
+        let fLat2: Int, hLat2: Int, wLat2: Int
+        var nv1: Int { fLat1 * hLat1 * wLat1 }
+        var nv2: Int { fLat2 * hLat2 * wLat2 }
+    }
 
-        // --- Variant-derived geometry (validated BEFORE any heavy phase) ---
-        // The upsampler variant fixes the stage-1 ↔ stage-2 latent relation:
-        //   x2:       (F, H/2, W/2) → (F, H, W)      target pixels ÷64
-        //   x1.5:     (F, 2H/3, 2W/3) → (F, H, W)    target pixels ÷96 (stage-1 latents
-        //             land even automatically, which the blur-downsample needs exact)
-        //   temporal: ((F+1)/2, H, W) → (F, H, W)    target latent frames ODD (the module
-        //             drops doubled frame 0), i.e. pixel frames ≡ 1 (mod 16); stage 1 runs
-        //             at fps/2 so both stages span the same seconds.
-        // x2 is upstream's composition; x1.5/temporal two-stage is OURS (no oracle or
-        // upstream consumer exists — see `upsamplerFile`).
+    /// The upsampler variant fixes the stage-1 ↔ stage-2 latent relation:
+    ///   x2:       (F, H/2, W/2) → (F, H, W)      target pixels ÷64
+    ///   x1.5:     (F, 2H/3, 2W/3) → (F, H, W)    target pixels ÷96 (stage-1 latents
+    ///             land even automatically, which the blur-downsample needs exact)
+    ///   temporal: ((F+1)/2, H, W) → (F, H, W)    target latent frames ODD (the module
+    ///             drops doubled frame 0), i.e. pixel frames ≡ 1 (mod 16); stage 1 runs
+    ///             at fps/2 so both stages span the same seconds.
+    /// x2 is upstream's composition; x1.5/temporal two-stage is OURS (no oracle or upstream
+    /// consumer exists — see `upsamplerFile`). Validated BEFORE any heavy phase.
+    func resolveTwoStageGeometry(height: Int, width: Int, numFrames: Int,
+                                 fps: Double) throws -> TwoStageGeometry {
         guard FileManager.default.fileExists(atPath: upsamplerURL.path) else {
             throw TwoStageError.upsamplerMissing(upsamplerURL.path)
         }
@@ -975,11 +978,31 @@ public final class LTX2Pipeline {
             }
             (fLat1, hLat1, wLat1, fps1) = ((fLat2 + 1) / 2, latH2, latW2, fps / 2)
         }
+        return TwoStageGeometry(variant: variant, fLat1: fLat1, hLat1: hLat1, wLat1: wLat1,
+                                fps1: fps1, fLat2: fLat2, hLat2: latH2, wLat2: latW2)
+    }
+
+    public func t2vTwoStage(
+        prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
+        fps: Double = 24, seed: UInt64? = nil, streaming: StreamingSinks? = nil,
+        isolation: isolated (any Actor)? = #isolation
+    ) async throws -> Output {
+        guard hasEncoder, hasUpsampler else {
+            return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed,
+                                 streaming: streaming)
+        }
+
+        // --- Variant-derived geometry (see `resolveTwoStageGeometry`) ---
+        let geo = try resolveTwoStageGeometry(height: height, width: width,
+                                              numFrames: numFrames, fps: fps)
+        let variant = geo.variant
+        let (fLat1, hLat1, wLat1, fps1) = (geo.fLat1, geo.hLat1, geo.wLat1, geo.fps1)
+        let (fLat2, latH2, latW2) = (geo.fLat2, geo.hLat2, geo.wLat2)
         let audioT = Positions.audioTokenCount(numFrames: numFrames, fps: fps)
         let s2 = Positions.stage2Sigmas
         let sigma0 = s2[0]
-        let nv2 = fLat2 * latH2 * latW2        // stage-2 (target-res) video token count
-        let nv1 = fLat1 * hLat1 * wLat1        // stage-1 token count
+        let nv2 = geo.nv2                      // stage-2 (target-res) video token count
+        let nv1 = geo.nv1                      // stage-1 token count
         MLXProfiler.shared.beginRun(String(format:
             "t2vTwoStage %dx%d %df fps=%.0f | %@ | fLat=%d→%d nv1=%d nv2=%d audioT=%d | steps s1=%d s2=%d",
             width, height, numFrames, fps, variant.rawValue, fLat1, fLat2, nv1, nv2, audioT,

@@ -539,11 +539,16 @@ func ltx25PackageGate() {
     // not in a shipped picker.
     let veditModes = Set((veditSurface?.supportedModes ?? []).map(\.rawValue))
     check("58 videoEdit modes are the Desktop-parity set",
-          veditModes == ["replace_video", "replace_audio", "replace_audio_and_video", "extend"],
+          veditModes == ["replace_video", "replace_audio", "replace_audio_and_video", "extend",
+                         "audio_to_video"],
           veditModes.sorted().joined(separator: ","))
+    // ── 59 · a2v is the LAST Desktop local-feature gap (AB-D-0044). Pinned separately from 58
+    //         so dropping it from the set names the missing feature instead of printing a diff.
+    check("59 audio_to_video is declared (the a2v Desktop-parity surface)",
+          veditModes.contains("audio_to_video"), veditModes.sorted().joined(separator: ","))
 
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (58/58)"
+          ? "[ltx25-package-gate] PASS ✅ (59/59)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

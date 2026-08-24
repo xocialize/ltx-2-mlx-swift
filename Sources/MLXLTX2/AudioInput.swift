@@ -10,11 +10,11 @@ import Foundation
 import MLX
 import MLXToolKit
 
-enum AudioInput {
+public enum AudioInput {   // public to match `VideoInput` — the a2v smoke reads tracks back
 
     /// Decode `url`'s (first) audio track → (1, 2, T) float32 at `sampleRate`. `maxSeconds`
     /// trims long sources to the clip span (LipDub aligns the dub to the video duration).
-    static func referenceWaveform(url: URL, sampleRate: Double = 16000,
+    public static func referenceWaveform(url: URL, sampleRate: Double = 16000,
                                   maxSeconds: Double? = nil) async throws -> MLXArray {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {

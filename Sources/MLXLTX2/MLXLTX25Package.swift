@@ -137,14 +137,20 @@ public final class MLXLTX25Package: ModelPackage {
                 // a fortnight ago; fixed while adding the surface below rather than shipped stale.
                 VEditContract.descriptor(
                     name: "ltx-2.5-vedit",
-                    summary: "Local retake/extend on the SAME distilled checkpoint (Desktop-parity, "
-                        + "AB-R-0133): regenerate a temporal span of a source clip "
-                        + "(modes replace_video / replace_audio / replace_audio_and_video, span via "
-                        + "metaData retake.start/retake.duration) or extend it (mode extend, "
-                        + "extend.seconds) with a 0.5 s blend feather. Source dims snap DOWN to "
-                        + "/32 — the user's footage is never upscaled.",
+                    summary: "Local retake/extend/a2v on the SAME distilled checkpoint "
+                        + "(Desktop-parity, AB-R-0133 / AB-D-0044): regenerate a temporal span of a "
+                        + "source clip (modes replace_video / replace_audio / "
+                        + "replace_audio_and_video, span via metaData "
+                        + "retake.start/retake.duration) or extend it (mode extend, "
+                        + "extend.seconds) with a 0.5 s blend feather — source dims snap DOWN to "
+                        + "/32, the user's footage is never upscaled. Mode audio_to_video takes "
+                        + "only the AUDIO from the supplied container and generates video against "
+                        + "it (two-stage distilled, track held frozen and returned unmodified); "
+                        + "its geometry snaps DOWN to /64 for the spatial-x2 second stage and "
+                        + "defaults to covering the track's duration.",
                     modes: [VEditModes.replaceVideo, VEditModes.replaceAudio,
-                            VEditModes.replaceAudioAndVideo, VEditModes.extend])
+                            VEditModes.replaceAudioAndVideo, VEditModes.extend,
+                            VEditModes.audioToVideo])
             ]
         )
     }

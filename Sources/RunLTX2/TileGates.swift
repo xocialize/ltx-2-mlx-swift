@@ -43,6 +43,8 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
         try retakeMaskGate()
     } else if args.contains("--frozen-sigma-gate") {
         try frozenSigmaGate()
+    } else if args.contains("--a2v-contract-gate") {
+        try a2vContractGate()
     } else if args.contains("--vae-encode-tile-probe") {
         try vaeEncodeTileProbe()
     } else if args.contains("--vae-encode-tile-gate") {
