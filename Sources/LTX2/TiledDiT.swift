@@ -25,12 +25,16 @@ import MLXProfiling
 /// `audioLatent == nil` is the AUDIO-FREE forward (oracle `run_ax`) — see `DiT.callAsFunction`.
 /// The returned audio is nil exactly when the input was.
 public protocol LTXDenoiser {
+    /// `videoSigma`/`audioSigma` override the PER-MODALITY scalar timestep (oracle
+    /// `Modality.sigma`); nil ⇒ both fall back to the shared `sigma`, which is every
+    /// pre-existing caller and stays byte-identical. See `DiT.callAsFunction`.
     func callAsFunction(
         videoLatent: MLXArray, audioLatent: MLXArray?, sigma: MLXArray,
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray?, audioTimesteps: MLXArray?,
-        keyframesMask: MLXArray?
+        keyframesMask: MLXArray?,
+        videoSigma: MLXArray?, audioSigma: MLXArray?
     ) -> (video: MLXArray, audio: MLXArray?)
 }
 
@@ -50,7 +54,8 @@ public struct TiledDiT: LTXDenoiser {
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
-        keyframesMask: MLXArray? = nil
+        keyframesMask: MLXArray? = nil,
+        videoSigma: MLXArray? = nil, audioSigma: MLXArray? = nil
     ) -> (video: MLXArray, audio: MLXArray?) {
         let B = videoLatent.dim(0), D = videoLatent.dim(2)
         var videoOut = MLXArray.zeros([B, videoLatent.dim(1), D]).asType(videoLatent.dtype)
@@ -83,7 +88,9 @@ public struct TiledDiT: LTXDenoiser {
                 videoText: videoText, audioText: audioText,
                 videoPositions: tPositions, audioPositions: audioPositions,
                 videoTimesteps: tTimesteps, audioTimesteps: audioTimesteps,
-                keyframesMask: tKeyframes)
+                keyframesMask: tKeyframes,
+                // Scalar (not per-token) ⇒ forwarded whole; there is nothing to slice per tile.
+                videoSigma: videoSigma, audioSigma: audioSigma)
 
             videoOut = tiler.blend(vOut, tile: tile, into: videoOut)
             if let aOut { audioParts.append(aOut) }

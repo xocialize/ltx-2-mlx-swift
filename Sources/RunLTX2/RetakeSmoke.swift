@@ -35,8 +35,31 @@ func retakeSmoke() async throws {
                              seed: 4242, mode: VEditModes.replaceVideo,
                              metaData: [RetakeMetaKeys.start: .double(0.375),
                                         RetakeMetaKeys.duration: .double(0.625)])
-    let out = try await pkg.run(vedit) as! VEditResponse
+    // PROGRESS BRIDGE (AB-A-0021 small ask). `runVideoEdit` used to install no core→engine
+    // forward, so a retake reported nothing on the RunProgress plane while the app watched an
+    // idle bar for minutes. Bind the sink the way the engine does and require real traffic:
+    // an un-bridged build reaches the assertion with an EMPTY tally, so this fails closed.
+    let tally = ProgressTally()
+    let out = try await RunProgress.$sink.withValue({ r in tally.add(r) }) {
+        () async throws -> VEditResponse in
+        try await pkg.run(vedit) as! VEditResponse
+    }
     print("[retake-smoke]     retake mp4 \(out.video.data.count / 1024) KB")
+    let phases = tally.phases()
+    print("[retake-smoke]     progress phases: \(phases.sorted().joined(separator: ", ")) "
+        + "(\(tally.count()) reports)")
+    // Denoise is the long pole — a bridge that only carried a start/finish event would leave the
+    // bar frozen exactly where it was before, so require the STEPPED phase specifically.
+    guard phases.contains(RunPhase.denoise.rawValue) else {
+        print("[retake-smoke] FAIL ❌ — no '\(RunPhase.denoise.rawValue)' reports reached "
+            + "RunProgress; the videoEdit progress bridge is not installed")
+        exit(1)
+    }
+    guard tally.maxSteps() > 1 else {
+        print("[retake-smoke] FAIL ❌ — denoise reported \(tally.maxSteps()) total steps; the "
+            + "stepper has nothing to count")
+        exit(1)
+    }
 
     print("[retake-smoke] 3/3 span contract on decoded frames…")
     let dir = FileManager.default.temporaryDirectory
@@ -70,4 +93,22 @@ func retakeSmoke() async throws {
     print(pass ? "[retake-smoke] PASS ✅ — span held outside, regenerated inside"
                : "[retake-smoke] FAIL ❌")
     if !pass { exit(1) }
+}
+
+/// Thread-safe tally for the progress assertions above — `RunProgress.Sink` is `@Sendable` and
+/// the core reports from whatever task the pipeline is running on.
+final class ProgressTally: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: Set<String> = []
+    private var n = 0
+    private var maxTotal = 0
+    func add(_ r: RunPhaseReport) {
+        lock.lock(); defer { lock.unlock() }
+        seen.insert(r.phase.rawValue)
+        n += 1
+        if r.phase == .denoise, let t = r.totalSteps { maxTotal = max(maxTotal, t) }
+    }
+    func phases() -> Set<String> { lock.lock(); defer { lock.unlock() }; return seen }
+    func count() -> Int { lock.lock(); defer { lock.unlock() }; return n }
+    func maxSteps() -> Int { lock.lock(); defer { lock.unlock() }; return maxTotal }
 }

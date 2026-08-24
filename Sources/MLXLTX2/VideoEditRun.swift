@@ -61,17 +61,27 @@ extension MLXLTX2Package {
         // 4. Mode + span from metaData.
         let mode = vedit.mode ?? VEditModes.replaceAudioAndVideo
         func metaDouble(_ key: String) -> Double? { vedit.metaData[key]?.asFloat.map(Double.init) }
-        let out: LTX2Pipeline.Output
-        if mode == VEditModes.extend {
-            guard let add = metaDouble(RetakeMetaKeys.extendSeconds), add > 0 else {
-                throw PackageError.configurationMismatch(
-                    expected: "metaData[\(RetakeMetaKeys.extendSeconds)] > 0 for extend",
-                    got: "absent or non-positive")
+        // Run-phase progress: the same core→engine bridge the T2V path installs
+        // (`MLXLTX2Package.swift`, "Run-phase progress"). Without it a retake ran completely
+        // dark — the core emitted its encode/denoise/decode phases into an unbound task-local
+        // and the engine's RunProgress plane saw nothing (the app's AB-A-0021 small ask).
+        let forward: LTX2Progress.Sink = { e in
+            RunProgress.report(RunPhase(rawValue: e.phase.rawValue),
+                               step: e.step, totalSteps: e.totalSteps,
+                               stage: e.stage, totalStages: e.totalStages)
+        }
+        let out: LTX2Pipeline.Output = try await LTX2Progress.$sink.withValue(forward) {
+            () async throws -> LTX2Pipeline.Output in
+            if mode == VEditModes.extend {
+                guard let add = metaDouble(RetakeMetaKeys.extendSeconds), add > 0 else {
+                    throw PackageError.configurationMismatch(
+                        expected: "metaData[\(RetakeMetaKeys.extendSeconds)] > 0 for extend",
+                        got: "absent or non-positive")
+                }
+                return try await pipeline.extend(
+                    prompt: vedit.prompt, sourcePixels: pixels, sourceAudioWaveform: sourceAudio,
+                    fps: fps, addSeconds: add, seed: vedit.seed)
             }
-            out = try await pipeline.extend(
-                prompt: vedit.prompt, sourcePixels: pixels, sourceAudioWaveform: sourceAudio,
-                fps: fps, addSeconds: add, seed: vedit.seed)
-        } else {
             guard let start = metaDouble(RetakeMetaKeys.start),
                   let duration = metaDouble(RetakeMetaKeys.duration), duration > 0 else {
                 throw PackageError.configurationMismatch(
@@ -83,7 +93,7 @@ extension MLXLTX2Package {
             case VEditModes.replaceAudio: .replaceAudio
             default: .replaceAudioAndVideo
             }
-            out = try await pipeline.retake(
+            return try await pipeline.retake(
                 prompt: vedit.prompt, sourcePixels: pixels, sourceAudioWaveform: sourceAudio,
                 fps: fps, start: start, duration: duration, mode: rmode, seed: vedit.seed)
         }

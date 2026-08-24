@@ -32,18 +32,25 @@ public enum DenoiseLoop {
     /// drive the DiT's per-token AdaLN path.
     ///
     /// `audioLatent == nil` ⇒ the audio-free forward (oracle `run_ax`); the audio x0 is nil too.
+    /// `videoFrozen`/`audioFrozen` forward the oracle's frozen-modality rule
+    /// (`utils/helpers.py:478`): a frozen modality's SCALAR timestep is zero, not the step sigma.
+    /// The per-token timesteps are already zero through its all-zero denoise mask; this covers the
+    /// two scalar consumers that mask cannot reach (that side's AV-cross gate + prompt AdaLN).
     static func x0(
         _ dit: any LTXDenoiser, videoLatent: MLXArray, audioLatent: MLXArray?, sigma: Float,
         videoText: MLXArray?, audioText: MLXArray?, videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
-        keyframesMask: MLXArray? = nil
+        keyframesMask: MLXArray? = nil,
+        videoFrozen: Bool = false, audioFrozen: Bool = false
     ) -> (MLXArray, MLXArray?) {
         let (vv, av) = dit(
             videoLatent: videoLatent, audioLatent: audioLatent, sigma: MLXArray([sigma]),
             videoText: videoText, audioText: audioText,
             videoPositions: videoPositions, audioPositions: audioPositions,
             videoTimesteps: videoTimesteps, audioTimesteps: audioTimesteps,
-            keyframesMask: keyframesMask)
+            keyframesMask: keyframesMask,
+            videoSigma: videoFrozen ? MLXArray([Float(0)]) : nil,
+            audioSigma: audioFrozen ? MLXArray([Float(0)]) : nil)
         let vSigma = videoTimesteps.map { $0.asType(.float32).expandedDimensions(axis: -1) }  // (B,N,1)
         let aSigma = audioTimesteps.map { $0.asType(.float32).expandedDimensions(axis: -1) }
         let vx0 = videoLatent.asType(.float32) - (vSigma ?? MLXArray(sigma)) * vv.asType(.float32)
@@ -210,6 +217,17 @@ public enum DenoiseLoop {
         if let clean = videoCleanLatent, let m = videoDenoiseMask { vx = applyDenoiseMask(vx, clean: clean, mask: m) }
         if let a = ax, let clean = audioCleanLatent, let m = audioDenoiseMask { ax = applyDenoiseMask(a, clean: clean, mask: m) }
         let vN = vx.dim(1), aN = ax?.dim(1) ?? 0
+        // FROZEN-MODALITY detection, once (the masks don't change across steps). The oracle sets
+        // `denoise_mask = zeros_like(...)` exactly when `ModalitySpec.frozen`, so an all-zero mask
+        // IS the frozen flag — no new parameter needed, and every caller (retake's frozen
+        // modality, i2v, icT2V) inherits the rule. A nil mask means "denoise everything" ⇒ live
+        // sigma; a partially-zero mask (i2v conditioning) is not frozen either.
+        func isFrozen(_ mask: MLXArray?) -> Bool {
+            guard let mask else { return false }
+            return MLX.max(MLX.abs(mask)).item(Float.self) == 0
+        }
+        let videoFrozen = isFrozen(videoDenoiseMask)
+        let audioFrozen = ax == nil ? false : isFrozen(audioDenoiseMask)
         var prevIn: MLXArray?, prevVX0: MLXArray?, prevAX0: MLXArray?
         for i in 0 ..< (sigmas.count - 1) {
             try Task.checkCancellation()   // MVP-READINESS M3: per-step cancel point
@@ -225,7 +243,8 @@ public enum DenoiseLoop {
                                 videoText: videoText, audioText: audioText,
                                 videoPositions: videoPositions, audioPositions: audioPositions,
                                 videoTimesteps: vts, audioTimesteps: ats,
-                                keyframesMask: keyframesMask)
+                                keyframesMask: keyframesMask,
+                                videoFrozen: videoFrozen, audioFrozen: audioFrozen)
             if logStepDeltas {
                 if let pIn = prevIn, let pV = prevVX0 {
                     let aCos = zip2(prevAX0, ax0).map { cosine($0, $1) } ?? Float.nan

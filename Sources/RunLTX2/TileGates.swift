@@ -41,6 +41,8 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
         try vaeRFProbe(pruna: pruna)
     } else if args.contains("--retake-mask-gate") {
         try retakeMaskGate()
+    } else if args.contains("--frozen-sigma-gate") {
+        try frozenSigmaGate()
     } else if args.contains("--vae-encode-tile-probe") {
         try vaeEncodeTileProbe()
     } else if args.contains("--vae-encode-tile-gate") {

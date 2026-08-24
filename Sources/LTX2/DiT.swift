@@ -139,6 +139,16 @@ public struct DiT {
     /// audio mirror) go per-token; the AV-cross gate + prompt AdaLN ALWAYS use the scalar timestep
     /// (text/gate embeddings don't correspond to individual latent tokens). nil ⇒ scalar t2v path.
     ///
+    /// `videoSigma`/`audioSigma` (B,) override that scalar PER MODALITY. The oracle carries the
+    /// scalar on `Modality.sigma` — one per modality — and `modality_from_latent_state`
+    /// (`utils/helpers.py:478`) forces it to ZERO for a FROZEN modality "so prompt AdaLN and
+    /// cross-modality gates match frozen conditioning". A frozen modality's per-token timesteps
+    /// are already zero via its all-zero denoise mask, but the two SCALAR consumers on its side
+    /// — its `av_ca_*_gate_adaln_single` and its `*prompt_adaln_single` — are not covered by that
+    /// mask, so a shared live sigma mis-conditions them. This is NOT cosmetic even when the frozen
+    /// modality's own output is discarded: its hidden states still reach the other modality through
+    /// AV cross-attention. nil ⇒ fall back to `sigma` (every pre-existing caller; byte-identical).
+    ///
     /// ⚠️ `audioLatent == nil` is the **AUDIO-FREE forward** (`run_ax` in oracle `model.py:414` /
     /// `transformer.py:269`; upstream spells the same thing as `ax.numel() > 0`). Video still runs
     /// — it just loses its A2V cross-attention contribution, which is a REAL change to the video
@@ -149,7 +159,8 @@ public struct DiT {
         videoText: MLXArray?, audioText: MLXArray?,
         videoPositions: MLXArray, audioPositions: MLXArray?,
         videoTimesteps: MLXArray? = nil, audioTimesteps: MLXArray? = nil,
-        keyframesMask: MLXArray? = nil
+        keyframesMask: MLXArray? = nil,
+        videoSigma: MLXArray? = nil, audioSigma: MLXArray? = nil
     ) -> (video: MLXArray, audio: MLXArray?) {
         let vd = cfg.videoDim, ad = cfg.audioDim, tED = cfg.timestepEmbeddingDim
         let runAX = audioLatent != nil
@@ -168,13 +179,24 @@ public struct DiT {
             videoHidden = videoHidden + marked * kfEmb.asType(videoHidden.dtype)
         }
 
-        let t = sigma.asType(.float32)
-        let tEmb = timestepEmbedding(t * cfg.timestepScaleMultiplier, tED)
         let avFactor = cfg.avCaTimestepScaleMultiplier / cfg.timestepScaleMultiplier
-        let tEmbAvGate = timestepEmbedding(t * cfg.timestepScaleMultiplier * avFactor, tED)
-        // Per-token timestep embedding (B,N,tED) when provided; else reuse the scalar tEmb.
+        // VIDEO-lane scalar embeddings. `videoSigma ?? sigma` keeps every existing caller exact.
+        let tV = (videoSigma ?? sigma).asType(.float32)
+        let tEmb = timestepEmbedding(tV * cfg.timestepScaleMultiplier, tED)
+        let tEmbAvGate = timestepEmbedding(tV * cfg.timestepScaleMultiplier * avFactor, tED)
+        // AUDIO-lane scalar embeddings. Only recomputed when an audio-specific scalar was passed —
+        // otherwise these ARE the video-lane arrays, so the untouched paths add no graph nodes.
+        let tEmbA: MLXArray, tEmbAvGateA: MLXArray
+        if let audioSigma {
+            let tA = audioSigma.asType(.float32)
+            tEmbA = timestepEmbedding(tA * cfg.timestepScaleMultiplier, tED)
+            tEmbAvGateA = timestepEmbedding(tA * cfg.timestepScaleMultiplier * avFactor, tED)
+        } else {
+            tEmbA = tEmb; tEmbAvGateA = tEmbAvGate
+        }
+        // Per-token timestep embedding (B,N,tED) when provided; else reuse the lane's scalar.
         let videoTEmb = videoTimesteps.map { timestepEmbedding($0.asType(.float32) * cfg.timestepScaleMultiplier, tED) } ?? tEmb
-        let audioTEmb = audioTimesteps.map { timestepEmbedding($0.asType(.float32) * cfg.timestepScaleMultiplier, tED) } ?? tEmb
+        let audioTEmb = audioTimesteps.map { timestepEmbedding($0.asType(.float32) * cfg.timestepScaleMultiplier, tED) } ?? tEmbA
 
         let (videoAdaln, videoEmbeddedTs) = adalnSingle(videoTEmb, "adaln_single", 9, vd)
         let (avCaVideo, _) = adalnSingle(videoTEmb, "av_ca_video_scale_shift_adaln_single", 4, vd)
@@ -182,8 +204,8 @@ public struct DiT {
         let (videoPrompt, _) = adalnSingle(tEmb, "prompt_adaln_single", 2, vd)
         let (audioAdaln, audioEmbeddedTs) = adalnSingle(audioTEmb, "audio_adaln_single", 9, ad)
         let (avCaAudio, _) = adalnSingle(audioTEmb, "av_ca_audio_scale_shift_adaln_single", 4, ad)
-        let (avV2aGate, _) = adalnSingle(tEmbAvGate, "av_ca_v2a_gate_adaln_single", 1, ad)
-        let (audioPrompt, _) = adalnSingle(tEmb, "audio_prompt_adaln_single", 2, ad)
+        let (avV2aGate, _) = adalnSingle(tEmbAvGateA, "av_ca_v2a_gate_adaln_single", 1, ad)
+        let (audioPrompt, _) = adalnSingle(tEmbA, "audio_prompt_adaln_single", 2, ad)
 
         let videoRope = ropeFreqs(videoPositions, cfg.videoNumHeads, cfg.videoHeadDim,
                                   maxPos: Array(cfg.positionalMaxPos.prefix(videoPositions.dim(-1))))
