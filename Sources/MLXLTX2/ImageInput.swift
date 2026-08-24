@@ -2,9 +2,24 @@
 //
 // The VAE encoder wants pixels (1, 3, 1, H, W) in [-1,1] at the target video resolution.
 // We decode the image bytes (CoreGraphics), aspect-fill center-crop to (W×H) — the bitmap
-// context is already top-row-first, no flip — and normalize. NOTE: the oracle also runs a lossy H.264
-// CRF round-trip (default crf=33) before encoding as a quality-matching step — DEFERRED here
-// (a perceptual detail; i2v is not bit-matched to the oracle anyway, see ISSUES bf16 doctrine).
+// context is already top-row-first, no flip — and normalize.
+//
+// ⚠️ DEFERRED PARITY GAP — H.264 CRF ROUND-TRIP (AB-T-0091). The oracle re-compresses every
+// conditioning image through a single-frame H.264 encode/decode BEFORE encoding it to a latent,
+// "to match the compression the model was trained on"
+// (`ltx_pipelines/utils/media_io/decode.py:413`). It is not a fallback or a nicety: `preprocess`
+// RAISES on an unresolved CRF rather than picking one, and every pipeline calls
+// `ImageConditioner.resolve_crf(images)` near the top of `__call__`.
+//
+// The CRF is a property of the MODEL GENERATION, and this note previously recorded the wrong one.
+// `utils/constants.py`: `DEFAULT_IMAGE_CRF = 33` (through LTX-2.3) but `LTX_2_4_IMAGE_CRF = 18`
+// from 2.4 — so **LTX-2.5, our primary target, wants CRF 18, not 33**. Anyone implementing this
+// from the old note would have conditioned at 2.3's compression on a 2.5 checkpoint.
+//
+// Still deferred, and the obstacle is real rather than cosmetic: AVFoundation/VideoToolbox exposes
+// quality/bitrate, not x264's CRF, so "CRF 18" has no exact Apple-side equivalent — an approximate
+// mapping could land further from the training distribution than pristine pixels do. Quantify the
+// effect before picking a mapping (see AB-T-0091).
 
 import CoreGraphics
 import Foundation
