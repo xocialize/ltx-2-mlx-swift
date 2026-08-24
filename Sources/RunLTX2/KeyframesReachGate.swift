@@ -25,6 +25,8 @@
 // citing the previous one as precedent.
 
 import Foundation
+import MLX
+import LTX2
 
 func keyframesReachGate() throws {
     // Locate the source tree from THIS file, so the gate audits the tree it was built from rather
@@ -137,12 +139,50 @@ func keyframesReachGate() throws {
         print("    \(s.passesMask ? "✅" : "❌")  \(s.file):\(s.line)  \(s.entry)")
     }
 
+    // ── SHAPE CASES. The source audit proves a mask is PASSED; it cannot see a WRONG one. The
+    //    subtle error is the IC layout: `ICVideoState` appends reference tokens after the target,
+    //    so the mask must span nv+refs while still marking only the target's first latent frame.
+    //    Building it over `nv` alone, or marking proportionally, both "look right" at the call.
+    var shapeFails: [String] = []
+    let frame0 = 22 * 16, nv = 5 * frame0, refs = 2 * frame0     // 5 latent frames + 2 refs
+
+    let plain = LTX2Pipeline.firstLatentFrameKeyframesMask(totalTokens: nv,
+                                                           tokensPerLatentFrame: frame0)
+    let ic = LTX2Pipeline.firstLatentFrameKeyframesMask(totalTokens: nv + refs,
+                                                        tokensPerLatentFrame: frame0)
+    eval(plain, ic)
+    func marked(_ m: MLXArray) -> Int { Int(m.asType(.float32).sum().item(Float.self).rounded()) }
+
+    if plain.dim(1) != nv { shapeFails.append("plain mask spans \(plain.dim(1)), expected \(nv)") }
+    if marked(plain) != frame0 {
+        shapeFails.append("plain mask marks \(marked(plain)) tokens, expected exactly one latent "
+            + "frame (\(frame0))")
+    }
+    if ic.dim(1) != nv + refs {
+        shapeFails.append("IC mask spans \(ic.dim(1)) but the IC latent is \(nv + refs) tokens — "
+            + "built over the target only, so it cannot align with the appended references")
+    }
+    if marked(ic) != frame0 {
+        shapeFails.append("IC mask marks \(marked(ic)) tokens, expected exactly \(frame0): the "
+            + "appended REFERENCE tokens must stay 0 (oracle uses extend_keyframes_mask(marked: "
+            + "false) for reference and keyframe-image conditionings; only keyframe SLOTS are marked)")
+    }
+    // The marked tokens must be the HEAD, not just the right count.
+    let icHeadSum = marked(ic[0..., 0 ..< frame0, 0...])
+    if icHeadSum != frame0 {
+        shapeFails.append("IC mask's marked tokens are not the leading latent frame "
+            + "(head sum \(icHeadSum) of \(frame0))")
+    }
+    print("[keyframes-reach-gate] shape: plain \(plain.dim(1))t/\(marked(plain)) marked · "
+        + "IC \(ic.dim(1))t/\(marked(ic)) marked, all in the leading frame")
+
     let missing = sites.filter { !$0.passesMask }
-    if missing.isEmpty {
+    if missing.isEmpty && shapeFails.isEmpty {
         print("[keyframes-reach-gate] PASS ✅  every video-denoise entry passes a keyframesMask, so "
             + "the target's first latent frame is marked on every 2.5 forward")
         fflush(stdout)
     } else {
+        for f in shapeFails { print("[keyframes-reach-gate] FAIL — \(f)") }
         for s in missing {
             print("[keyframes-reach-gate] FAIL — \(s.file):\(s.line) calls \(s.entry) with NO "
                 + "keyframesMask; on 2.5 the target's first latent frame silently loses its "
