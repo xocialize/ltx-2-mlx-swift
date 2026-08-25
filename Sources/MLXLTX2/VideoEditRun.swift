@@ -182,11 +182,20 @@ extension MLXLTX2Package {
                                step: e.step, totalSteps: e.totalSteps,
                                stage: e.stage, totalStages: e.totalStages)
         }
+        // Image conditioning on a2v (AB-T-0096). Previously these were parsed nowhere on this
+        // path, so anything a caller attached was SILENTLY dropped — which is what made a missing
+        // capability look like a quality problem on AB-A-0027.
+        let kfReqs = try KeyframeMetaKeys.parse(vedit.metaData)
+        let initClosure: ((Int, Int) throws -> MLXArray)? =
+            vedit.metaData[KeyframeMetaKeys.initPath]?.asString.map { p in
+                { w, hh in try ImageInput.initFrameTensor(path: p, width: w, height: hh) }
+            }
         let out = try await LTX2Progress.$sink.withValue(forward) {
             () async throws -> LTX2Pipeline.Output in
             try await pipeline.audioToVideo(
                 prompt: vedit.prompt, audioWaveform: waveform,
-                height: h, width: w, numFrames: frames, fps: fps, seed: vedit.seed)
+                height: h, width: w, numFrames: frames, fps: fps, seed: vedit.seed,
+                keyframes: kfReqs, initImage: initClosure)
         }
 
         // `Output.audio` is the ORIGINAL 16 kHz waveform (a2v returns the track untouched), so it

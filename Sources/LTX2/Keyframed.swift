@@ -97,6 +97,9 @@ extension LTX2Pipeline {
         videoPositions: MLXArray, audioPositions: MLXArray,
         keyframesMask: MLXArray?, items: [KeyframeConditioning],
         baseClean: MLXArray? = nil, baseMask: MLXArray? = nil,
+        // a2v freezes the AUDIO while conditioning the video; t2v leaves audio free. Both go
+        // through this one call so the keyframe machinery cannot drift between the two paths.
+        audioCleanLatent: MLXArray? = nil, audioDenoiseMask: MLXArray? = nil,
         ancestralEta: Float, ancestralNoiseSeed: UInt64,
         label: String, stage: Int, totalStages: Int
     ) throws -> (video: MLXArray, audio: MLXArray) {
@@ -113,6 +116,7 @@ extension LTX2Pipeline {
             sigmas: sigmas, videoText: videoText, audioText: audioText,
             videoPositions: st.positions, audioPositions: audioPositions,
             videoCleanLatent: st.clean, videoDenoiseMask: st.denoiseMask,
+            audioCleanLatent: audioCleanLatent, audioDenoiseMask: audioDenoiseMask,
             keyframesMask: st.keyframesMask,
             ancestralEta: ancestralEta, ancestralNoiseSeed: ancestralNoiseSeed,
             label: label, stage: stage, totalStages: totalStages)

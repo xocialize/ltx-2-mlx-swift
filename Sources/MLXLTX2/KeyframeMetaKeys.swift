@@ -27,6 +27,10 @@ import MLXToolKit
 public enum KeyframeMetaKeys {
     /// metaData key holding the keyframe list.
     public static let keyframes = "kf.keyframes"
+    /// First-frame image PATH for surfaces whose request type has no `initImage` field —
+    /// `VEditRequest` has none, so a2v could not express frame-0 conditioning at all (AB-T-0096).
+    /// Frame 0 REPLACES the latent; it is not a member of the `keyframes` list, which appends.
+    public static let initPath = "kf.initPath"
     /// Per-entry object fields.
     public static let path = "path", frame = "frame", strength = "strength"
 

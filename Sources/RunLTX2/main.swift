@@ -2401,6 +2401,8 @@ if args.contains("--connector-gate") {
     try await a2vSmoke()
 } else if args.contains("--keyframe-smoke") {
     try await keyframeSmoke()
+} else if args.contains("--a2v-control") {
+    try await a2vControlSmoke()
 } else if args.contains("--lora-gate25") {
     // AB-A-0015: does a 2.3-authored runtime LoRA apply on the 2.5 DiT?
     // usage: --lora-gate25 <lora.safetensors> [bf16|ditq8]
@@ -2517,7 +2519,7 @@ if args.contains("--connector-gate") {
     benchVerdictSelfTest()   // BenchAnalysis.swift: v2 verdict logic vs the harness's past failures
 } else if args.contains("--bench-e2e") {
     try await benchE2E()
-} else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") || args.contains("--vae-mux-bench") || args.contains("--vae-encode-tile-gate") || args.contains("--vae-encode-tile-probe") || args.contains("--retake-mask-gate") || args.contains("--frozen-sigma-gate") || args.contains("--a2v-contract-gate") || args.contains("--keyframes-reach-gate") || args.contains("--decode-progress-gate") || args.contains("--keyframe-cond-gate") {
+} else if args.contains("--vae-rf-probe") || args.contains("--vae-tile-gate") || args.contains("--vae-tile-bench") || args.contains("--vae-mux-bench") || args.contains("--vae-encode-tile-gate") || args.contains("--vae-encode-tile-probe") || args.contains("--retake-mask-gate") || args.contains("--frozen-sigma-gate") || args.contains("--a2v-contract-gate") || args.contains("--keyframes-reach-gate") || args.contains("--decode-progress-gate") || args.contains("--keyframe-cond-gate") || args.contains("--audio-registration-probe") {
     try await tileGatesMain(args: args, positional: Array(positional))  // TileGates.swift (spatial tiling)
 } else if args.contains("--t2v-spot") {
     let ints = positional.compactMap { Int($0) }

@@ -62,12 +62,23 @@ extension LTX2Pipeline {
     ///     caller should mux: `Output.audio` is the original waveform, not a VAE round-trip.
     ///   - numFrames: pixel frames, 8k+1. Together with `fps` this fixes the audio token grid,
     ///     so a track longer than the video is truncated and a shorter one zero-padded.
+    /// `keyframes` / `initImage` condition the VIDEO while the audio stays frozen (AB-T-0096).
+    /// Both the vendor CLI (`--image PATH FRAME_IDX STRENGTH`, repeatable) and Desktop's
+    /// `DistilledA2VPipeline` (`images=[...]`, applied at BOTH stages) accept these on a2v; we
+    /// previously dropped them SILENTLY, which is worse than not having them.
     public func audioToVideo(
         prompt: String, audioWaveform: MLXArray,
         height: Int = 512, width: Int = 704, numFrames: Int = 9,
         fps: Double = 24, seed: UInt64? = nil,
+        keyframes: [KeyframeRequest] = [],
+        initImage: ((_ width: Int, _ height: Int) throws -> MLXArray)? = nil,
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
+        for k in keyframes where k.frameIdx <= 0 {
+            throw TwoStageError.badGeometry(
+                "keyframe frameIdx must be > 0 (got \(k.frameIdx)); frame 0 replaces the latent "
+                + "and rides initImage, per the oracle's combined_image_conditionings split")
+        }
         // Single-stage fallback mirrors `t2vTwoStage`: without an encoder+upsampler there is no
         // stage 2 to run, and a one-stage a2v is still a correct (lower-detail) a2v.
         guard supportsTwoStage else {   // the existing public accessor: hasEncoder && hasUpsampler
@@ -104,13 +115,31 @@ extension LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v1.dim(1),
                                                  tokensPerLatentFrame: geo.hLat1 * geo.wLat1)
             : nil
-        let (v1f, _) = try DenoiseLoop.runConditioned(
+        let vPos1 = Positions.video(F: geo.fLat1, H: geo.hLat1, W: geo.wLat1, fps: Float(geo.fps1))
+        let aPos = Positions.audio(tokens: audioT)
+        let conditioned = !keyframes.isEmpty || initImage != nil
+        let v1f: MLXArray
+        if conditioned {
+            let items1 = try keyframeItems(keyframes, hLat: geo.hLat1, wLat: geo.wLat1, fps: Float(geo.fps1))
+            let base1 = try initImage.map {
+                try frame0Conditioning($0, hLat: geo.hLat1, wLat: geo.wLat1, nv: geo.nv1, dtype: v1.dtype)
+            }
+            v1f = try runKeyframedStage(
+                videoLatent: v1, audioLatent: frozenAudio, sigmas: Positions.distilledSigmas,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos1, audioPositions: aPos,
+                keyframesMask: kfMask1, items: items1,
+                baseClean: base1?.clean, baseMask: base1?.mask,
+                audioCleanLatent: frozenAudio, audioDenoiseMask: zeroAudioMask,
+                ancestralEta: 0, ancestralNoiseSeed: 0,
+                label: "a2v-s1-", stage: 1, totalStages: 2).video
+        } else {
+        let (v1fPlain, _) = try DenoiseLoop.runConditioned(
             dit: try ensureDiT(), videoLatent0: v1, audioLatent0: frozenAudio,
             sigmas: Positions.distilledSigmas,
             videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: geo.fLat1, H: geo.hLat1, W: geo.wLat1,
-                                            fps: Float(geo.fps1)),
-            audioPositions: Positions.audio(tokens: audioT),
+            videoPositions: vPos1,
+            audioPositions: aPos,
             audioCleanLatent: frozenAudio, audioDenoiseMask: zeroAudioMask,
             keyframesMask: kfMask1,
             // ⚠️ NO ancestral sampler here, deliberately — do not "restore" it by analogy with
@@ -122,6 +151,8 @@ extension LTX2Pipeline {
             // pipeline uses — both therefore take DiffusionStage's deterministic Euler defaults.
             // (Our retake already matched this; a2v had inherited t2v's eta=1.0 by copy.)
             label: "a2v-s1-", stage: 1, totalStages: 2)
+        v1f = v1fPlain
+        }
         eval(v1f)
 
         // --- Upscale in un-normalized latent space ---
@@ -150,14 +181,34 @@ extension LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v2init.dim(1),
                                                  tokensPerLatentFrame: geo.hLat2 * geo.wLat2)
             : nil
-        let (v2f, _) = try DenoiseLoop.runConditioned(
-            dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: frozenAudio, sigmas: s2,
-            videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: geo.fLat2, H: geo.hLat2, W: geo.wLat2, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT),
-            audioCleanLatent: frozenAudio, audioDenoiseMask: zeroAudioMask,
-            keyframesMask: kfMask2,
-            label: "a2v-s2-", stage: 2, totalStages: 2)
+        let vPos2 = Positions.video(F: geo.fLat2, H: geo.hLat2, W: geo.wLat2, fps: Float(fps))
+        let v2f: MLXArray
+        if conditioned {
+            // Applied in BOTH stages, re-encoded at stage 2's geometry — Desktop does the same.
+            let items2 = try keyframeItems(keyframes, hLat: geo.hLat2, wLat: geo.wLat2, fps: Float(fps))
+            let base2 = try initImage.map {
+                try frame0Conditioning($0, hLat: geo.hLat2, wLat: geo.wLat2, nv: geo.nv2, dtype: v2init.dtype)
+            }
+            dropUpscaler()
+            v2f = try runKeyframedStage(
+                videoLatent: v2init, audioLatent: frozenAudio, sigmas: s2,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos2, audioPositions: aPos,
+                keyframesMask: kfMask2, items: items2,
+                baseClean: base2?.clean, baseMask: base2?.mask,
+                audioCleanLatent: frozenAudio, audioDenoiseMask: zeroAudioMask,
+                ancestralEta: 0, ancestralNoiseSeed: 0,
+                label: "a2v-s2-", stage: 2, totalStages: 2).video
+        } else {
+            let (v, _) = try DenoiseLoop.runConditioned(
+                dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: frozenAudio, sigmas: s2,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos2, audioPositions: aPos,
+                audioCleanLatent: frozenAudio, audioDenoiseMask: zeroAudioMask,
+                keyframesMask: kfMask2,
+                label: "a2v-s2-", stage: 2, totalStages: 2)
+            v2f = v
+        }
         eval(v2f)
         quiesceStreaming()
         dropDiTIfSequential()

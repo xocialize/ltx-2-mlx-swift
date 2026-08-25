@@ -51,6 +51,8 @@ func tileGatesMain(args: [String], positional: [String]) async throws {
         try decodeProgressGate(pruna: pruna)
     } else if args.contains("--keyframe-cond-gate") {
         try keyframeCondGate()
+    } else if args.contains("--audio-registration-probe") {
+        try audioRegistrationProbe()
     } else if args.contains("--vae-encode-tile-probe") {
         try vaeEncodeTileProbe()
     } else if args.contains("--vae-encode-tile-gate") {
