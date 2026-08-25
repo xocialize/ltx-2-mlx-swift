@@ -29,6 +29,19 @@ import MLXToolKit
 
 enum ImageInput {
     /// Decode + preprocess `image` to (1, 3, 1, height, width), bf16, channels-first, [-1,1].
+    /// Same as `initFrameTensor(_:width:height:)` but from a FILE PATH — keyframes ride metaData,
+    /// and `MetaValue` carries only string/int/double/bool, so a supplied image arrives as a path
+    /// (the IC reference-image precedent). Re-read per stage, because each stage encodes at its
+    /// own geometry.
+    static func initFrameTensor(path: String, width: Int, height: Int) throws -> MLXArray {
+        let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        guard let data = try? Data(contentsOf: url) else {
+            throw PackageError.configurationMismatch(
+                expected: "a readable keyframe image at \(url.path)", got: "unreadable or missing")
+        }
+        return try initFrameTensor(Image(format: .png, data: data), width: width, height: height)
+    }
+
     static func initFrameTensor(_ image: Image, width: Int, height: Int) throws -> MLXArray {
         guard let src = CGImageSourceCreateWithData(image.data as CFData, nil),
               let cg = CGImageSourceCreateImageAtIndex(src, 0, nil)

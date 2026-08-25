@@ -384,18 +384,39 @@ public final class MLXLTX2Package: ModelPackage {
                 out = try await pipeline.icT2V(prompt: t2v.prompt, references: references,
                                                audioReferences: audioReferences,
                                                height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-            } else if let initImage = t2v.initImage {
-                // i2v: condition on the first frame. Decode + preprocess the image to (1,3,1,H,W),
-                // then run the one-stage conditioned path (holds frame 0 clean, denoises the rest).
+            } else if let initImage = t2v.initImage,
+                      try KeyframeMetaKeys.parse(t2v.metaData).isEmpty {
+                // i2v alone: unchanged shipping behaviour — one-stage conditioned path (holds
+                // frame 0 clean, denoises the rest). Only a request that ALSO carries keyframes
+                // takes the two-stage branch below, so plain i2v output does not move.
                 let initFrame = try ImageInput.initFrameTensor(initImage, width: wd, height: h)
                 out = try await pipeline.i2v(prompt: t2v.prompt, initFrame: initFrame,
                                              height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
             } else {
                 // t2v: two-stage (half-res → upsample → refine) when available AND the tier allows
                 // it; one-stage at target resolution otherwise (the low-tier denoise path).
-                out = (pipeline.supportsTwoStage && !oneStage)
-                    ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
-                    : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                let kfReqs = try KeyframeMetaKeys.parse(t2v.metaData)
+                // FIRST+LAST (AB-A-0025) lands here: frame 0 REPLACES the latent, later frames are
+                // APPENDED. Two different oracle mechanisms, both needed for the endpoints to be
+                // anchors, and only the two-stage path carries them.
+                let initClosure: ((Int, Int) throws -> MLXArray)? = t2v.initImage.map { img in
+                    { w, hh in try ImageInput.initFrameTensor(img, width: w, height: hh) }
+                }
+                if !kfReqs.isEmpty || initClosure != nil {
+                    guard pipeline.supportsTwoStage && !oneStage else {
+                        throw PackageError.configurationMismatch(
+                            expected: "the two-stage path for keyframe conditioning",
+                            got: oneStage ? "a one-stage tier (\(configuration.profile?.rawValue ?? "?"))"
+                                          : "no encoder/upsampler in this install")
+                    }
+                    out = try await pipeline.t2vTwoStage(
+                        prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps,
+                        seed: t2v.seed, keyframes: kfReqs, initImage: initClosure)
+                } else {
+                    out = (pipeline.supportsTwoStage && !oneStage)
+                        ? try await pipeline.t2vTwoStage(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                        : try await pipeline.t2v(prompt: t2v.prompt, height: h, width: wd, numFrames: nf, fps: fps, seed: t2v.seed)
+                }
             }
             return (out, muxAudioURL, nil)
         }

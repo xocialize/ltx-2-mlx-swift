@@ -1029,14 +1029,31 @@ public final class LTX2Pipeline {
                                 fps1: fps1, fLat2: fLat2, hLat2: latH2, wLat2: latW2)
     }
 
+    /// `keyframes` supplies CLEAN images pinned at chosen pixel frames (AB-A-0025). Each is
+    /// appended as its own token block per stage, re-encoded at that stage's geometry the way the
+    /// oracle does. ⚠️ `frameIdx` 0 does NOT belong here — index 0 REPLACES the latent (our i2v
+    /// path, `T2VRequest.initImage`); every other index GUIDES via the append. See `Keyframed.swift`.
     public func t2vTwoStage(
         prompt: String, height: Int = 512, width: Int = 704, numFrames: Int = 9,
         fps: Double = 24, seed: UInt64? = nil, streaming: StreamingSinks? = nil,
+        keyframes: [KeyframeRequest] = [],
+        initImage: ((_ width: Int, _ height: Int) throws -> MLXArray)? = nil,
         isolation: isolated (any Actor)? = #isolation
     ) async throws -> Output {
         guard hasEncoder, hasUpsampler else {
+            guard keyframes.isEmpty, initImage == nil else {
+                throw TwoStageError.badGeometry(
+                    "keyframe/first-frame conditioning needs the two-stage path (encoder + "
+                    + "upsampler); this install has neither, and silently dropping the conditioning "
+                    + "would return a clip that ignores it")
+            }
             return try await t2v(prompt: prompt, height: height, width: width, numFrames: numFrames, fps: fps, seed: seed,
                                  streaming: streaming)
+        }
+        for k in keyframes where k.frameIdx <= 0 {
+            throw TwoStageError.badGeometry(
+                "keyframe frameIdx must be > 0 (got \(k.frameIdx)); frame 0 replaces the latent "
+                + "and rides initImage, per the oracle's combined_image_conditionings split")
         }
 
         // --- Variant-derived geometry (see `resolveTwoStageGeometry`) ---
@@ -1073,16 +1090,38 @@ public final class LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v1.dim(1),
                                                  tokensPerLatentFrame: hLat1 * wLat1)
             : nil
-        let (v1f, a1fOpt) = try DenoiseLoop.run(
-            dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
-            videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: fLat1, H: hLat1, W: wLat1, fps: Float(fps1)),
-            audioPositions: Positions.audio(tokens: audioT),
-            keyframesMask: kfMask1,
-            ancestralEta: isLTX25 ? 1.0 : 0,
-            ancestralNoiseSeed: (seed ?? 0) &+ 10_000,
-            label: "s1-", stage: 1, totalStages: 2)
-        let a1f = a1fOpt!   // audio always supplied here (see t2v)
+        let vPos1 = Positions.video(F: fLat1, H: hLat1, W: wLat1, fps: Float(fps1))
+        let aPos = Positions.audio(tokens: audioT)
+        let conditioned = !keyframes.isEmpty || initImage != nil
+        let v1f: MLXArray, a1f: MLXArray
+        if !conditioned {
+            let (v, a) = try DenoiseLoop.run(
+                dit: try ensureDiT(), videoLatent0: v1, audioLatent0: a1, sigmas: Positions.distilledSigmas,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos1, audioPositions: aPos,
+                keyframesMask: kfMask1,
+                ancestralEta: isLTX25 ? 1.0 : 0,
+                ancestralNoiseSeed: (seed ?? 0) &+ 10_000,
+                label: "s1-", stage: 1, totalStages: 2)
+            v1f = v; a1f = a!   // audio always supplied here (see t2v)
+        } else {
+            // Re-encoded at STAGE 1's grid, not downsampled from stage 2 — the vendor calls its
+            // image-conditioning helper once per stage with that stage's height/width.
+            let items = try keyframeItems(keyframes, hLat: hLat1, wLat: wLat1, fps: Float(fps1))
+            let base = try initImage.map {
+                try frame0Conditioning($0, hLat: hLat1, wLat: wLat1, nv: nv1, dtype: v1.dtype)
+            }
+            let r = try runKeyframedStage(
+                videoLatent: v1, audioLatent: a1, sigmas: Positions.distilledSigmas,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos1, audioPositions: aPos,
+                keyframesMask: kfMask1, items: items,
+                baseClean: base?.clean, baseMask: base?.mask,
+                ancestralEta: isLTX25 ? 1.0 : 0,
+                ancestralNoiseSeed: (seed ?? 0) &+ 10_000,
+                label: "s1-", stage: 1, totalStages: 2)
+            v1f = r.video; a1f = r.audio
+        }
         eval(v1f, a1f)
 
         // --- Upscale in un-normalized latent space (encoder+upsampler loaded only here) ---
@@ -1115,14 +1154,35 @@ public final class LTX2Pipeline {
             ? Self.firstLatentFrameKeyframesMask(totalTokens: v2init.dim(1),
                                                  tokensPerLatentFrame: hLat2 * wLat2)
             : nil
-        let (v2f, a2fOpt) = try DenoiseLoop.run(
-            dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
-            videoText: videoEmbeds, audioText: audioEmbeds,
-            videoPositions: Positions.video(F: fLat2, H: hLat2, W: wLat2, fps: Float(fps)),
-            audioPositions: Positions.audio(tokens: audioT),
-            keyframesMask: kfMask2,
-            label: "s2-", stage: 2, totalStages: 2)
-        let a2f = a2fOpt!   // audio always supplied here (see t2v)
+        let vPos2 = Positions.video(F: fLat2, H: hLat2, W: wLat2, fps: Float(fps))
+        let v2f: MLXArray, a2f: MLXArray
+        if !conditioned {
+            let (v, a) = try DenoiseLoop.run(
+                dit: try ensureDiT(), videoLatent0: v2init, audioLatent0: a2init, sigmas: s2,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos2, audioPositions: aPos,
+                keyframesMask: kfMask2,
+                label: "s2-", stage: 2, totalStages: 2)
+            v2f = v; a2f = a!   // audio always supplied here (see t2v)
+        } else {
+            // Applied in BOTH stages, as the vendor does — a keyframe honoured only in stage 1
+            // would be re-noised at stage-2 entry (sigma0) and partially generated away.
+            try ensureVAEEncoder()
+            let items = try keyframeItems(keyframes, hLat: hLat2, wLat: wLat2, fps: Float(fps))
+            let base2 = try initImage.map {
+                try frame0Conditioning($0, hLat: hLat2, wLat: wLat2, nv: nv2, dtype: v2init.dtype)
+            }
+            dropUpscaler()
+            let r = try runKeyframedStage(
+                videoLatent: v2init, audioLatent: a2init, sigmas: s2,
+                videoText: videoEmbeds, audioText: audioEmbeds,
+                videoPositions: vPos2, audioPositions: aPos,
+                keyframesMask: kfMask2, items: items,
+                baseClean: base2?.clean, baseMask: base2?.mask,
+                ancestralEta: 0, ancestralNoiseSeed: 0,
+                label: "s2-", stage: 2, totalStages: 2)
+            v2f = r.video; a2f = r.audio
+        }
         eval(v2f, a2f)
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
