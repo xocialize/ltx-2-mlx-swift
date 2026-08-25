@@ -16,6 +16,7 @@
 
 import Foundation
 import MLX
+import MLXFFT
 import MLXLTX2
 import MLXToolKit
 
@@ -77,8 +78,12 @@ func a2vSmoke() async throws {
     // instrument is best correlation over a small lag window, bounded so a grossly shifted or
     // substituted track cannot buy a high score with a big offset, plus the reversed-track control
     // below to prove the metric can still fail.
-    let wa = try await AudioInput.referenceWaveform(url: a)
-    let wb = try await AudioInput.referenceWaveform(url: b)
+    // ⚠️ READ AT 48 kHz, NOT 16 (AB-T-0093). Reading both sides through the SAME 16 kHz reader that
+    // causes the defect made this check blind to it: it scored 0.981 while the delivered track had
+    // lost roughly a third of its 4–8 kHz energy. An instrument must not share its subject's blind
+    // spot.
+    let wa = try await AudioInput.referenceWaveform(url: a, sampleRate: 48000)
+    let wb = try await AudioInput.referenceWaveform(url: b, sampleRate: 48000)
     let n = min(wa.dim(2), wb.dim(2))
     let xa = wa[0..., 0..., 0 ..< n].flattened().asType(.float32)
     let xb = wb[0..., 0..., 0 ..< n].flattened().asType(.float32)
@@ -107,7 +112,7 @@ func a2vSmoke() async throws {
         return best
     }
 
-    let (audioCos, audioLag) = bestLagCorrelation(xa, xb, maxLag: 4000)   // ±0.25 s at 16 kHz
+    let (audioCos, audioLag) = bestLagCorrelation(xa, xb, maxLag: 12000)  // ±0.25 s at 48 kHz
     // Bar is 0.95, not 0.98: the mux's linear resample is genuinely lossy on bright content, and
     // 0.981 measured leaves no headroom for a brighter track to pass honestly. Deliberately NOT
     // a weakened gate — the discrimination now comes from two added constraints (the lag bound
@@ -115,14 +120,14 @@ func a2vSmoke() async throws {
     // printed every run so real drift is still visible.
     print(String(format: "[a2v-smoke] audio best-lag correlation(src, a2v) = %.4f at lag %d samples "
                  + "(%.1f ms) — must be > 0.95 with |lag| <= 32 (measured 0.981 @ 1 sample)",
-                 audioCos, audioLag, Double(audioLag) * 1000.0 / 16000.0))
+                 audioCos, audioLag, Double(audioLag) * 1000.0 / 48000.0))
 
     // CONTROL: the same lag-tolerant metric against the track REVERSED. Same spectrum, same
     // energy, different content — so a high score here would mean the metric cannot tell the
     // supplied track from something that merely sounds like it, and the check above proves nothing.
     let xbRev = xb[.stride(by: -1)]
     eval(xbRev)
-    let (ctrlCos, _) = bestLagCorrelation(xa, xbRev, maxLag: 4000)
+    let (ctrlCos, _) = bestLagCorrelation(xa, xbRev, maxLag: 12000)
     print(String(format: "[a2v-smoke] control: same metric vs REVERSED track = %.4f "
                  + "(must be well below the real score)", ctrlCos))
 
@@ -146,10 +151,34 @@ func a2vSmoke() async throws {
     if abs((out.video.durationSeconds ?? -1) - expectedDuration) > 0.01 {
         print("[a2v-smoke] FAIL ❌ — durationSeconds is wrong"); ok = false
     }
+    // BAND ENERGY — the assertion correlation cannot make. The defect is a bandwidth loss: the
+    // 16 kHz read discards content above ~8 kHz and the ×3 linear upsample puts imaging back in its
+    // place, so a track can correlate well and still be audibly dulled.
+    func bandEnergy(_ x: MLXArray, _ loHz: Double, _ hiHz: Double, sr: Double = 48000) -> Float {
+        // Goertzel-free: compare energy in a band via a crude FFT over a fixed window.
+        let n = 1 << 15
+        let seg = x.dim(0) >= n ? x[0 ..< n] : MLX.concatenated([x, MLXArray.zeros([n - x.dim(0)])], axis: 0)
+        let spec = MLXFFT.rfft(seg.asType(.float32))
+        let mag = MLX.abs(spec)
+        let lo = Int(loHz / sr * Double(n)), hi = Swift.min(Int(hiHz / sr * Double(n)), mag.dim(0) - 1)
+        guard hi > lo else { return 0 }
+        let band = mag[lo ..< hi]
+        let tot = MLX.sum(mag * mag).item(Float.self)
+        return tot > 0 ? MLX.sum(band * band).item(Float.self) / tot : 0
+    }
+    let srcHi = bandEnergy(xa, 4000, 8000), outHi = bandEnergy(xb, 4000, 8000)
+    let retained = srcHi > 0 ? outHi / srcHi : 0
+    print(String(format: "[a2v-smoke] 4–8 kHz energy: source %.1f%% → output %.1f%% (retained %.0f%%) "
+                 + "— must retain ≥ 80%%", srcHi * 100, outHi * 100, retained * 100))
+    if !(retained >= 0.80) {
+        print("[a2v-smoke] FAIL ❌ — the delivered track lost \(Int((1 - retained) * 100))% of its "
+            + "4–8 kHz energy; a2v promises the SUPPLIED track, not a band-limited copy (AB-T-0093)")
+        ok = false
+    }
     if !(audioCos > 0.95) {
         print("[a2v-smoke] FAIL ❌ — the supplied track was NOT preserved through a2v"); ok = false
     }
-    if abs(audioLag) > 32 {
+    if abs(audioLag) > 96 {   // 96 @ 48 kHz == the old 32 @ 16 kHz
         print("[a2v-smoke] FAIL ❌ — the track correlates only after a \(audioLag)-sample shift; "
             + "a2v must return the supplied audio in place, not time-displaced"); ok = false
     }

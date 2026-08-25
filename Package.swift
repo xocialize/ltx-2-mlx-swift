@@ -159,6 +159,9 @@ let package = Package(
                 "LTX2",
                 "MLXLTX2",  // for the --encode-stress gate (calls the real encodeMP4)
                 .product(name: "MLX", package: "mlx-swift"),
+                // --a2v-smoke measures BAND ENERGY: the AB-T-0093 defect is a bandwidth loss, and
+                // correlation alone under-reports it (a dulled track still correlates well).
+                .product(name: "MLXFFT", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
             ],
             path: "Sources/RunLTX2"

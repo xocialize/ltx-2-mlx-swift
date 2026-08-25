@@ -132,8 +132,17 @@ extension MLXLTX2Package {
         //    original 48 kHz track, noted rather than hidden.
         let muxAudio: MLXArray?
         let muxRate: Double
-        if mode == VEditModes.replaceVideo, let src = sourceAudio {
-            muxAudio = upsample16to48(src); muxRate = 48000
+        if mode == VEditModes.replaceVideo, sourceAudio != nil {
+            // Same full-rate mux as a2v (AB-T-0093). The previous comment called this a "V1 caveat"
+            // about sample RATE; the real cost was BANDWIDTH — a 16 kHz read discards everything
+            // above 8 kHz before the lift ever runs.
+            if let full = try? await AudioInput.referenceWaveform(
+                url: tmp, sampleRate: 48000, maxSeconds: Double(frames) / fps) {
+                muxAudio = full
+            } else {
+                muxAudio = sourceAudio.map { upsample16to48($0) }
+            }
+            muxRate = 48000
         } else {
             muxAudio = out.audio; muxRate = 48000
         }
@@ -198,9 +207,20 @@ extension MLXLTX2Package {
                 keyframes: kfReqs, initImage: initClosure)
         }
 
-        // `Output.audio` is the ORIGINAL 16 kHz waveform (a2v returns the track untouched), so it
-        // still needs the 48 kHz lift the AAC writer demands.
-        let muxAudio = out.audio.map { upsample16to48($0) }
+        // MUX FROM A FULL-RATE READ (AB-T-0093). The 16 kHz read above is what the AUDIO VAE
+        // wants for conditioning; nothing requires the MUXED track to come from that same buffer.
+        // Reusing it cost 42% of the carrier's 4–8 kHz energy — the reader band-limits to 8 kHz and
+        // the ×3 linear lift puts imaging back in its place, so a2v delivered a dulled copy of a
+        // track it promises to return untouched. Correlation hid it (0.997); band energy did not.
+        let muxAudio: MLXArray? = try await {
+            if let full = try? await AudioInput.referenceWaveform(
+                url: source, sampleRate: 48000, maxSeconds: Double(frames) / fps) {
+                return full
+            }
+            // Fallback keeps a2v working on a container the 48 kHz read cannot open; the smoke's
+            // band-energy assertion will flag the degradation rather than let it pass silently.
+            return out.audio.map { upsample16to48($0) }
+        }()
         let framesCL = out.video.transposed(0, 2, 3, 4, 1)                // (B,C,F,H,W) → (B,F,H,W,C)
         let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio,
                                       audioSampleRate: 48000)
