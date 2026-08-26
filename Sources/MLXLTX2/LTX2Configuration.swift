@@ -126,9 +126,16 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
         //                        and far past the 75.3 declaration, so the fallback busts it
         //                        outright. It MUST pin.
         // ⚠️ This note previously EXTRAPOLATED ~77.8 GB from the +3.4 GB resident-vs-streamed delta
-        // seen at 121f. Measurement says 87.10. The delta is NOT constant along the frame axis, it
-        // GROWS: +3.4 GB at 121f, +12.7 GB at 481f. The pin was correct for a reason that was 9.3 GB
-        // wrong. Never extrapolate a footprint delta across frames — measure the corner that binds.
+        // seen at 121f. Measurement says 87.10. The measured curve at 1920×1088 (AB-T-0095):
+        //     frames   streamed   resident    delta
+        //       121      49.30      52.72     +3.42
+        //       241      60.35      64.30     +3.95
+        //       481      74.39      87.10    +12.71
+        // The delta does NOT grow smoothly — it is flat through 241f and then CLIFFS. Note what that
+        // does to the obvious defence against the original error: two samples (121f, 241f) agreeing
+        // on ~+3.7 GB would have predicted ~78 GB at 481f — still 8.7 GB low, still an
+        // over-admission. Here a trend confirmed by a second point is not a trend. Never extrapolate
+        // a footprint delta along the frame axis; measure the corner that binds.
         // 📐 SCOPE: this is a 128 GB verdict, not a verdict on the resident lane. On a larger machine
         // the same 87.10 GB is unremarkable, and the pin should be revisited per-tier, never lifted
         // globally on the strength of hardware this tier will never run on.
