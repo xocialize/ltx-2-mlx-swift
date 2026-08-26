@@ -139,6 +139,13 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
         // 📐 SCOPE: this is a 128 GB verdict, not a verdict on the resident lane. On a larger machine
         // the same 87.10 GB is unremarkable, and the pin should be revisited per-tier, never lifted
         // globally on the strength of hardware this tier will never run on.
+        // 💤 AND THE PIN COSTS ALMOST NOTHING, so do not keep reopening this. At 1920×1088×241,
+        // resident 3508.7s vs streamed 3718.2s — 1.06×, not the 2.25× from AB-R-0145. That 2.25×
+        // was measured at 704×512×33 where denoise dominates; residency accelerates ONLY the DiT,
+        // and at HD vae-decode is ~74% of the run (AB-R-0118, AB-R-0145). A conditional resident
+        // lane was fully costed in AB-T-0098 — its memory case is airtight (worst case stays 74.39,
+        // the declaration would not move) and it was still closed, because 6% does not buy a
+        // geometry-dependent gate. If you want HD faster, optimise DECODE.
         // ⚠️ Pinning is not free of meaning: it removes a lane. Apply it only where the fallback
         // genuinely threatens the declaration, or the rule degrades into "pin everything" and
         // stops catching anything.
