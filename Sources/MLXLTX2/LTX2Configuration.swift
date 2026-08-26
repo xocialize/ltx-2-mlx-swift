@@ -121,9 +121,17 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
         // first attempt to pin everything. Checked against the raised caps:
         //   standard64 1280x704: streamed 33.55, resident 31.80, declared 34.8 -> covers BOTH,
         //                        so `.auto` stays safe and no pin is warranted.
-        //   max128 1920x1088:    streamed 74.39, resident at the 481f corner UNMEASURED (it ran
-        //                        +3.4 GB over streamed at 121f, extrapolating to ~77.8 > the 75.3
-        //                        declaration) -> the fallback could bust, so it MUST pin.
+        //   max128 1920x1088:    streamed 74.39, resident 87.10 MEASURED at the 481f corner
+        //                        (AB-T-0095, 2026-08-25, fresh boot) -> 97.2% of the 89.60 budget
+        //                        and far past the 75.3 declaration, so the fallback busts it
+        //                        outright. It MUST pin.
+        // ⚠️ This note previously EXTRAPOLATED ~77.8 GB from the +3.4 GB resident-vs-streamed delta
+        // seen at 121f. Measurement says 87.10. The delta is NOT constant along the frame axis, it
+        // GROWS: +3.4 GB at 121f, +12.7 GB at 481f. The pin was correct for a reason that was 9.3 GB
+        // wrong. Never extrapolate a footprint delta across frames — measure the corner that binds.
+        // 📐 SCOPE: this is a 128 GB verdict, not a verdict on the resident lane. On a larger machine
+        // the same 87.10 GB is unremarkable, and the pin should be revisited per-tier, never lifted
+        // globally on the strength of hardware this tier will never run on.
         // ⚠️ Pinning is not free of meaning: it removes a lane. Apply it only where the fallback
         // genuinely threatens the declaration, or the rule degrades into "pin everything" and
         // stops catching anything.
