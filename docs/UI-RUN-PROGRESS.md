@@ -81,9 +81,35 @@ duration and length copy.
 Show `notes` when `changed` is true — a reduced size the user understands is very different from one
 they discover in the exported file.
 
-⚠️ Currently request-derived, so it covers text/image-to-video. Retake, extend and a2v derive their
-geometry from the SOURCE clip instead (retake snaps /32, a2v /64), so their resolved size is not
-predictable from the request alone.
+### Edit surfaces: use the SOURCE-derived overload
+
+Retake, extend and a2v take their geometry from the source clip, not the request, so the call above
+cannot serve those sheets. Use the companion overload — `runVideoEdit` and `runAudioToVideo` call it
+too, so it predicts the run rather than describing it:
+
+```swift
+let geo = configuration.resolvedGeometry(
+    sourceWidth: 1200, sourceHeight: 704, sourceDurationSeconds: 5.0,
+    mode: .retake,            // or .audioToVideo
+    width: nil, height: nil, numFrames: nil, fps: 24)
+
+geo.summary   // "1200×704×120f → 1184×704×113f"
+```
+
+`requested*` carries the **source** dims — what the sheet already shows and what the user compares
+the result against.
+
+⚠️ Three differences from the request-derived call, all of them deliberate:
+
+| | retake / extend | a2v |
+|---|---|---|
+| Snap grid | **/32** | **/64** |
+| Dims above the source | pulled back down — a retake never upscales | an explicit request **wins** |
+| Frames | source duration → floored to 8k+1, minimum 9 | same |
+
+The grid differs because `retake` denoises the source latents single-stage and never reaches the
+spatial-x2 upsampler, so an odd latent is legal there; a2v runs two-stage and its stage 2 rejects an
+odd latent grid. `numFrames == deliveredFrames` on these paths — the edit runs at the snapped count.
 
 ---
 

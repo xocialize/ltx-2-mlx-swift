@@ -250,3 +250,89 @@ public extension LTX2Configuration {
             requestedWidth: reqW, requestedHeight: reqH, requestedNumFrames: reqF, notes: notes)
     }
 }
+
+/// Which edit path's geometry rules to apply. They genuinely differ, which is exactly why a host
+/// cannot reproduce them and why this enum exists rather than a `Bool`.
+public enum EditGeometryMode: String, Sendable, CaseIterable {
+    /// retake / extend / replace-audio-and-video: dims come from the SOURCE and are never upscaled
+    /// above it, then snap DOWN to /32.
+    case retake
+    /// a2v: an explicit request WINS over the source (there is no source video to match — the video
+    /// is generated from noise against the track), then snaps DOWN to /64.
+    case audioToVideo
+}
+
+public extension LTX2Configuration {
+    /// Resolve a SOURCE-derived edit request to the geometry the run will use and deliver.
+    ///
+    /// 🔑 Companion to the request-derived `resolvedGeometry(width:height:...)`, and the same rule
+    /// applies: `runVideoEdit` and `runAudioToVideo` CALL this rather than repeating the arithmetic.
+    /// The edit sheets resolve from the source clip, so without this they display source dims that
+    /// the run then snaps down — promising something the pipeline does not deliver (AB-T-0094).
+    ///
+    /// `requested*` carries the SOURCE dims, not a request: that is what the sheet already shows and
+    /// what the user is comparing the result against.
+    ///
+    /// ⚠️ THREE WAYS THIS DIFFERS FROM THE REQUEST-DERIVED RESOLVER — none are incidental:
+    ///  1. **Snap grid is per-mode, not per-tier.** Generation picks /32 or /64 by whether two-stage
+    ///     runs; the edit paths pin it by MODE (retake /32, a2v /64) regardless of tier.
+    ///  2. **retake never upscales.** An explicit width above the source is pulled back down to it
+    ///     (the vendor's `video_resolution.py` rule). a2v has no source video to match, so there an
+    ///     explicit request wins outright.
+    ///  3. **Frames are floored to the grid with a floor of 9**, where generation rounds UP to whole
+    ///     latent frames. Below 9 they diverge: generation delivers 1, the edit paths deliver 9.
+    ///     `numFrames == deliveredFrames` here because the edit paths run at the snapped count.
+    func resolvedGeometry(sourceWidth: Int, sourceHeight: Int, sourceDurationSeconds: Double,
+                          mode: EditGeometryMode, width: Int? = nil, height: Int? = nil,
+                          numFrames: Int? = nil, fps: Double? = nil) -> ResolvedGeometry {
+        let f = fps ?? 24
+        let reqW = sourceWidth, reqH = sourceHeight
+        let reqF = numFrames ?? Int((sourceDurationSeconds * f).rounded())
+        var notes: [String] = []
+
+        var w: Int, h: Int
+        switch mode {
+        case .retake:
+            w = min(width ?? sourceWidth, sourceWidth)
+            h = min(height ?? sourceHeight, sourceHeight)
+            if (width ?? 0) > sourceWidth || (height ?? 0) > sourceHeight {
+                notes.append("held at the source size — a retake never upscales")
+            }
+        case .audioToVideo:
+            w = width ?? sourceWidth
+            h = height ?? sourceHeight
+        }
+
+        if let p = profile {
+            if w > p.maxWidth || h > p.maxHeight {
+                notes.append("clamped to the \(p.rawValue) envelope (\(p.maxWidth)×\(p.maxHeight))")
+            }
+            w = min(w, p.maxWidth); h = min(h, p.maxHeight)
+        }
+
+        let grid = mode == .audioToVideo ? 64 : 32
+        let preW = w, preH = h
+        w = max(64, (w / grid) * grid); h = max(64, (h / grid) * grid)
+        if w != preW || h != preH {
+            notes.append(mode == .audioToVideo
+                ? "snapped down to /64 for the two-stage spatial upsampler"
+                : "snapped down to the /32 latent grid")
+        }
+
+        var frames = reqF
+        if let p = profile {
+            if frames > p.maxFrames {
+                notes.append("frames clamped to the \(p.rawValue) cap (\(p.maxFrames))")
+            }
+            frames = min(frames, p.maxFrames)
+        }
+        frames = max(9, ((frames - 1) / 8) * 8 + 1)
+        if frames != reqF {
+            notes.append("frames land on the 8k+1 grid (\(reqF) → \(frames))")
+        }
+
+        return ResolvedGeometry(
+            width: w, height: h, numFrames: frames, deliveredFrames: frames, fps: f,
+            requestedWidth: reqW, requestedHeight: reqH, requestedNumFrames: reqF, notes: notes)
+    }
+}

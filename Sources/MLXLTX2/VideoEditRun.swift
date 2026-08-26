@@ -74,13 +74,13 @@ extension MLXLTX2Package {
         // 2. Geometry: SOURCE-derived dims snap DOWN to /32 and never upscale (the vendor's
         //    video_resolution.py rule — opposite to generation's snap-UP /64), then clamp to the
         //    tier envelope like every other run.
-        var w = min(vedit.width ?? Int(natural.width), Int(natural.width))
-        var h = min(vedit.height ?? Int(natural.height), Int(natural.height))
-        if let p = configuration.profile { w = min(w, p.maxWidth); h = min(h, p.maxHeight) }
-        w = max(64, (w / 32) * 32); h = max(64, (h / 32) * 32)
-        var frames = vedit.numFrames ?? Int((srcDuration * fps).rounded())
-        if let p = configuration.profile { frames = min(frames, p.maxFrames) }
-        frames = max(9, ((frames - 1) / 8) * 8 + 1)                       // 8k+1 grid
+        //    🔑 Resolved by `resolvedGeometry(source:)` so the edit SHEETS can predict this run
+        //    (AB-T-0094). The rules live there now; a copy here would drift from what hosts show.
+        let geo = configuration.resolvedGeometry(
+            sourceWidth: Int(natural.width), sourceHeight: Int(natural.height),
+            sourceDurationSeconds: srcDuration, mode: .retake,
+            width: vedit.width, height: vedit.height, numFrames: vedit.numFrames, fps: fps)
+        let w = geo.width, h = geo.height, frames = geo.numFrames
 
         // 3. Read the source (frames at target geometry; audio 16 kHz stereo when present).
         let pixels = try await VideoInput.referenceClipFrames(
@@ -170,16 +170,16 @@ extension MLXLTX2Package {
         // then the container's natural size, then the t2v default. Snap DOWN to /64, not /32: the
         // spatial-x2 upsampler we ship needs the stage-2 latent grid even, and a /32-but-not-/64
         // target would fail `resolveTwoStageGeometry` after the text encode had already run.
-        var w = vedit.width ?? Int(natural.width)
-        var h = vedit.height ?? Int(natural.height)
-        if let p = configuration.profile { w = min(w, p.maxWidth); h = min(h, p.maxHeight) }
-        w = max(64, (w / 64) * 64); h = max(64, (h / 64) * 64)
-
+        //
         // Duration follows the AUDIO when the caller doesn't pin frames — a2v's premise is that
         // the track is the ground truth, so the default is "cover the track", clamped to the tier.
-        var frames = vedit.numFrames ?? Int((sourceDuration * fps).rounded())
-        if let p = configuration.profile { frames = min(frames, p.maxFrames) }
-        frames = max(9, ((frames - 1) / 8) * 8 + 1)                       // 8k+1 grid
+        // 🔑 Same resolver as retake, different mode: it carries the /64-vs-/32 split and the
+        // "explicit request wins" difference (AB-T-0094).
+        let geo = configuration.resolvedGeometry(
+            sourceWidth: Int(natural.width), sourceHeight: Int(natural.height),
+            sourceDurationSeconds: sourceDuration, mode: .audioToVideo,
+            width: vedit.width, height: vedit.height, numFrames: vedit.numFrames, fps: fps)
+        let w = geo.width, h = geo.height, frames = geo.numFrames
 
         // Read the track at exactly the video's span. A longer track is truncated here, and a
         // shorter one is zero-padded downstream in `encodeFrozenAudio` (Desktop pads too).

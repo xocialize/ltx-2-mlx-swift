@@ -596,8 +596,67 @@ func ltx25PackageGate() {
               && gClean.width == 704 && gClean.height == 512,
           "\(gClean.summary) notes=\(gClean.notes)")
 
+    // ── 67-73 · SOURCE-DERIVED GEOMETRY (AB-T-0094) ─────────────────────────────────────────
+    // The edit sheets resolve from the SOURCE clip, so the request-derived resolver above cannot
+    // serve them — it has no source to clamp against. `runVideoEdit` and `runAudioToVideo` CALL
+    // `resolvedGeometry(source:)`, so these cases constrain the shipping edit paths.
+    //
+    // 🔑 THE GRID IS PER-MODE AND THAT IS PRINCIPLED, NOT ACCIDENTAL: `retake` denoises the source
+    // latents single-stage and never calls `resolveTwoStageGeometry` (Retake.swift), so an odd
+    // latent is legal there and /32 is right. `a2v` DOES call it (AudioToVideo.swift:90), so it
+    // needs /64. Cases 68-70 pin exactly that difference.
+    let rUp = planS.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                     sourceDurationSeconds: 33.0 / 24.0, mode: .retake,
+                                     width: 1920, height: 1088)
+    check("67 a retake NEVER upscales above the source, and says why",
+          rUp.width == 704 && rUp.height == 512
+              && rUp.notes.contains { $0.contains("never upscales") },
+          "\(rUp.summary) notes=\(rUp.notes)")
+
+    let rOdd = planS.resolvedGeometry(sourceWidth: 1200, sourceHeight: 704,
+                                      sourceDurationSeconds: 33.0 / 24.0, mode: .retake)
+    check("68 retake keeps /32 even when the latent is ODD (legal — no upsampler in the loop)",
+          rOdd.width == 1184 && (rOdd.width / 32) % 2 == 1,
+          "\(rOdd.width) (latent \(rOdd.width / 32))")
+
+    let aOdd = planS.resolvedGeometry(sourceWidth: 1200, sourceHeight: 704,
+                                      sourceDurationSeconds: 33.0 / 24.0, mode: .audioToVideo)
+    check("69 a2v snaps the SAME source to /64, because its stage 2 rejects an odd latent",
+          aOdd.width == 1152 && (aOdd.width / 32) % 2 == 0
+              && aOdd.notes.contains { $0.contains("/64") },
+          "\(aOdd.width) (latent \(aOdd.width / 32)) notes=\(aOdd.notes)")
+
+    // Discrimination: the mode parameter must be load-bearing. A resolver that ignored it and
+    // applied one grid everywhere would pass 68 or 69 but never both.
+    check("70 …so identical source dims resolve DIFFERENTLY per mode (mode is load-bearing)",
+          rOdd.width != aOdd.width, "retake=\(rOdd.width) a2v=\(aOdd.width)")
+
+    // a2v has no source video to match, so an explicit request WINS — the opposite of 67.
+    let aWin = planS.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                      sourceDurationSeconds: 33.0 / 24.0, mode: .audioToVideo,
+                                      width: 1280, height: 704)
+    check("71 a2v lets an explicit request EXCEED the source (no source video to match)",
+          aWin.width == 1280 && aWin.height == 704 && aWin.requestedWidth == 704,
+          "\(aWin.summary)")
+
+    // Frames come from the SOURCE DURATION when the caller doesn't pin them, then floor to 8k+1.
+    let rDur = planS.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                      sourceDurationSeconds: 5.0, mode: .retake, fps: 24)
+    check("72 frames derive from source duration and floor to the 8k+1 grid (120 → 113)",
+          rDur.requestedNumFrames == 120 && rDur.numFrames == 113
+              && rDur.deliveredFrames == 113 && rDur.framesChanged,
+          "req=\(rDur.requestedNumFrames) → \(rDur.deliveredFrames) notes=\(rDur.notes)")
+
+    // Discrimination, mirroring case 66: an already-conforming source must report NO change.
+    let rClean = planS.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                        sourceDurationSeconds: 33.0 / 24.0, mode: .retake)
+    check("73 an in-envelope, on-grid SOURCE is reported UNCHANGED (no false alarms)",
+          !rClean.changed && rClean.notes.isEmpty && rClean.width == 704
+              && rClean.height == 512 && rClean.deliveredFrames == 33,
+          "\(rClean.summary) notes=\(rClean.notes)")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (66/66)"
+          ? "[ltx25-package-gate] PASS ✅ (73/73)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
