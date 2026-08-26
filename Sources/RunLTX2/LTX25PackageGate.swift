@@ -655,8 +655,29 @@ func ltx25PackageGate() {
               && rClean.height == 512 && rClean.deliveredFrames == 33,
           "\(rClean.summary) notes=\(rClean.notes)")
 
+    // ── 74 · THE DURATION CONVENTION (reported by ltx-studio, 2026-08-25) ───────────────────
+    // AVFoundation reports an AAC track ~23 ms SHORTER than its container (10.018 vs 10.041 on their
+    // fixture) because of encoder delay/padding. `runVideoEdit` uses AVAsset.duration — the
+    // CONTAINER — so a host that resolved from the TRACK would predict a different run.
+    //
+    // 🔑 This case exists because the error AMPLIFIES rather than staying small, and worst exactly
+    // where clips are most likely to sit: 241 is ON the 8k+1 grid, 240 is one short of it, so the
+    // floor drops a whole latent frame. 23 ms in, 8 frames out.
+    // ⚠️ max128, NOT standard64 — standard64 clamps maxFrames to 161, which would swallow both
+    // values and make this case pass for the wrong reason (it first failed exactly that way).
+    var planMax = LTX2Configuration(family: .ltx25, profile: .max128)
+    planMax.quant = .bf16
+    let gContainer = planMax.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                              sourceDurationSeconds: 10.041, mode: .retake, fps: 24)
+    let gTrack = planMax.resolvedGeometry(sourceWidth: 704, sourceHeight: 512,
+                                          sourceDurationSeconds: 10.018, mode: .retake, fps: 24)
+    check("74 a 23 ms container-vs-track duration gap moves delivered frames by 8 (use the CONTAINER)",
+          gContainer.deliveredFrames == 241 && gTrack.deliveredFrames == 233,
+          "container=\(gContainer.deliveredFrames) track=\(gTrack.deliveredFrames) — "
+              + "resolve from AVAsset.duration, or use the sourceAsset: overload")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (73/73)"
+          ? "[ltx25-package-gate] PASS ✅ (74/74)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

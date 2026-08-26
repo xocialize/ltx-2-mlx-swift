@@ -99,6 +99,27 @@ geo.summary   // "1200×704×120f → 1184×704×113f"
 `requested*` carries the **source** dims — what the sheet already shows and what the user compares
 the result against.
 
+🚨 **Prefer the `sourceAsset:` overload — it removes the one thing you can get wrong.**
+
+```swift
+let geo = try await configuration.resolvedGeometry(
+    sourceAsset: asset, mode: .retake)
+```
+
+`sourceDurationSeconds` must be the **container** duration (`AVAsset.duration`), which is what
+`runVideoEdit` uses — *not* the track duration. AVFoundation reports an AAC track ~23 ms shorter than
+its container (10.018 vs 10.041, measured on ltx-studio's fixture), and that gap **amplifies** through
+the 8k+1 floor rather than staying small:
+
+| duration used | ×24 fps | rounded | delivered |
+|---|---|---|---|
+| container 10.041 s | 240.98 | 241 | **241** |
+| track 10.018 s | 240.43 | 240 | **233** |
+
+8 frames — a third of a second — from a 23 ms disagreement, and worst precisely on clips whose frame
+count lands *on* the grid. The `sourceAsset:` overload derives duration, natural size and frame rate
+exactly as the run does, so the question never arises. Package gate case 74 pins this.
+
 ⚠️ Three differences from the request-derived call, all of them deliberate:
 
 | | retake / extend | a2v |

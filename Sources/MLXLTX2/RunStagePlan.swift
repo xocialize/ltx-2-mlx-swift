@@ -273,6 +273,20 @@ public extension LTX2Configuration {
     /// `requested*` carries the SOURCE dims, not a request: that is what the sheet already shows and
     /// what the user is comparing the result against.
     ///
+    /// 🚨 `sourceDurationSeconds` MUST BE THE **CONTAINER** DURATION — `AVAsset.duration`, which is
+    /// what `runVideoEdit` feeds this. It is NOT the track duration, and the two differ: AVFoundation
+    /// reports an AAC track ~23 ms shorter than its container (10.018 vs 10.041 measured on the app's
+    /// fixture, ltx-studio 2026-08-25), because of encoder delay/padding.
+    ///
+    /// That tiny difference AMPLIFIES through the 8k+1 floor, and worst exactly where it is most
+    /// likely to matter — on a clip whose frame count lands ON the grid:
+    ///
+    ///     container 10.041s × 24 = 240.98 → 241 → floors to 241
+    ///     track     10.018s × 24 = 240.43 → 240 → floors to **233**
+    ///
+    /// 8 frames — a third of a second — from a 23 ms disagreement, silently. Prefer the
+    /// `sourceAsset:` overload below, which cannot be got wrong.
+    ///
     /// ⚠️ THREE WAYS THIS DIFFERS FROM THE REQUEST-DERIVED RESOLVER — none are incidental:
     ///  1. **Snap grid is per-mode, not per-tier.** Generation picks /32 or /64 by whether two-stage
     ///     runs; the edit paths pin it by MODE (retake /32, a2v /64) regardless of tier.
@@ -336,3 +350,37 @@ public extension LTX2Configuration {
             requestedWidth: reqW, requestedHeight: reqH, requestedNumFrames: reqF, notes: notes)
     }
 }
+
+#if canImport(AVFoundation)
+import AVFoundation
+
+public extension LTX2Configuration {
+    /// Resolve edit geometry directly from an asset, deriving duration, natural size and frame rate
+    /// EXACTLY as `runVideoEdit` does.
+    ///
+    /// 🔑 PREFER THIS over the explicit-dimensions overload. It exists because the caller's only real
+    /// freedom in that API — which duration to pass — is a trap: `AVAsset.duration` (container) and
+    /// the audio track's duration differ by ~23 ms on AAC, and that difference can move the delivered
+    /// frame count by 8 through the 8k+1 floor. Here the host cannot pick the wrong one, because it
+    /// does not pick at all.
+    ///
+    /// Mirrors `runVideoEdit`'s fallbacks: 704×512 and 24 fps when there is no video track, which is
+    /// the normal case for a2v against an audio-only container.
+    func resolvedGeometry(sourceAsset asset: AVAsset, mode: EditGeometryMode,
+                          width: Int? = nil, height: Int? = nil,
+                          numFrames: Int? = nil, fps: Double? = nil) async throws -> ResolvedGeometry {
+        let duration = try await asset.load(.duration).seconds
+        let track = try await asset.loadTracks(withMediaType: .video).first
+        var natural = CGSize(width: 704, height: 512)
+        var nominalFPS: Double = 24
+        if let track {
+            natural = try await track.load(.naturalSize)
+            nominalFPS = Double(try await track.load(.nominalFrameRate))
+        }
+        return resolvedGeometry(
+            sourceWidth: Int(natural.width), sourceHeight: Int(natural.height),
+            sourceDurationSeconds: duration, mode: mode,
+            width: width, height: height, numFrames: numFrames, fps: fps ?? nominalFPS)
+    }
+}
+#endif
