@@ -2526,6 +2526,13 @@ if args.contains("--connector-gate") {
     try await t2vSpotGate(width: ints.count > 0 ? ints[0] : 704,
                           height: ints.count > 1 ? ints[1] : 512,
                           frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--ic-spot25") {
+    // AB-A-0048: one live IC-adapter render on the 2.5 base through the package surface.
+    // usage: --ic-spot25 [W] [H] [F]  (env LTX_IC_* — see ICSpot25.swift)
+    let ints = positional.compactMap { Int($0) }
+    try await icSpot25(width: ints.count > 0 ? ints[0] : 768,
+                       height: ints.count > 1 ? ints[1] : 448,
+                       frames: ints.count > 2 ? ints[2] : 121)
 } else if args.contains("--t2v-spot25") {
     let ints = positional.compactMap { Int($0) }
     try await t2vSpot25Gate(width: ints.count > 0 ? ints[0] : 704,

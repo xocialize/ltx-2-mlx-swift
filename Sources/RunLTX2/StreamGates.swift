@@ -652,8 +652,17 @@ func loraGate25(loraPath: String, quant: String) throws {
         eval(v, a); return (v, a)
     }
 
-    // 1. Baseline — the reference for this arm.
+    // 1. Baseline — the reference for this arm. Taken TWICE: the ditq8 path is not always
+    //    self-repeating (the known int8 graph-shape flake — 2.3's q8 spread ~3.5e-3, and the
+    //    stream-parity gate's `residentSelfExact` doctrine). Measured 2026-09-02 on LipDub/ditq8:
+    //    one run reported detach 0.991174 → FAIL, the next two 1.000000 → PASS with identical ON
+    //    cosines. A reference that does not hold cannot fail an adapter; it fails the run.
     let (vBase, _) = fwd()
+    let (vBase2, _) = fwd()
+    let selfCos = cosine(vBase2, vBase)
+    let referenceHeld = selfCos >= 0.99999
+    print(String(format: "[lora-gate25] base self-repeat: video cosine=%.6f → %@", selfCos,
+                 referenceHeld ? "holds" : "DOES NOT HOLD (q8 nondeterminism) — verdict INCONCLUSIVE"))
 
     // 2. Apply. TARGETS RESOLVED is the architectural verdict.
     try LTX2LoRA.apply(URL(fileURLWithPath: loraPath), strength: 1.0, to: dit)
@@ -677,6 +686,12 @@ func loraGate25(loraPath: String, quant: String) throws {
 
     // ⚠️ `targets > 0` is the arch-fit bar. A LoRA that resolves nothing would "pass" a
     // finite/detach check trivially while doing NOTHING — hence it is asserted first.
+    // A non-holding reference makes the detach number unreadable: exit 2 (INCONCLUSIVE — rerun),
+    // never 1 (FAIL) — the same exit convention as `--stream-parity-gate`.
+    guard referenceHeld else {
+        print("[lora-gate25] INCONCLUSIVE ⚠️ (base did not self-repeat; rerun — a FAIL here would blame the adapter for the DiT's q8 flake)")
+        exit(2)
+    }
     let pass = targets > 0 && finite && onVsBase < 0.9999 && restoreCos >= 0.99999
     print(pass ? "[lora-gate25] PASS ✅" : "[lora-gate25] FAIL ❌")
     if !pass { exit(1) }

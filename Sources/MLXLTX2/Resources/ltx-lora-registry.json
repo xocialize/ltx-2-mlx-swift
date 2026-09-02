@@ -163,9 +163,21 @@
         "targetsApplied": "1344/1344",
         "audioBranch": true,
         "loraGate": "PASS (on 0.809/off 0.99991/detach 1.0, finite)",
-        "liveGate": "LIPDUB VERIFIED 2026-07-03 (768x448x121 seed42 bf16): lip-sync in tune (operator), reference identity/scene preserved, no face artifacts; audio via ic.muxDubAudio (I7: regenerated track is model-property babble; deliverable = the actual dub). OBJECTIVE mux verification: stt_verify WER 0.08 PASS (mux ON, dub survives resample/trim/AAC verbatim) vs WER 1.00 mux-off (tracked I7 baseline). SPLIT muxON: floor 41.35 / act 39.35 / peak 80.70, run 286s."
+        "liveGate": "LIPDUB VERIFIED 2026-07-03 (768x448x121 seed42 bf16): lip-sync in tune (operator), reference identity/scene preserved, no face artifacts; audio via ic.muxDubAudio (I7: regenerated track is model-property babble; deliverable = the actual dub). OBJECTIVE mux verification: stt_verify WER 0.08 PASS (mux ON, dub survives resample/trim/AAC verbatim) vs WER 1.00 mux-off (tracked I7 baseline). SPLIT muxON: floor 41.35 / act 39.35 / peak 80.70, run 286s.",
+        "gate25": {
+          "date": "2026-09-02",
+          "harness": "RunLTX2 --lora-gate25 (self-repeat-guarded)",
+          "targetsResolved": "1344/1344 (same count as 2.3; audio branch included)",
+          "ditq8": "ON 0.953021 / detach 1.000000 (runs 2,3; run 1 was a q8 non-self-repeat: detach 0.991174 \u2014 the guard now reports that INCONCLUSIVE)",
+          "bf16": "ON 0.953375 / detach 1.000000",
+          "liveIC": "not run on 2.5 \u2014 mechanical clear only; the dub path was live-verified on 2.3"
+        }
       },
-      "audioReference": true
+      "audioReference": true,
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "ingredients",
@@ -225,8 +237,20 @@
         "note": "card says dev-base-trained \u2014 perceptual verify on distilled at P3",
         "referenceUsage": "cross-checked vs Space ltx-community/ltx-2.3-ingredients-distilled (2026-07-02): distilled base + LoRA 1.4 fused, ONE-stage at target res (SKIP_STAGE_2), sheet as looped-still at gen res x121f, conditioning strength 1.0, prompt 'Reference sheet: {elements}\\n\\nGenerated video: {action}' (no panel labels), grid sheet composer 1536x896/16px contain-fit",
         "liveGate": "IC-P3-FIXTURE PASS 2026-07-03 (768x448x121 seed42 bf16, Unconstrained): identity transfer STRONG (hair/suit/stripe/harness match the sheet, frame-consistent), no layout bleed, action+audio synced, no sheet-text bleed. Blemish (non-blocking, base-model quirk): quoted dialogue burned in as a small caption. SPLIT: floor 40.19 / peak 79.58 / act 39.39 GB, run 434s (IC seq = target+ref tokens, one full-res stage). Artifacts: LTX_TESTING/fixtures/ic-p3-result-bf16-768x448-121f.mp4",
-        "int4Datum": "2026-07-03 same geometry: floor 13.52 / act 38.65 / peak 52.17 GB \u2014 IC ACTIVATION IS QUANT-INDEPENDENT (~39 GB bf16 AND int4; it is reference-token activation, not weights). Quant lowers the floor, never the activation ceiling."
-      }
+        "int4Datum": "2026-07-03 same geometry: floor 13.52 / act 38.65 / peak 52.17 GB \u2014 IC ACTIVATION IS QUANT-INDEPENDENT (~39 GB bf16 AND int4; it is reference-token activation, not weights). Quant lowers the floor, never the activation ceiling.",
+        "gate25": {
+          "date": "2026-09-02",
+          "harness": "RunLTX2 --lora-gate25 (self-repeat-guarded) + --ic-spot25",
+          "targetsResolved": "480/480 (same count as 2.3)",
+          "ditq8": "ON 0.946346 / detach 1.000000",
+          "bf16": "ON 0.947564 / detach 1.000000",
+          "liveIC": "IC-P3-FIXTURE PASS on 2.5 2026-09-02 (--ic-spot25 768x448x121 seed42 bf16 Unconstrained, ModelSheet bundle sheet + elements): identity transfer STRONG (silver hair / navy high-collar suit / crimson stripe / harness), one coherent rooftop scene (no layout bleed), no sheet-text bleed, audio live (mean -18.4 dBFS); run 365.5 s, peak 77.35 / held 38.29 / act 39.06 GB (2.3 P3: 434 s, 79.58 / 39.39). Artifact: LTX_TESTING/fixtures/ic25-ingredients-bf16-768x448-121f-s42.mp4"
+        }
+      },
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "union-control",
@@ -262,8 +286,19 @@
         "loraGate": "PASS (on 0.792/off 0.999914/detach 1.000000, finite vmax=4.901)",
         "metadata": "model_version 2.3.0; reference_downscale_factor=2; full LTX-2 Community licence embedded in header",
         "note": "canny signal LIVE-VERIFIED; still owed for full 'verified': pose + depth fixtures (need signal extractors), reference-usage cross-check vs upstream ComfyUI IC workflow (strength/stage conventions). defaultStrength 1.0 held up in the canny fixture.",
-        "cannyLiveFixture": "PASS 2026-08-06 (LTX_TESTING/fixtures/union-canny/): appearance-transfer prompt over face-clip canny control, 704x512x121f one-stage bf16 seed42, strengths 1.0/1.0, ref at ds=2 (352x256); edge-overlap Dice IC 0.222/0.593-tolerant vs no-IC null 0.031/0.115 = 5.2-7x separation -> structural transfer confirmed; SPLIT floor 39.13 / peak 54.93 / act 15.80 GB, 161.7s. Confirms referenceDownscale=2 ingest path live. OPERATOR EYEBALL PASS same day: IC output carries the control's animated movement ('same animated movement' as the outline); baseline fully divergent (seed lock broken by prompt-token change -> independent null). Strength-1.0 note: edges dominated silhouette appearance (hair contour kept, prompt beard lost) - compare upstream default strength in the usage cross-check."
-      }
+        "cannyLiveFixture": "PASS 2026-08-06 (LTX_TESTING/fixtures/union-canny/): appearance-transfer prompt over face-clip canny control, 704x512x121f one-stage bf16 seed42, strengths 1.0/1.0, ref at ds=2 (352x256); edge-overlap Dice IC 0.222/0.593-tolerant vs no-IC null 0.031/0.115 = 5.2-7x separation -> structural transfer confirmed; SPLIT floor 39.13 / peak 54.93 / act 15.80 GB, 161.7s. Confirms referenceDownscale=2 ingest path live. OPERATOR EYEBALL PASS same day: IC output carries the control's animated movement ('same animated movement' as the outline); baseline fully divergent (seed lock broken by prompt-token change -> independent null). Strength-1.0 note: edges dominated silhouette appearance (hair contour kept, prompt beard lost) - compare upstream default strength in the usage cross-check.",
+        "gate25": {
+          "date": "2026-09-02",
+          "harness": "RunLTX2 --lora-gate25 (self-repeat-guarded)",
+          "targetsResolved": "480/480 (same count as 2.3)",
+          "ditq8": "ON 0.910594 / detach 1.000000",
+          "liveIC": "not run on 2.5 \u2014 mechanical clear only; the control-video path was live-verified on 2.3"
+        }
+      },
+      "clearedFamilies": [
+        "ltx-2.3",
+        "ltx-2.5"
+      ]
     },
     {
       "id": "cameraman-v2",
