@@ -12,6 +12,22 @@ import MLXToolKit
 
 public enum AudioInput {   // public to match `VideoInput` — the a2v smoke reads tracks back
 
+    /// Seconds of audio in a canonical `Audio` artifact, from the container header — what the
+    /// pre-admission workload mapping (contract 1.41.0, `LTX2Configuration.workloadUnits`) needs
+    /// for an a2v request whose frame count follows the track. Synchronous and header-only: no
+    /// decode, one temp-file write (AVAudioFile reads URLs, and parses by container — the
+    /// extension follows `audio.format`). `nil` when the container is unreadable or empty; the
+    /// run then fails on the decoder's own error where it matters.
+    public static func headerDurationSeconds(of audio: Audio) -> Double? {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ltx-a2v-\(UUID().uuidString).\(audio.format.rawValue)")
+        guard (try? audio.data.write(to: tmp)) != nil else { return nil }
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        guard let file = try? AVAudioFile(forReading: tmp),
+              file.length > 0, file.fileFormat.sampleRate > 0 else { return nil }
+        return Double(file.length) / file.fileFormat.sampleRate
+    }
+
     /// Decode `url`'s (first) audio track → (1, 2, T) float32 at `sampleRate`. `maxSeconds`
     /// trims long sources to the clip span (LipDub aligns the dub to the video duration).
     public static func referenceWaveform(url: URL, sampleRate: Double = 16000,

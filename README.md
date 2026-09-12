@@ -78,6 +78,15 @@ its full 481f envelope on the heavier i2v path):
 16 GB is deliberately unsupported (the int4 DiT alone ≈ a 16 GB governor budget; no smaller LTX-2
 checkpoint exists). `nil` profile = unconstrained legacy behavior.
 
+**Contract 1.41.0 (engine 0.55.0, AB-A-0074):** each LTX-2.5 profile also declares its envelope as a
+LINE in pixel-frames (`LTX2Configuration.activationScalingHint`, axis `.pixelFrames`, ceiling = the
+largest geometry actually measured for that lane) and maps a `T2VRequest` to the pixel-frames of the
+geometry it RESOLVES to (`WorkloadDeclaring`, through the same `resolvedGeometry` the run uses; an
+a2v request follows its track). The profile still clamps rather than refuses, so the engine's
+pre-admission refusal is a backstop — what this buys is `machineFitAdvisory(_:package:workload:)`
+answering "will THIS clip fit?" per geometry. The derivation per lane, receipts included, is on the
+hint in `LTX2Configuration.swift`; `ActivationScalingTests` holds every line to its measured corners.
+
 ## Layout
 
 - `Sources/LTX2` — engine-agnostic functional cores (RoPE, Gemma, Connector, DiT, DenoiseLoop,

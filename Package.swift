@@ -100,7 +100,9 @@ let package = Package(
         //    per-package copies). load() now only resolves directories off the store.
         // 0.54.0 = contract 1.40.0: `T2VRequest.initAudio` + `T2VControls` (AB-A-0023) — the
         // canonical a2v surface this package declares and routes.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.54.0"),
+        // 0.55.0 = contract 1.41.0: `ActivationScaling` + `WorkloadDeclaring` (AB-A-0074) — the
+        // per-profile geometry envelope declared as a line the engine can enforce and advise on.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.55.0"),
         // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
         // extracted from this package's in-tree implementation (and wan-core's) once the
         // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo

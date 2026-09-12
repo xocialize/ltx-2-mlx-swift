@@ -803,6 +803,103 @@ extension LTX2Configuration: FootprintConfigured {
     }
 }
 
+// MARK: - Activation as a function of GEOMETRY (contract 1.41.0, AB-A-0074)
+
+extension LTX2Configuration {
+    /// The 2.5 per-profile envelope as a LINE in pixel-frames (width × height × frames), on the
+    /// same lane rules as `peakActivationBytesHint` — the structural form of the cap coupling
+    /// AB-T-0077/0078 wired by hand. The engine enforces `measuredCeiling` before admission
+    /// (`EngineError.workloadExceedsDeclaredCeiling`) and answers
+    /// `machineFitAdvisory(_:package:workload:)` per clip; the reserve stays the scalar hint,
+    /// and FIT-2 holds for every pair below (reserve ≥ line at the ceiling).
+    ///
+    /// Contract rule 1 — the line sits ON OR ABOVE every measured point up to the ceiling; rule 2
+    /// — the ceiling is the largest geometry MEASURED, never the largest imaginable. Measured
+    /// streamed(+tiled) ACTIVATION (peak − resident) per lane, pixel-frames → GB:
+    ///
+    ///   compact24   512×288×121  =  17.84 M →  15.02 (i2v, worst; t2v 14.15)        AB-R-0106
+    ///   balanced32  576×320×161  =  29.68 M →  16.65 (i2v, worst; t2v 14.86)        AB-R-0106
+    ///   standard64  704×512×161  =  58.03 M →  18.80 (t2v, worst)                   AB-R-0106
+    ///              1280×704×241  = 217.17 M →  32.96 (tiled 2×2, 33.55 − 0.59)      AB-R-0130
+    ///   max128     1920×1088×121 = 252.76 M →  48.5  (49.30 − ~0.8)                  AB-T-0098
+    ///              1920×1088×241 = 503.44 M →  59.51 (60.35 − 0.84)                  AB-T-0098
+    ///              1920×1088×481 = 1004.79 M → 73.62 (74.39 − 0.77)                  AB-T-0098
+    ///
+    /// Shapes. The two-point lanes (standard64) declare the chord between their points. max128's
+    /// three points are CONCAVE in pixel-frames (the fixed decode/encoder terms dominate at 121f),
+    /// so the chord from the origin the ask suggested would sit UNDER the interior points — the
+    /// unsafe direction; the declared line is the one through the corner that the 241f point
+    /// pins (28 B per pixel-frame, 45.5 GB intercept), which over-projects 121f by 4 GB. The
+    /// one-point lanes (compact24, balanced32) have nothing to fit a slope to: they declare
+    /// their corner as a FLAT line (slope 0) — the reserve IS the model until a second geometry
+    /// is measured, which over-projects every smaller clip and is exactly as honest as the
+    /// scalar was. ⚠️ standard64's ceiling (241f) sits ABOVE its 161f frame cap: the corner was
+    /// measured past the cap, the cap clamps requests below it, and rule 2 says declare what was
+    /// measured. The 2.3 family stays scalar: its tiers were measured at one geometry each
+    /// (T3b/T3c, 2026-07-01) and it is prior work.
+    ///
+    /// The profile CLAMPS a request to its envelope rather than refusing it (`resolvedGeometry`),
+    /// so `workloadUnits` can never exceed the ceiling for a t2v and the engine's refusal is a
+    /// backstop, not the mechanism — the advisory is what this buys (`ML[X] LTX Studio`'s launch
+    /// gate asks it "will THIS clip fit?").
+    public var activationScalingHint: ActivationScaling? {
+        guard family == .ltx25, let profile else { return nil }
+        switch profile {
+        case .compact24:
+            guard declaresStreamedFootprint else { return nil }
+            return ActivationScaling(axis: .pixelFrames, baseBytes: 15_020_000_000,
+                                     bytesPerUnit: 0, measuredCeiling: 17_842_176)
+        case .balanced32:
+            guard declaresStreamedFootprint else { return nil }
+            return ActivationScaling(axis: .pixelFrames, baseBytes: 16_650_000_000,
+                                     bytesPerUnit: 0, measuredCeiling: 29_675_520)
+        case .standard64:
+            // Unguarded, like its reserve: the 34.0 GB charge covers BOTH lanes at the cap.
+            // (32.96 − 18.80) GB / (217.17 − 58.03) M = 89 B per pixel-frame.
+            return ActivationScaling(axis: .pixelFrames, baseBytes: 13_650_000_000,
+                                     bytesPerUnit: 89, measuredCeiling: 217_169_920)
+        case .max128:
+            // Streamed lane only — the resident bf16 lane's 36 GB is one 704×512×481 spot.
+            guard declaresStreamedFootprint else { return nil }
+            return ActivationScaling(axis: .pixelFrames, baseBytes: 45_500_000_000,
+                                     bytesPerUnit: 28, measuredCeiling: 1_004_789_760)
+        }
+    }
+}
+
+// MARK: - Workload (contract 1.41.0 — the geometry a request resolves to, AB-A-0074)
+
+extension LTX2Configuration: WorkloadDeclaring {
+    /// A t2v request's workload in the declared axis: the RESOLVED geometry's pixel-frames —
+    /// through the same `resolvedGeometry` the run uses, so the clamp, the /32 or /64 snap and
+    /// the frame grid all apply before the engine compares it with the ceiling. An a2v request
+    /// (`initAudio`) whose frames are not pinned follows the TRACK, exactly as `runAudioToVideo`
+    /// does, from the container header (`AudioInput.headerDurationSeconds`).
+    ///
+    /// `nil` — never refused — for: a `VideoEditRequest` (its geometry derives from the SOURCE
+    /// clip, which is not readable pre-admission without decoding the container; the profile
+    /// clamp still bounds it at the corner, i.e. the ceiling); audio the header cannot size; and
+    /// the measurement-only `LTX_ENVELOPE_OVERRIDE=1` hatch, whose whole purpose is to run a
+    /// geometry the profile does not permit (a number from such a run is never an acceptance
+    /// number — see `MLXLTX2Package.run`).
+    public func workloadUnits(for request: any CapabilityRequest) -> Double? {
+        guard let t2v = request as? T2VRequest else { return nil }
+        if ProcessInfo.processInfo.environment["LTX_ENVELOPE_OVERRIDE"] == "1" { return nil }
+        let geo: ResolvedGeometry
+        if let audio = t2v.initAudio {
+            guard let seconds = AudioInput.headerDurationSeconds(of: audio) else { return nil }
+            geo = resolvedGeometry(
+                sourceWidth: 704, sourceHeight: 512, sourceDurationSeconds: seconds,
+                mode: .audioToVideo, width: t2v.width, height: t2v.height,
+                numFrames: t2v.numFrames, fps: t2v.fps)
+        } else {
+            geo = resolvedGeometry(width: t2v.width, height: t2v.height,
+                                   numFrames: t2v.numFrames, fps: t2v.fps)
+        }
+        return Double(geo.width) * Double(geo.height) * Double(geo.numFrames)
+    }
+}
+
 /// Cold-start weight prewarm (engine ≥0.7.0): page the LTX + Gemma weight files into the OS
 /// file cache before `load()` runs its GPU evals, so the cold load-time `eval` never faults
 /// weights off slow/external storage inside a live Metal command buffer (the I5 cold-load
