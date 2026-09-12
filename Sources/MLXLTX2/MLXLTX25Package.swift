@@ -132,7 +132,13 @@ public final class MLXLTX25Package: ModelPackage {
                         + "Output is an MP4 with synced 48kHz audio. Ships on ALL FOUR tiers "
                         + "(AB-D-0035): the low tiers auto-follow to the int8 encoder + streamed "
                         + "DiT; standard64 reaches 1280×704 and max128 1920×1088 with automatic "
-                        + "decode tiling."),
+                        + "decode tiling. Audio-to-video via `initAudio` (contract 1.40.0): the "
+                        + "whole clip is generated against the supplied track, which is returned "
+                        + "untouched in the output.",
+                    // a2v is DECLARED, not merely implemented: `initAudio` is declaration-gated
+                    // (AB-A-0023 / AB-A-0066 — our own verdict), so the engine admits it here
+                    // and refuses it on the 2.3 package, which never shipped a2v.
+                    controls: T2VControls(supportsInitAudio: true)),
                 // ⟲ The old text said "64/128 GB tiers only (AB-D-0015)" — superseded by AB-D-0035
                 // a fortnight ago; fixed while adding the surface below rather than shipped stale.
                 VEditContract.descriptor(

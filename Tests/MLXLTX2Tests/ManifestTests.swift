@@ -17,6 +17,19 @@ struct ManifestTests {
         #expect(MLXLTX2Package.manifest.contractVersion == ContractVersion.current)
     }
 
+    /// Contract 1.40.0 — a2v is DECLARED on the 2.5 t2v surface (so the engine admits
+    /// `T2VRequest.initAudio`) and NOT on 2.3, which never shipped a2v and must be refused rather
+    /// than silently run a plain t2v (AB-A-0023 / AB-A-0066: gated, our own verdict).
+    @Test func initAudioIsDeclaredOn25Only() {
+        let s25 = MLXLTX25Package.manifest.surfaces.first { $0.capability == .textToVideo }
+        #expect(s25?.t2vControls?.supportsInitAudio == true)
+        #expect(s25?.parameters.contains { $0.name == "initAudio" } == true)
+        #expect(s25?.controlsMatchCapability == true)
+        let s23 = MLXLTX2Package.manifest.surfaces.first { $0.capability == .textToVideo }
+        #expect(s23?.t2vControls == nil)
+        #expect(s23?.parameters.contains { $0.name == "initAudio" } == false)
+    }
+
     /// Two-layer declaration: weights = LTX-2 Community License; port code = Apache-2.0
     /// (our own implementation, mirroring Lightricks' Apache-2.0 inference code).
     @Test func licenseDeclaresCommunityWeightsApachePortCode() {

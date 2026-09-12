@@ -98,7 +98,9 @@ let package = Package(
         //    prepare() downloads a WeightSourcing configuration's missing sources before load()
         //    runs, replacing this package's own WeightMaterializer (the original of the four
         //    per-package copies). load() now only resolves directories off the store.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.47.0"),
+        // 0.54.0 = contract 1.40.0: `T2VRequest.initAudio` + `T2VControls` (AB-A-0023) — the
+        // canonical a2v surface this package declares and routes.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.54.0"),
         // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
         // extracted from this package's in-tree implementation (and wan-core's) once the
         // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo

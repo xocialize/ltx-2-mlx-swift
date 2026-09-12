@@ -160,12 +160,47 @@ extension MLXLTX2Package {
                                           frameRate: fps))
     }
 
-    /// a2v — generate video against a supplied audio track (`VEditModes.audioToVideo`).
+    /// a2v on the videoEdit carrier (`VEditModes.audioToVideo`) — the pre-1.40 surface, kept as the
+    /// compatibility alias. Only the container's AUDIO is read.
+    func runAudioToVideo(_ vedit: VEditRequest, pipeline: LTX2Pipeline, source: URL,
+                         sourceDuration: Double, natural: CGSize, fps: Double) async throws -> VEditResponse {
+        let video = try await audioToVideoCore(
+            prompt: vedit.prompt, seed: vedit.seed,
+            width: vedit.width, height: vedit.height, numFrames: vedit.numFrames, fps: fps,
+            metaData: vedit.metaData, initImage: nil,
+            pipeline: pipeline, source: source, sourceDuration: sourceDuration, natural: natural)
+        return VEditResponse(video: video)
+    }
+
+    /// a2v on the CANONICAL surface — `T2VRequest.initAudio` (contract 1.40.0, AB-A-0023). The
+    /// `Audio` artifact is written to a temp file for the AVFoundation reader. There is no video
+    /// track, so geometry follows the request, then the t2v default — the rule the audio-only
+    /// carrier path already applied. The typed `initImage` conditions frame 0 (REPLACE) and
+    /// `kf.keyframes` on metaData append later anchors, exactly as on the carrier lane.
+    func runAudioToVideo(_ t2v: T2VRequest, audio: Audio, pipeline: LTX2Pipeline) async throws -> T2VResponse {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ltx-a2v-\(UUID().uuidString).\(audio.format.rawValue)")
+        try audio.data.write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let duration = try await AVURLAsset(url: tmp).load(.duration).seconds
+        let video = try await audioToVideoCore(
+            prompt: t2v.prompt, seed: t2v.seed,
+            width: t2v.width, height: t2v.height, numFrames: t2v.numFrames, fps: t2v.fps ?? 24,
+            metaData: t2v.metaData, initImage: t2v.initImage,
+            pipeline: pipeline, source: tmp, sourceDuration: duration,
+            natural: CGSize(width: 704, height: 512))
+        return T2VResponse(video: video)
+    }
+
+    /// The a2v core shared by BOTH surfaces — generate video against a supplied audio track.
     ///
     /// Mirrors LTX Desktop's `DistilledA2VPipeline` contract: two-stage distilled, audio frozen in
     /// both stages, and the ORIGINAL waveform muxed back rather than the VAE round-trip.
-    func runAudioToVideo(_ vedit: VEditRequest, pipeline: LTX2Pipeline, source: URL,
-                         sourceDuration: Double, natural: CGSize, fps: Double) async throws -> VEditResponse {
+    func audioToVideoCore(prompt: String, seed: UInt64?,
+                          width: Int?, height: Int?, numFrames: Int?, fps: Double,
+                          metaData: MetaData, initImage: Image?,
+                          pipeline: LTX2Pipeline, source: URL, sourceDuration: Double,
+                          natural: CGSize) async throws -> Video {
         // Geometry. Unlike retake there is no source video to match, so an explicit request wins,
         // then the container's natural size, then the t2v default. Snap DOWN to /64, not /32: the
         // spatial-x2 upsampler we ship needs the stage-2 latent grid even, and a /32-but-not-/64
@@ -178,7 +213,7 @@ extension MLXLTX2Package {
         let geo = configuration.resolvedGeometry(
             sourceWidth: Int(natural.width), sourceHeight: Int(natural.height),
             sourceDurationSeconds: sourceDuration, mode: .audioToVideo,
-            width: vedit.width, height: vedit.height, numFrames: vedit.numFrames, fps: fps)
+            width: width, height: height, numFrames: numFrames, fps: fps)
         let w = geo.width, h = geo.height, frames = geo.numFrames
 
         // Read the track at exactly the video's span. A longer track is truncated here, and a
@@ -194,16 +229,19 @@ extension MLXLTX2Package {
         // Image conditioning on a2v (AB-T-0096). Previously these were parsed nowhere on this
         // path, so anything a caller attached was SILENTLY dropped — which is what made a missing
         // capability look like a quality problem on AB-A-0027.
-        let kfReqs = try KeyframeMetaKeys.parse(vedit.metaData)
-        let initClosure: ((Int, Int) throws -> MLXArray)? =
-            vedit.metaData[KeyframeMetaKeys.initPath]?.asString.map { p in
-                { w, hh in try ImageInput.initFrameTensor(path: p, width: w, height: hh) }
-            }
+        let kfReqs = try KeyframeMetaKeys.parse(metaData)
+        // The typed `initImage` (canonical, t2v lane) wins; `kf.initPath` on metaData is the
+        // carrier lane's path-based form, kept for the alias.
+        let initClosure: ((Int, Int) throws -> MLXArray)? = initImage.map { img in
+            { w, hh in try ImageInput.initFrameTensor(img, width: w, height: hh) }
+        } ?? metaData[KeyframeMetaKeys.initPath]?.asString.map { p in
+            { w, hh in try ImageInput.initFrameTensor(path: p, width: w, height: hh) }
+        }
         let out = try await LTX2Progress.$sink.withValue(forward) {
             () async throws -> LTX2Pipeline.Output in
             try await pipeline.audioToVideo(
-                prompt: vedit.prompt, audioWaveform: waveform,
-                height: h, width: w, numFrames: frames, fps: fps, seed: vedit.seed,
+                prompt: prompt, audioWaveform: waveform,
+                height: h, width: w, numFrames: frames, fps: fps, seed: seed,
                 keyframes: kfReqs, initImage: initClosure)
         }
 
@@ -224,9 +262,9 @@ extension MLXLTX2Package {
         let framesCL = out.video.transposed(0, 2, 3, 4, 1)                // (B,C,F,H,W) → (B,F,H,W,C)
         let mp4 = try await encodeMP4(frames: framesCL, fps: fps, audio: muxAudio,
                                       audioSampleRate: 48000)
-        return VEditResponse(video: Video(format: .mp4, data: mp4,
-                                          durationSeconds: Double(framesCL.dim(1)) / fps,
-                                          frameRate: fps))
+        return Video(format: .mp4, data: mp4,
+                     durationSeconds: Double(framesCL.dim(1)) / fps,
+                     frameRate: fps)
     }
 
 }

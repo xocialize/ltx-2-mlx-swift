@@ -207,6 +207,14 @@ public final class MLXLTX2Package: ModelPackage {
         guard request.capability == .textToVideo, let t2v = request as? T2VRequest else {
             throw PackageError.unsupportedCapability(request.capability)
         }
+        // a2v via the CANONICAL field (contract 1.40.0, AB-A-0023): the whole clip is generated
+        // against `initAudio`, through the same core as videoEdit mode "audio_to_video" (kept as
+        // the compatibility alias). Branches before the LoRA/IC intake exactly as that lane does.
+        // The engine pre-flight only lets this field reach a surface that DECLARES
+        // `T2VControls.supportsInitAudio` — the 2.5 descriptor does, the 2.3 one does not.
+        if let audio = t2v.initAudio {
+            return try await runAudioToVideo(t2v, audio: audio, pipeline: pipeline)
+        }
 
         // Per-request runtime LoRA (the "extend" capability), carried opaquely in metaData:
         //   metaData["loraId"]       registry id of the effect (absent/empty → pristine base)

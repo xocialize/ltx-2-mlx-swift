@@ -20,6 +20,28 @@ import MLXFFT
 import MLXLTX2
 import MLXToolKit
 
+/// 16-bit PCM stereo WAV from a (1, 2, T) float waveform — what an `Audio(format: .wav)` artifact
+/// carries, so the canonical lane can be driven from the same decoded track as the carrier lane.
+func wavData(_ w: MLXArray, sampleRate: Int) -> Data {
+    let t = w.dim(2)
+    let l = w[0, 0].asArray(Float.self), r = w[0, 1].asArray(Float.self)
+    var pcm = [Int16](); pcm.reserveCapacity(2 * t)
+    for i in 0 ..< t {
+        pcm.append(Int16((max(-1, min(1, l[i])) * 32767).rounded()))
+        pcm.append(Int16((max(-1, min(1, r[i])) * 32767).rounded()))
+    }
+    let dataBytes = pcm.count * 2
+    var d = Data()
+    func u32(_ v: UInt32) { var x = v.littleEndian; d.append(Data(bytes: &x, count: 4)) }
+    func u16(_ v: UInt16) { var x = v.littleEndian; d.append(Data(bytes: &x, count: 2)) }
+    d.append("RIFF".data(using: .ascii)!); u32(UInt32(36 + dataBytes)); d.append("WAVE".data(using: .ascii)!)
+    d.append("fmt ".data(using: .ascii)!); u32(16); u16(1); u16(2)
+    u32(UInt32(sampleRate)); u32(UInt32(sampleRate * 4)); u16(4); u16(16)
+    d.append("data".data(using: .ascii)!); u32(UInt32(dataBytes))
+    pcm.withUnsafeBufferPointer { d.append(Data(buffer: $0)) }
+    return d
+}
+
 func a2vSmoke() async throws {
     let cfg = LTX2Configuration(family: .ltx25,
                                 modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
@@ -33,13 +55,13 @@ func a2vSmoke() async throws {
 
     // 704x512: /64 on both axes, so a2v's snap-DOWN is a no-op and the spatial-x2 second stage
     // gets an even stage-2 latent grid (22x16). 33 frames ⇒ 5 latent frames.
-    print("[a2v-smoke] 1/3 t2v source with audio (704×512×33, seed 42)…")
+    print("[a2v-smoke] 1/4 t2v source with audio (704×512×33, seed 42)…")
     let t2v = T2VRequest(prompt: "a drummer playing a fast rhythm on a snare drum",
                          numFrames: 33, fps: 24, width: 704, height: 512, seed: 42)
     let src = try await pkg.run(t2v) as! T2VResponse
     print("[a2v-smoke]     source mp4 \(src.video.data.count / 1024) KB")
 
-    print("[a2v-smoke] 2/3 a2v against that track, DIFFERENT prompt (seed 4242)…")
+    print("[a2v-smoke] 2/4 a2v against that track, DIFFERENT prompt (seed 4242)…")
     let a2v = VEditRequest(video: src.video,
                            prompt: "close-up of hands clapping in a bright room",
                            width: 704, height: 512, numFrames: 33, fps: 24,
@@ -60,7 +82,7 @@ func a2vSmoke() async throws {
     print(String(format: "[a2v-smoke]     durationSeconds=%.4f (expect %.4f)",
                  out.video.durationSeconds ?? -1, expectedDuration))
 
-    print("[a2v-smoke] 3/3 audio preserved + video regenerated…")
+    print("[a2v-smoke] 3/4 audio preserved + video regenerated…")
     let dir = FileManager.default.temporaryDirectory
     let a = dir.appendingPathComponent("a2v-src.mp4"), b = dir.appendingPathComponent("a2v-out.mp4")
     try src.video.data.write(to: a); try out.video.data.write(to: b)
@@ -144,6 +166,33 @@ func a2vSmoke() async throws {
     print(String(format: "[a2v-smoke] mean frame cosine(src, a2v) = %.4f (must be < 0.98 — "
                  + "a2v regenerates, it does not pass the source through)", vidCos))
 
+    // ── 4/4 THE CANONICAL SURFACE (contract 1.40.0, AB-A-0023): the SAME track as a `.wav`
+    //    artifact on `T2VRequest.initAudio` — no carrier container at all. Both lanes must stay
+    //    green: the videoEdit mode is the compatibility alias, this is what callers should use.
+    print("[a2v-smoke] 4/4 canonical lane — T2VRequest.initAudio with the same track (seed 4242)…")
+    let wav = wavData(wa, sampleRate: 48000)
+    let canonical = T2VRequest(prompt: "close-up of hands clapping in a bright room",
+                               initAudio: Audio(format: .wav, data: wav, sampleRate: 48000, channels: 2),
+                               numFrames: 33, fps: 24, width: 704, height: 512, seed: 4242)
+    let out4 = try await pkg.run(canonical) as! T2VResponse
+    print("[a2v-smoke]     canonical mp4 \(out4.video.data.count / 1024) KB")
+    let c4 = dir.appendingPathComponent("a2v-canonical.mp4")
+    try out4.video.data.write(to: c4)
+    let wc = try await AudioInput.referenceWaveform(url: c4, sampleRate: 48000)
+    let n4 = min(wa.dim(2), wc.dim(2))
+    let xa4 = wa[0..., 0..., 0 ..< n4].flattened().asType(.float32)
+    let xc = wc[0..., 0..., 0 ..< n4].flattened().asType(.float32)
+    eval(xa4, xc)
+    let (audioCos4, audioLag4) = bestLagCorrelation(xa4, xc, maxLag: 12000)
+    let fc = try await VideoInput.referenceClipFrames(url: c4, width: 704, height: 512, frames: 33, fps: 24)
+    func frameCos4(_ i: Int) -> Float {
+        let x = fa[0..., 0..., i ..< (i + 1)].flattened(), y = fc[0..., 0..., i ..< (i + 1)].flattened()
+        eval(x, y)
+        return (x * y).sum().item(Float.self)
+            / (sqrt((x * x).sum().item(Float.self)) * sqrt((y * y).sum().item(Float.self)) + 1e-9)
+    }
+    let vidCos4 = (0 ..< 33).map(frameCos4).reduce(0, +) / 33
+
     var ok = true
     if !phases.contains(RunPhase.denoise.rawValue) {
         print("[a2v-smoke] FAIL ❌ — no denoise reports reached RunProgress"); ok = false
@@ -175,6 +224,24 @@ func a2vSmoke() async throws {
             + "4–8 kHz energy; a2v promises the SUPPLIED track, not a band-limited copy (AB-T-0093)")
         ok = false
     }
+    // Canonical lane (`T2VRequest.initAudio`), same bars as the carrier lane.
+    let outHi4 = bandEnergy(xc, 4000, 8000)
+    let retained4 = srcHi > 0 ? outHi4 / srcHi : 0
+    print(String(format: "[a2v-smoke] canonical: audio corr %.4f @ lag %d, 4–8 kHz retained %.0f%%, "
+                 + "frame cosine vs source %.4f, durationSeconds %.4f",
+                 audioCos4, audioLag4, retained4 * 100, vidCos4, out4.video.durationSeconds ?? -1))
+    if !(audioCos4 > 0.95 && abs(audioLag4) <= 96) {
+        print("[a2v-smoke] FAIL ❌ — canonical lane did not return the supplied track in place"); ok = false
+    }
+    if !(retained4 >= 0.80) {
+        print("[a2v-smoke] FAIL ❌ — canonical lane band-limited the delivered track"); ok = false
+    }
+    if !(vidCos4 < 0.98) {
+        print("[a2v-smoke] FAIL ❌ — canonical lane passed the source frames through"); ok = false
+    }
+    if abs((out4.video.durationSeconds ?? -1) - expectedDuration) > 0.01 {
+        print("[a2v-smoke] FAIL ❌ — canonical lane durationSeconds is wrong"); ok = false
+    }
     if !(audioCos > 0.95) {
         print("[a2v-smoke] FAIL ❌ — the supplied track was NOT preserved through a2v"); ok = false
     }
@@ -191,7 +258,8 @@ func a2vSmoke() async throws {
         print("[a2v-smoke] FAIL ❌ — output video matches the source; a2v is passing frames "
             + "through instead of generating against the audio"); ok = false
     }
-    print(ok ? "[a2v-smoke] PASS ✅ — track preserved, video regenerated against it"
+    print(ok ? "[a2v-smoke] PASS ✅ — track preserved, video regenerated against it, on BOTH lanes "
+             + "(videoEdit alias + T2VRequest.initAudio)"
              : "[a2v-smoke] FAIL ❌")
     if !ok { exit(1) }
 }
