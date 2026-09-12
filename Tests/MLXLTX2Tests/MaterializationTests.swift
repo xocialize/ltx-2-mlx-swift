@@ -16,6 +16,9 @@ final class MaterializationTests: XCTestCase {
         try FileManager.default.createDirectory(at: ltx, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: gemma, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: ltx.appending(path: "connector.safetensors").path, contents: Data([0]))
+        // Since 12b2671 the transformer is its own weight source; a satisfied bf16 tree carries it
+        // in the components directory (no quant sibling exists for bf16).
+        FileManager.default.createFile(atPath: ltx.appending(path: "transformer-distilled.safetensors").path, contents: Data([0]))
         FileManager.default.createFile(atPath: gemma.appending(path: "config.json").path, contents: Data([0]))
         return (ltx, gemma, { try? FileManager.default.removeItem(at: base) })
     }
@@ -46,11 +49,28 @@ final class MaterializationTests: XCTestCase {
 
     // MARK: - Source declaration shape
 
-    func testBF16DeclaresTwoSourcesWithTransformerInComponents() {
+    /// Since 12b2671 (2026-08-21) the transformer is its OWN source on every quant — bf16 from the
+    /// base repo (no sibling), never from the components glob, so an encoder-swapped config cannot
+    /// demand the 35 GB bf16 DiT from a `-q8` tree.
+    func testBF16DeclaresThreeSourcesWithTheTransformerItsOwn() {
         let sources = LTX2Configuration().weightSources
-        XCTAssertEqual(sources.map(\.role), ["components", "text-encoder"])
-        XCTAssertTrue(sources[0].matching!.contains("transformer-distilled.safetensors"))
+        XCTAssertEqual(sources.map(\.role), ["components", "text-encoder", "transformer-bf16"])
+        XCTAssertFalse(sources[0].matching!.contains("transformer-distilled.safetensors"))
         XCTAssertEqual(sources[1].repo, "mlx-community/gemma-3-12b-it-4bit")
+        XCTAssertEqual(sources[2].repo, "xocialize/ltx-2.3-mlx")   // base repo: bf16 has no sibling
+        XCTAssertEqual(sources[2].matching, ["transformer-distilled.safetensors"])
+    }
+
+    /// The bf16 transformer lives in the components tree; an explicit `ltxDirectory` carrying it
+    /// satisfies the transformer source (the store layout resolves the same way with
+    /// `transformerPath` nil). Without the file, the source is honestly missing.
+    func testExplicitBF16DirectorySatisfiesTheTransformerSource() throws {
+        let (ltx, gemma, cleanup) = try satisfiedDirs()
+        defer { cleanup() }
+        let cfg = LTX2Configuration(ltxDirectory: ltx, gemmaDirectory: gemma)
+        XCTAssertTrue(cfg.missingWeightSources(storeRoot: nil).isEmpty)
+        try FileManager.default.removeItem(at: ltx.appending(path: "transformer-distilled.safetensors"))
+        XCTAssertEqual(cfg.missingWeightSources(storeRoot: nil).map(\.role), ["transformer-bf16"])
     }
 
     func testQuantDeclaresDerivedTransformerRepo() {
@@ -69,9 +89,9 @@ final class MaterializationTests: XCTestCase {
     func testStoreLayoutSatisfiesAndResolves() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "ltx-store-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
-        let cfg = LTX2Configuration()   // bf16: components (incl. transformer) + gemma
+        let cfg = LTX2Configuration()   // bf16: components + gemma + the transformer (its own source)
         // Empty store: everything missing.
-        XCTAssertEqual(cfg.missingWeightSources(storeRoot: root).count, 2)
+        XCTAssertEqual(cfg.missingWeightSources(storeRoot: root).count, 3)
         // Populate the expected layout — paths from ModelStore so the fixture tracks the
         // engine's canonical models--org--name layout (contract 1.22.0), not a stale literal.
         let store = ModelStore(root: root)
@@ -79,7 +99,8 @@ final class MaterializationTests: XCTestCase {
         let gemmaDir = store.directory(for: "mlx-community/gemma-3-12b-it-4bit")!
         try FileManager.default.createDirectory(at: ltxDir, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: gemmaDir, withIntermediateDirectories: true)
-        for f in LTX2Configuration.componentFiles + ["transformer-distilled.safetensors"] {
+        for f in LTX2Configuration.componentFiles + LTX2Configuration.componentFiles23
+                + ["transformer-distilled.safetensors"] {
             FileManager.default.createFile(atPath: ltxDir.appending(path: f).path, contents: Data([0]))
         }
         FileManager.default.createFile(atPath: gemmaDir.appending(path: "config.json").path, contents: Data([0]))

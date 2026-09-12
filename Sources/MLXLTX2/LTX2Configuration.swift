@@ -603,6 +603,15 @@ extension LTX2Configuration: WeightSourcing {
                 return !storeHas(source.repo, files: ["config.json"])
             default:   // transformer-<quant>
                 if let path = transformerPath, fm.fileExists(atPath: path.path) { return false }
+                // bf16 has no quant sibling, so its transformer lives IN the components tree
+                // (`resolved(storeRoot:)` leaves `transformerPath` nil for exactly that reason).
+                // 12b2671 made the transformer its own SOURCE without moving the bf16 file, and
+                // an explicit `ltxDirectory` that carries it must read as satisfied — otherwise a
+                // dev config pointed at a complete bf16 tree is told to download 35 GB it has.
+                if effectiveTransformerRepo == nil, let dir = ltxDirectory,
+                   fm.fileExists(atPath: dir.appending(path: Self.defaultTransformerFile).path) {
+                    return false
+                }
                 return !storeHas(source.repo, files: [Self.defaultTransformerFile])
             }
         }
