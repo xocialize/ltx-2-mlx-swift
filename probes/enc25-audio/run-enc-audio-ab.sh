@@ -26,7 +26,7 @@
 # Read the controls FIRST; the q8 verdict is only interpretable if they moved.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+export DEVELOPER_DIR=${DEVELOPER_DIR:-$(xcode-select -p)}   # release Xcode 27 is the active toolchain (AB-A-0077, 2026-09-17); caller may still override
 OUT=~/Desktop/ltx25-enc-audio-ab
 mkdir -p "$OUT"
 BIN=./.build/release/RunLTX2

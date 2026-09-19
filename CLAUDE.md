@@ -98,7 +98,7 @@ C–F reachable). `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 
 ## Conventions
 
-- Build: `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcrun swift build`.
+- Build: `xcrun swift build` (release Xcode 27 is the active toolchain since 2026-09-17, no DEVELOPER_DIR override; AB-A-0077).
 - Cores are functional (`[String: MLXArray]` + explicit ops keyed by oracle weight-key strings);
   fp32 except the DiT (bf16). New component → port from oracle → `parity/dump_*` golden →
   `RunLTX2 --*-gate` (cosine ≥0.999) → commit.

@@ -22,7 +22,7 @@
 #   GEOM="W H F" to override the 704 512 121 default; TAG to keep runs in their own directory.
 set -u
 cd "$(dirname "$0")/.."
-export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode-beta.app/Contents/Developer}
+export DEVELOPER_DIR=${DEVELOPER_DIR:-$(xcode-select -p)}   # release Xcode 27 is the active toolchain (AB-A-0077, 2026-09-17); caller may still override
 BIN=./.build/debug/RunLTX2
 REPS=${1:-3}
 shift 2>/dev/null || true

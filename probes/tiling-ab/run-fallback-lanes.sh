@@ -9,7 +9,7 @@
 # fallback busts. Fails OPEN.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+export DEVELOPER_DIR=${DEVELOPER_DIR:-$(xcode-select -p)}   # release Xcode 27 is the active toolchain (AB-A-0077, 2026-09-17); caller may still override
 OUT=probes/tiling-ab
 BIN=./.build/release/RunLTX2
 while pgrep -f "RunLTX2 --t2v-spot25 1920" >/dev/null; do sleep 30; done   # let the 481f corner finish

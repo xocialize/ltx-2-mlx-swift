@@ -21,7 +21,7 @@
 # ⚠️ MEMORY IS THE DELIVERABLE, NOT TIME. Single arm on whatever thermal state the box is in.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+export DEVELOPER_DIR=${DEVELOPER_DIR:-$(xcode-select -p)}   # release Xcode 27 is the active toolchain (AB-A-0077, 2026-09-17); caller may still override
 OUT=probes/hd-viability
 BIN=./.build/release/RunLTX2
 xcrun swift build -c release --product RunLTX2 2>&1 | grep -E "error:|Build complete" | tail -1

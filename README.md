@@ -111,7 +111,7 @@ patches**. The 49-layer `allHiddenStates` tap lives in this package
 > is a one-line `Package.swift` edit and nothing else changes.
 
 ```bash
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+# release Xcode 27 (Swift 6.4, macOS 27 SDK) is the active toolchain; no DEVELOPER_DIR override needed (AB-A-0077, 2026-09-17)
 xcrun swift run -c release RunLTX2 --dit-full-gate
 xcrun swift run -c release RunLTX2 --mem-bench bf16   # split-footprint harness [bf16|int8|int4]
 ```

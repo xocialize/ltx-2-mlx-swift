@@ -50,14 +50,14 @@ let package = Package(
         //      .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "<tag>")
         //    once a release tag containing #387 (`6608a35`) exists. Carries no local
         //    patches — ../mlx-swift-lm is checked out at plain upstream `main`.
-        // ⚠️ Traits disabled deliberately. mlx-swift-lm's default-on
-        // `FoundationModelsIntegration` trait builds MLXFoundationModels, the adapter for
-        // APPLE's FoundationModels framework — which LTX does not use (we consume only
-        // MLXLLM / MLXLMCommon / MLXHuggingFace, and no source here imports it).
-        // Apple changed that framework's API in the macOS 27 SDK (`capabilities:` label
-        // removed; `ConvertibleToGeneratedContent` replaced the old dictionary type) and
-        // upstream has not caught up, so leaving the trait on fails the build of an
-        // adapter we never link. Upstream anticipated exactly this and made it a trait.
+        // ⚠️ Traits disabled deliberately — because we do not CONSUME the adapter, not because
+        // it fails to build. mlx-swift-lm's default-on `FoundationModelsIntegration` trait
+        // builds MLXFoundationModels, the adapter for APPLE's FoundationModels framework; LTX
+        // consumes only MLXLLM / MLXLMCommon / MLXHuggingFace and no source here imports it,
+        // so enabling the trait would compile code we never link, for nothing but build time.
+        // History (AB-T-0082): the trait originally HAD to be off because Apple's macOS 27 SDK
+        // API change broke MLXFoundationModels; upstream #544 (`1441444`, the very revision
+        // pinned below) fixed that, so the build reason is gone and only the not-consumed reason stays.
         // 🚨 URL + REVISION, NOT a path dep — a path dependency makes this package externally
         // UNCONSUMABLE. Demonstrated 2026-08-22 (AB-T-0073): a fresh consumer resolving this repo
         // fails with "package 'ltx-2-mlx-swift' is required using a revision-based requirement and
