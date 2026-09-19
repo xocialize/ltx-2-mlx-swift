@@ -33,6 +33,11 @@ means the peak is `max(encode, denoise, decode)`):
 **Budget math:** governor ≈ 0.7× unified (eval apps run 0.85×).
 - 32 GB → **22.4 GB** budget (0.85× → 27.2)
 - 24 GB → **16.8 GB** budget (0.85× → 20.4) ← every stage must fit under this
+- ⟲ **2026-09-19 (AB-T-0081 / AB-R-0119):** the engine has not used a flat rate since contract 1.31 —
+  `MemoryGovernor.forDevice(fraction: nil)` asks Metal's `recommendedMaxWorkingSetSize` on the host it runs on
+  (84% at 128 GB) and keeps 0.7× only as the no-Metal / synthetic fallback, applied to real GiB (24 GiB →
+  18.04 GB, 32 → 24.05, 64 → 48.10). `--t2v-spot25` now prints that budget with its source; the 16.8 / 22.4
+  figures above are the conservative nominal denominators the earlier receipts quoted.
 
 At 24 GB, ALL THREE levers are mandatory: chunked decode (T1), connector residency (T2), and small-envelope
 tier profiles (T3). Ordering below starts with the runway to the chunked-decode headline.

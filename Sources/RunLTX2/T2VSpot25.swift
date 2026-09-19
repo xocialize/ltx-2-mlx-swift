@@ -49,7 +49,40 @@ import Foundation
 import MLX
 import MLXLTX2
 import MLXToolKit
+import MLXServeCore
 import LTX2
+
+/// The tier's memory budget, QUERIED the way the engine sizes its governor (AB-T-0081): a
+/// `DeviceProfile` carrying the tier's capacity goes through `MemoryGovernor.forDevice(_:fraction: nil)`
+/// — the contract-1.31 default — which answers Metal's `recommendedMaxWorkingSetSize` when that
+/// capacity IS this host's, and 0.7× the capacity otherwise (no Metal device, or a synthetic
+/// profile: the engine's own CI fallback). So the tier that is this machine is judged against the
+/// number the engine will actually enforce here, and a tier that is not is judged against 0.7× of
+/// ITS memory — the `LOW-TIER-PLAN.md:148` rule applied to real GiB rather than the marketing figure
+/// (0.7× of "24" is 16.8; 0.7× of a 24 GiB Mac is 18.04). `source` names which branch answered;
+/// `legacyNominalGB` is the 0.7× nominal figure this harness printed before the change, kept so the
+/// ACCEPTANCE lines quoted by earlier receipts stay comparable. Deliberately NOT on `LTX2Profile`:
+/// a hardcoded rate would settle a live question (0.7 vs 0.85 vs the OS's answer) by side effect.
+struct TierBudget { let bytes: UInt64; let source: String; let legacyNominalGB: Double }
+
+func tierBudget(for profile: LTX2Profile) -> TierBudget {
+    let nominalGiB: UInt64 = {
+        switch profile { case .compact24: 24; case .balanced32: 32; case .standard64: 64; case .max128: 128 }
+    }()
+    var device = DeviceProfile.current()
+    device.totalMemoryBytes = nominalGiB << 30
+    let governor = MemoryGovernor.forDevice(device)          // fraction: nil — the engine default
+    let isHost = device.totalMemoryBytes == ProcessInfo.processInfo.physicalMemory
+    let source: String
+    if isHost, let metal = HostMemory.recommendedGPUWorkingSetBytes(), governor.budgetBytes == metal {
+        source = "governor: Metal recommendedMaxWorkingSetSize on this host"
+    } else if isHost {
+        source = "governor fallback: 0.7× of this host's \(nominalGiB) GiB (no Metal answer)"
+    } else {
+        source = "governor fallback: 0.7× of the tier's \(nominalGiB) GiB (tier is not this host)"
+    }
+    return TierBudget(bytes: governor.budgetBytes, source: source, legacyNominalGB: 0.7 * Double(nominalGiB))
+}
 
 func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
@@ -154,6 +187,11 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
         + " · DiT lane: \(lane) · encoder: \(encTree) · mode: \(i2v ? "i2v" : "t2v")"
         + " · gate: \(cfg.resolvedStreamingOptions.gatePolicy.rawValue)")
     if streamed { print("[t2v-spot25] granules \(granuleTree.path)") }
+    // The denominator, up front and sourced — so a reader never has to guess which rule applied.
+    let budget = tierBudget(for: profile)
+    print(String(format: "[t2v-spot25] budget tier=%@ → %.2f GB (%@) · legacy 0.7×nominal %.2f GB",
+                 profile.rawValue as NSString, gbOf(budget.bytes), budget.source as NSString,
+                 budget.legacyNominalGB))
 
     // Prewarm off the config's OWN prewarmPaths — which, when streamedBlocks is set, deliberately
     // omit the transformer. Reading that list rather than building one is the point: it proves the
@@ -252,20 +290,14 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     // The acceptance arithmetic, printed rather than left to the reader — a raw peak next to a
     // tier name invites the reader to eyeball a comparison the rule defines precisely.
     //
-    // ⚠️ Deliberately NOT a property on `LTX2Profile`: the budget is 0.7× unified
-    // (`LOW-TIER-PLAN.md:33-35`), but the sources DISAGREE at the top tier — the T3 acceptance
-    // table uses **89.6** for max128 (0.7×128) while `CLAUDE.md` uses **108.8** (0.85×128, the
-    // "eval apps" rate). Baking either into the shipping config would settle a live question by
-    // side effect. max128 is reported below with both, and the three tiers that matter for a
-    // streaming claim are unambiguous.
-    let budgetGB: Double = {
-        switch profile {
-        case .compact24: return 16.8
-        case .balanced32: return 22.4
-        case .standard64: return 44.8
-        case .max128: return 89.6      // 0.7×; see the caveat above
-        }
-    }()
+    // ⚠️ The denominator is QUERIED through the engine's own path (`tierBudget`, above) — never a
+    // hand-copied rate. Until AB-T-0081 this printed 0.7× the tier's NOMINAL figure (89.6 for
+    // max128), a number the engine stopped using at contract 1.31: it asks Metal (84% here —
+    // AB-R-0119 measured 115.45 of 137.44 GB) and keeps 0.7× only as the no-Metal / synthetic
+    // fallback. Conservative, so nothing was wrongly admitted — but every quoted margin was
+    // understated, at every tier. The legacy figure is printed alongside so older ACCEPTANCE
+    // lines stay comparable.
+    let budgetGB = gbOf(budget.bytes)
     let verdict = gbOf(peak) <= budgetGB ? "✅ WITHIN" : "❌ OVER"
     print(String(format: "[t2v-spot25] run %.1fs  mp4 %.1f MB", Date().timeIntervalSince(r0),
                  Double(resp.video.data.count) / 1_000_000))
@@ -277,9 +309,10 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
                  gbOf(resident), gbOf(activation), gbOf(peak), gbOf(afterLoad), gbOf(floor)))
     print(String(format: "[t2v-spot25] DECLARE → residentBytes=%.2f GB peakActivationBytes=%.2f GB",
                  gbOf(resident), gbOf(activation)))
-    print(String(format: "[t2v-spot25] ACCEPTANCE tier=%@ budget=%.2f GB · measured stage-max "
-                     + "%.2f GB → %@",
-                 profile.rawValue as NSString, budgetGB, gbOf(peak), verdict as NSString))
+    print(String(format: "[t2v-spot25] ACCEPTANCE tier=%@ budget=%.2f GB (%@) · measured stage-max "
+                     + "%.2f GB → %@ · legacy 0.7×nominal denominator %.2f GB",
+                 profile.rawValue as NSString, budgetGB, budget.source as NSString, gbOf(peak),
+                 verdict as NSString, budget.legacyNominalGB))
     print("[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own "
         + "clamped geometry and a repeat, not this single point")
 }

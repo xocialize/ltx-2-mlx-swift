@@ -167,6 +167,9 @@ let package = Package(
                 // correlation alone under-reports it (a dulled track still correlates well).
                 .product(name: "MLXFFT", package: "mlx-swift"),
                 .product(name: "MLXToolKit", package: "mlx-engine-swift"),
+                // --t2v-spot25 sizes its tier budget through the ENGINE's governor path
+                // (`MemoryGovernor.forDevice`, AB-T-0081) rather than a hand-copied rate.
+                .product(name: "MLXServeCore", package: "mlx-engine-swift"),
             ],
             path: "Sources/RunLTX2"
         ),
