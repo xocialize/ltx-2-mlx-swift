@@ -9,6 +9,7 @@
 import Foundation
 import MLX
 import MLXFast
+import MLXExactConv
 import MLXNN
 import MLXProfiling
 
@@ -295,7 +296,7 @@ public struct VideoVAEDecoder {
             bias: w["\(prefix).norm3.bias"]!,
             eps: 1e-6
         )
-        return h + (conv3d(r, w["\(prefix).conv_shortcut.weight"]!, stride: 1, padding: 0)
+        return h + (ExactConv.conv3d(r, weight: w["\(prefix).conv_shortcut.weight"]!)
             + w["\(prefix).conv_shortcut.bias"]!)
     }
 
@@ -311,7 +312,7 @@ public struct VideoVAEDecoder {
         }
         // zeros spatial pad (H,W) = 1
         x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
-        var y = conv3d(x, w["\(prefix).conv.weight"]!, stride: 1, padding: 0)
+        var y = ExactConv.conv3d(x, weight: w["\(prefix).conv.weight"]!)
         y = y + w["\(prefix).conv.bias"]!
         return y
     }
@@ -436,7 +437,7 @@ public struct VideoVAEEncoder {
         let first = MLX.repeated(x[0..., 0 ..< 1], count: tk - 1, axis: 1)
         x = MLX.concatenated([first, x], axis: 1)
         x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
-        var y = conv3d(x, w["\(prefix).conv.weight"]!, stride: 1, padding: 0)
+        var y = ExactConv.conv3d(x, weight: w["\(prefix).conv.weight"]!)
         y = y + w["\(prefix).conv.bias"]!
         return y
     }

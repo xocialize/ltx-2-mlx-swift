@@ -22,15 +22,8 @@
 // 49-layer hidden-state extraction lives in THIS package
 // (Sources/LTX2/Gemma3+AllHiddenStates.swift), written against the official
 // `@_spi(GemmaEncoder)` surface upstream merged in ml-explore/mlx-swift-lm#387
-// (2026-07-21, `6608a35`). No mlx-swift-lm patch is carried any more — the
-// checkout at ../mlx-swift-lm is a plain upstream revision, not a fork.
-//
-// ⚠️ TRANSITIONAL PIN. No mlx-swift-lm RELEASE TAG contains #387 yet (latest is
-// 3.31.4, 2026-06-30, which predates the merge), so this is still a local path
-// dep pointing at an upstream-`main` checkout. A main-SHA pin is less stable
-// than a tag: DO NOT cut or ship an LTX release off this. When a tag ships,
-// adoption is the ONE-LINE edit marked below — nothing else in this package
-// changes, because the tap no longer depends on any local patch.
+// (2026-07-21, `6608a35`), released in mlx-swift-lm 3.32.3. No mlx-swift-lm patch
+// is carried and no local checkout is needed: the dependency is the 3.32.3 tag.
 
 import PackageDescription
 
@@ -45,34 +38,18 @@ let package = Package(
         .library(name: "MLXLTX2", targets: ["MLXLTX2"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMinor(from: "0.31.3")),
-        // ⬇️ THE ONE-LINE SWAP: replace with
-        //      .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "<tag>")
-        //    once a release tag containing #387 (`6608a35`) exists. Carries no local
-        //    patches — ../mlx-swift-lm is checked out at plain upstream `main`.
-        // ⚠️ Traits disabled deliberately — because we do not CONSUME the adapter, not because
-        // it fails to build. mlx-swift-lm's default-on `FoundationModelsIntegration` trait
-        // builds MLXFoundationModels, the adapter for APPLE's FoundationModels framework; LTX
-        // consumes only MLXLLM / MLXLMCommon / MLXHuggingFace and no source here imports it,
-        // so enabling the trait would compile code we never link, for nothing but build time.
-        // History (AB-T-0082): the trait originally HAD to be off because Apple's macOS 27 SDK
-        // API change broke MLXFoundationModels; upstream #544 (`1441444`, the very revision
-        // pinned below) fixed that, so the build reason is gone and only the not-consumed reason stays.
-        // 🚨 URL + REVISION, NOT a path dep — a path dependency makes this package externally
-        // UNCONSUMABLE. Demonstrated 2026-08-22 (AB-T-0073): a fresh consumer resolving this repo
-        // fails with "package 'ltx-2-mlx-swift' is required using a revision-based requirement and
-        // it depends on local package 'mlx-swift-lm', which is not supported" — not by version, not
-        // by branch. That blocked consumer-app scaffolding outright.
-        //
-        // Pinned to a SHA, not a branch: `1441444` is upstream main and CONTAINS the Gemma-4 SPI
-        // (#530 / d667610, verified an ancestor). No release tag carries it yet — 3.31.4 predates
-        // both #530 and #387 — so a revision pin is the only way to get a consumable dependency.
-        // ⚠️ A fork-and-tag would be WORSE here, not better: SPM permits `unsafeFlags` in
-        // branch/revision-pinned deps but FORBIDS them in version-pinned ones, and mlx-swift-lm
-        // carries upstream's `unsafeFlags(["-w"])` (f1573a9/#334, not ours). Tagging would walk
-        // into that wall; a revision pin steps around it. Revert to a plain tag only once upstream
-        // ships one — and re-test consumability when doing so.
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", revision: "1441444", traits: []),
+        .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMinor(from: "0.32.3")),
+        // 3.32.3 is the first tag carrying #387 (`6608a35`) and the Gemma-4 SPI (#530); it
+        // requires mlx-swift 0.32.3.
+        // ⚠️ Traits disabled deliberately — because we do not CONSUME the adapter. mlx-swift-lm's
+        // default-on `FoundationModelsIntegration` trait builds MLXFoundationModels, the adapter
+        // for APPLE's FoundationModels framework; LTX consumes only MLXLLM / MLXLMCommon /
+        // MLXHuggingFace and no source here imports it, so enabling the trait would compile code
+        // we never link, for nothing but build time.
+        // 🚨 URL + VERSION, NOT a path dep — a path dependency makes this package externally
+        // UNCONSUMABLE (AB-T-0073). The version pin is consumable: upstream's `unsafeFlags(["-w"])`
+        // sits only on the MLXCXGrammar target, which LTX does not link.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", "3.32.3" ..< "3.33.0", traits: []),
         // mlx-swift-lm 3.x decoupled the HF stack — the consumer provides these for
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
@@ -108,17 +85,20 @@ let package = Package(
         // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo
         // went public + tagged v0.5.0, which is the condition the old path dep was
         // waiting on (a URL dep on a private repo needs git creds at SPM resolve).
-        .package(url: "https://github.com/xocialize/mlx-block-stream-swift", from: "0.5.0"),
+        .package(url: "https://github.com/xocialize/mlx-block-stream-swift", from: "0.5.1"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
         // LTX_PROFILE); MLX_PROFILE=csv writes MLX_PROFILE_CSV (default /tmp/mlx-profile.csv).
         .package(url: "https://github.com/xocialize/mlx-profiling", from: "0.1.0"),
+        // Exact small-depth conv3d for the video VAE (mlx#3785 sends it to lossy Winograd).
+        .package(url: "https://github.com/xocialize/mlx-exact-conv-swift", from: "0.1.0"),
     ],
     targets: [
         .target(
             name: "LTX2",
             dependencies: [
+                .product(name: "MLXExactConv", package: "mlx-exact-conv-swift"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXFast", package: "mlx-swift"),
