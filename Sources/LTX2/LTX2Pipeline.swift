@@ -155,6 +155,14 @@ public final class LTX2Pipeline {
     /// low-tier request would silently generate BASE after the pre-encode DiT drop).
     private var activeLoRASpec: [(url: URL, strength: Float)] = []
 
+    /// Opt-in: hand back the previous request's embeddings when the next prompt is IDENTICAL.
+    /// Batch tools run hundreds of jobs on one prompt (outpainting an episode: one per shot chunk)
+    /// and would otherwise reload and run the 12B encoder per job — and, on sequential tiers, evict
+    /// and reload the DiT around it. Embeddings are ~MBs. Off by default: every existing caller
+    /// re-encodes exactly as before.
+    public var reusePromptEmbeddings = false
+    private var lastPromptEmbeddings: (prompt: String, video: MLXArray, audio: MLXArray)?
+
     /// Build the DiT in whichever regime applies. ONE construction site, shared by `load()` and
     /// `ensureDiT()`, so a streamed deployment cannot accidentally take the resident path in one
     /// of them — which is exactly what used to happen: `load()` always built a RESIDENT DiT (and
@@ -281,6 +289,33 @@ public final class LTX2Pipeline {
         if let d = ditStorage { LTX2LoRA.detach(d) }
     }
 
+    /// Run `body` on the BARE base with the runtime LoRAs lifted off and restored afterwards —
+    /// the "stage 2 refines on the bare distilled model" step of IC two-stage compositions
+    /// (the ltx-community outpaint Space: `pipe.disable_lora()` around stage 2). The factors are
+    /// stashed, not re-read: detach is gate-verified exact (`--lora-gate25` detach 1.000000), so
+    /// lifting them IS the pristine base. If the DiT was evicted and reloaded inside `body`
+    /// (low-tier sequencing), the reloaded instance never saw the stash, so the spec is re-applied.
+    func withLoRAsSuspended<R>(_ body: () throws -> R) throws -> R {
+        let spec = activeLoRASpec
+        guard !spec.isEmpty else { return try body() }
+        let store = ditStorage?.lora
+        let saved = store?.adapters ?? [:]
+        activeLoRASpec = []
+        store?.clear()
+        func restore() throws {
+            activeLoRASpec = spec
+            if let s = store, ditStorage?.lora === s {
+                s.adapters = saved
+            } else if let d = ditStorage {
+                try LTX2LoRA.apply(spec, to: d, factorQuantBits: effectiveLoRAQuantBits)
+            }
+        }
+        let result: R
+        do { result = try body() } catch { try? restore(); throw error }
+        try restore()
+        return result
+    }
+
     /// Number of currently-adapted DiT targets. 0 = pristine base — INCLUDING after a low-tier
     /// DiT evict/reload (LoRA factors live on the DiT instance), so the wrapper re-applies on 0.
     public var activeLoRATargets: Int { ditStorage?.loraTargetCount ?? 0 }
@@ -329,6 +364,9 @@ public final class LTX2Pipeline {
     func encodePrompt(
         _ prompt: String, isolation: isolated (any Actor)? = #isolation
     ) async throws -> (video: MLXArray, audio: MLXArray) {
+        if reusePromptEmbeddings, let c = lastPromptEmbeddings, c.prompt == prompt {
+            return (c.video, c.audio)
+        }
         let prof = MLXProfiler.shared
         // Low tiers: the encode stage never needs the DiT — drop it (warmed at load) BEFORE Gemma,
         // not just before the connector: T3c iteration measured encode/gemma at 21.0 GB with the
@@ -375,6 +413,7 @@ public final class LTX2Pipeline {
         eval(video, audio)
         prof.end(cSpan)
         if !keepStagesResident { connector = nil; Memory.clearCache() }
+        if reusePromptEmbeddings { lastPromptEmbeddings = (prompt, video, audio) }
         return (video, audio)
     }
 

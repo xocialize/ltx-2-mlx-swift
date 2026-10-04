@@ -41,6 +41,16 @@ final class DiTWeightStore {
     init(w: [String: MLXArray]) { self.w = w }
 }
 
+/// The VIDEO self-attention bias for masked IC conditioning (upstream
+/// `Modality.attention_mask` after `_prepare_self_attention_mask`): an ADDITIVE (1, 1, N, N)
+/// array over the full video sequence (target ++ reference tokens). A reference type for the
+/// LoRAStore reason — `withVideoSelfAttentionBias` scopes it on a value-type `DiT` and every copy
+/// the denoise loop takes sees it. nil (the default, and the state outside every scope) keeps the
+/// unmasked fused SDPA, so every pre-existing path is byte-identical.
+final class AttentionBiasStore {
+    var videoSelf: MLXArray?
+}
+
 public struct DiT {
     let store: DiTWeightStore
     var w: [String: MLXArray] { store.w }
@@ -51,6 +61,20 @@ public struct DiT {
     /// A reference type so apply/detach mutate it without mutating this value-type struct (a struct
     /// copy shares the same store); empty = pristine base, so `dense` is bit-identical when unused.
     let lora = LoRAStore()
+    let attnBias = AttentionBiasStore()
+
+    /// Run `body` with an additive VIDEO self-attention bias (1, 1, N, N) in place — the masked
+    /// IC path (`ICAttentionMask.selfAttentionBias`). Applied in `attn1` only, exactly where
+    /// upstream applies `video.self_attention_mask`; text cross-attention, FF and the AV-cross
+    /// directions are per-token or keyed on other sequences and stay unmasked, as upstream.
+    /// Scoped (restored on exit, including a throw) because a bias left behind would silently
+    /// mask the NEXT run; a forward whose token count does not match the bias traps loudly.
+    public func withVideoSelfAttentionBias<R>(_ bias: MLXArray?, _ body: () throws -> R) rethrows -> R {
+        let previous = attnBias.videoSelf
+        attnBias.videoSelf = bias
+        defer { attnBias.videoSelf = previous }
+        return try body()
+    }
 
     /// - computeDtype: fp32 for the tiny gate (vs LTX2_DIT_FP32 golden); bf16 for
     ///   full-scale real weights (matches the production oracle; 35GB stays 35GB).
@@ -129,6 +153,7 @@ public struct DiT {
         var avCaVideo, avCaAudio, avA2vGate, avV2aGate: MLXArray
         var videoText, audioText: MLXArray?
         var videoRope, audioRope, videoCrossRope, audioCrossRope: (MLXArray, MLXArray)?
+        var videoSelfBias: MLXArray? = nil
     }
 
     /// Forward: (video_latent, audio_latent, sigma, text embeds, positions) → (video_v, audio_v).
@@ -220,11 +245,17 @@ public struct DiT {
             ropeFreqs($0[0..., 0..., 0 ..< 1], cfg.avCrossNumHeads, cfg.avCrossHeadDim, maxPos: [crossMax])
         } : nil
 
-        let cond = Cond(
+        var cond = Cond(
             videoAdaln: videoAdaln, audioAdaln: audioAdaln, videoPrompt: videoPrompt, audioPrompt: audioPrompt,
             avCaVideo: avCaVideo, avCaAudio: avCaAudio, avA2vGate: avA2vGate, avV2aGate: avV2aGate,
             videoText: videoText?.asType(.float32), audioText: audioText?.asType(.float32),
             videoRope: videoRope, audioRope: audioRope, videoCrossRope: videoCrossRope, audioCrossRope: audioCrossRope)
+        if let bias = attnBias.videoSelf {
+            let n = videoLatent.dim(1)
+            precondition(bias.ndim == 4 && bias.dim(-1) == n && bias.dim(-2) == n,
+                         "video self-attention bias \(bias.shape) does not match \(n) video tokens")
+            cond.videoSelfBias = bias.asType(dtype)
+        }
 
         if let streamer = store.streamer {
             // HV2 streamed block loop: STEP-MAJOR over granule groups — wait for
@@ -282,7 +313,7 @@ public struct DiT {
 
         // 1. video self-attn
         let vNormSA = rms0(videoHidden) * (1.0 + v[1]) + v[0]
-        videoHidden = videoHidden + attention(vNormSA, prefix: "\(p).attn1", numHeads: cfg.videoNumHeads, headDim: cfg.videoHeadDim, rope: c.videoRope) * v[2]
+        videoHidden = videoHidden + attention(vNormSA, prefix: "\(p).attn1", numHeads: cfg.videoNumHeads, headDim: cfg.videoHeadDim, rope: c.videoRope, bias: c.videoSelfBias) * v[2]
         // 2. audio self-attn
         if let ah = audioHidden {
             let aNormSA = rms0(ah) * (1.0 + a[1]) + a[0]
@@ -333,7 +364,8 @@ public struct DiT {
 
     private func attention(_ x: MLXArray, prefix: String, numHeads: Int, headDim: Int,
                            kv: MLXArray? = nil, rope: (MLXArray, MLXArray)? = nil,
-                           ropeK: (MLXArray, MLXArray)? = nil, useRope: Bool = true) -> MLXArray {
+                           ropeK: (MLXArray, MLXArray)? = nil, useRope: Bool = true,
+                           bias: MLXArray? = nil) -> MLXArray {
         let kvInput = kv ?? x
         let B = x.dim(0)
         var q = rmsW(dense(x, "\(prefix).to_q"), w["\(prefix).q_norm.weight"]!, eps: cfg.normEps)
@@ -348,7 +380,8 @@ public struct DiT {
             k = RoPE.applySplit(k, cos: ck, sin: sk)
         }
         let scale = 1.0 / Float(headDim).squareRoot()
-        var out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none)
+        var out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale,
+                                                    mask: bias.map { .array($0) } ?? .none)
         // per-head gate
         let gate = 2.0 * MLX.sigmoid(dense(x, "\(prefix).to_gate_logits"))  // (B,N,H)
         out = out * gate.transposed(0, 2, 1).expandedDimensions(axis: -1)    // (B,H,N,1)

@@ -2443,6 +2443,8 @@ if args.contains("--connector-gate") {
     try denoiseGate()
 } else if args.contains("--ic-tiny-gate") {
     try icTinyGate()
+} else if args.contains("--ic-mask-gate") {
+    try icMaskGate()
 } else if args.contains("--ic-ingest-gate") {
     try icIngestGate()
 } else if args.contains("--e2e-gate") {
@@ -2526,6 +2528,14 @@ if args.contains("--connector-gate") {
     try await t2vSpotGate(width: ints.count > 0 ? ints[0] : 704,
                           height: ints.count > 1 ? ints[1] : 512,
                           frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--outpaint25") {
+    // IC outpainting on the 2.5 base — usage: --outpaint25 <job.safetensors> <out-prefix> [...pairs]
+    // (env LTX_OP_* — see Outpaint25.swift)
+    let paths = positional.filter { !$0.hasPrefix("--") }
+    guard paths.count >= 2, paths.count % 2 == 0 else {
+        print("usage: RunLTX2 --outpaint25 <job.safetensors> <out-prefix> [<job2> <prefix2> ...]"); exit(2)
+    }
+    try await outpaint25(jobs: stride(from: 0, to: paths.count, by: 2).map { (paths[$0], paths[$0 + 1]) })
 } else if args.contains("--ic-spot25") {
     // AB-A-0048: one live IC-adapter render on the 2.5 base through the package surface.
     // usage: --ic-spot25 [W] [H] [F]  (env LTX_IC_* — see ICSpot25.swift)
