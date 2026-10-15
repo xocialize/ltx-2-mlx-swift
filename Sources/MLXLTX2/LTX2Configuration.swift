@@ -44,6 +44,13 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     }
     /// One-stage skips the spatial upsampler + full-res stage-2 refine — the low-tier denoise path.
     public var oneStage: Bool { self == .compact24 || self == .balanced32 }
+    /// The low tiers decode with PrunaAI's lean decoder (`vae_decoder_pruna.safetensors`) by default —
+    /// operator decision AB-D-0147 (2026-10-15) on AB-R-0561 / AB-R-0562: on a 24 GB M5 Pro at compact24's own
+    /// envelope it is −15.9 % (t2v) and −13.9 % (i2v) wall-clock per clip with the peak inside the declared
+    /// charge, and where decode binds (704×512×121) it takes the peak from 21.1 to 14.5 GB. The upper tiers keep
+    /// the stock decoder: decode is not their binding stage and stock is the bit-exact reference. Resolution
+    /// order and the lever are in `LTX2Pipeline.resolveVAEDecoder`.
+    public var recommendedLeanDecoder: Bool { self == .compact24 || self == .balanced32 }
     /// VAE temporal-decode window knob (see `LTX2Pipeline.decodePixels`; halo is fixed at 5).
     public var vaeChunkFrames: Int {
         switch self { case .compact24: 4; case .balanced32: 6; default: 8 }
@@ -303,10 +310,19 @@ public struct LTX2Configuration: PackageConfiguration, ModelStorable, QuantConfi
     /// weights and enables PrunaVAED's channel-adapter blocks on sight, so this is the only
     /// switch; encoder, latents and every other component are untouched.
     ///
-    /// Not auto-materializable yet: PrunaAI publishes diffusers-format weights that must go
-    /// through `scripts/convert_pruna_vae_decoder.py` first, so this takes an explicit path
-    /// until the converted file is hosted alongside the other components.
+    /// Since 2026-10-15 the converted file is hosted in every components repo (`componentFiles`), so it
+    /// materializes with the tree, and the low tiers default to it (`LTX2Profile.recommendedLeanDecoder`,
+    /// AB-D-0147). An explicit path here always wins; `LTX_VAE_DECODER=stock|pruna|<path>` remains the
+    /// diagnostic lever between the two (`LTX2Pipeline.resolveVAEDecoder`).
     public var vaeDecoderPath: URL?
+    /// PrunaAI's PrunaVAED, converted (`scripts/convert_pruna_vae_decoder.py`), as it is named in the tree.
+    public static let leanDecoderFile = "vae_decoder_pruna.safetensors"
+    /// The decoder a tier uses when `vaeDecoderPath` is nil and `LTX_VAE_DECODER` is unset: the lean
+    /// decoder on the low tiers, stock (nil) elsewhere.
+    public func defaultVAEDecoderPath(ltxDir: URL) -> URL? {
+        guard profile?.recommendedLeanDecoder == true else { return nil }
+        return ltxDir.appending(path: Self.leanDecoderFile)
+    }
     /// Resolved Gemma-3 text-encoder directory.
     public var gemmaDirectory: URL?
     /// Engine-chosen models root (auto-materialization target). Environment-specific.
@@ -498,7 +514,11 @@ extension LTX2Configuration: WeightSourcing {
     /// three variants (`--upsampler-variants-gate`, `--two-stage-variants-gate`); two of them were
     /// unreachable for anyone fetching from the declared repo.**
     static let componentFiles = [
-        "connector.safetensors", "vae_decoder.safetensors", "vae_encoder.safetensors",
+        "connector.safetensors", "vae_decoder.safetensors",
+        // PrunaAI's lean decoder (converted), hosted in every components repo since 2026-10-15 with
+        // provenance, licence and SHA-256 in each card; the low tiers' default (`recommendedLeanDecoder`).
+        "vae_decoder_pruna.safetensors",
+        "vae_encoder.safetensors",
         "audio_vae.safetensors", "vocoder.safetensors",
         "spatial_upscaler_x2_v1_1.safetensors", "spatial_upscaler_x2_v1_1_config.json",
         "temporal_upscaler_x2_v1_0.safetensors", "temporal_upscaler_x2_v1_0_config.json",

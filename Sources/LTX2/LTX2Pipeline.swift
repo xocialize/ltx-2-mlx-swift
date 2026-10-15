@@ -634,7 +634,8 @@ public final class LTX2Pipeline {
     /// upsampler); `gemmaDir` is the Gemma-3 weights dir. Audio decode is enabled when both
     /// audio_vae.safetensors and vocoder.safetensors exist.
     public static func load(ltxDir: URL, gemmaDir: URL, transformerPath: URL? = nil,
-                            vaeDecoderPath: URL? = nil, granuleDirectory: URL? = nil,
+                            vaeDecoderPath: URL? = nil, defaultVAEDecoderPath: URL? = nil,
+                            granuleDirectory: URL? = nil,
                             streamingOptions: BlockStreamingOptions = .init()) async throws
         -> LTX2Pipeline {
         // DIAGNOSTIC LEVER: `LTX_CACHE_LIMIT_GB=N` caps the MLX buffer pool (uncapped by default).
@@ -646,10 +647,11 @@ public final class LTX2Pipeline {
         }
         // transformerPath override → quantized checkpoint (q8/q4); DiT auto-detects quant.
         let ditPath = transformerPath ?? ltxDir.appending(path: "transformer-distilled.safetensors")
-        // DIAGNOSTIC LEVER: `LTX_VAE_DECODER=pruna|stock|<abs-path>` picks the video decoder without
-        // an app change (BRIDGE-LTX-014). An explicit `vaeDecoderPath` from the config always wins.
-        // A missing file falls back to stock with a note rather than failing a test run.
-        let vaePath = vaeDecoderPath ?? Self.envVAEDecoder(ltxDir: ltxDir)
+        // Decoder precedence: explicit config path → the `LTX_VAE_DECODER` lever (BRIDGE-LTX-014) → the
+        // profile's default (the low tiers' lean decoder since AB-D-0147) → stock. `resolveVAEDecoder`.
+        let vaePath = try Self.resolveVAEDecoder(
+            explicit: vaeDecoderPath, env: VAEDecoderSelection(),
+            defaultPath: defaultVAEDecoderPath, ltxDir: ltxDir)
         // Cold-load cancellation checkpoints (M2/M3 extension): a Cancel/quit during "Loading"
         // stops before/after the two heavy phases (weight load, kernel warmup) instead of
         // waiting the whole load out.
@@ -689,25 +691,59 @@ public final class LTX2Pipeline {
         return p
     }
 
-    /// Resolve `LTX_VAE_DECODER` to a decoder file, or nil for the stock default.
-    private static func envVAEDecoder(ltxDir: URL) -> URL? {
-        let raw = (ProcessInfo.processInfo.environment["LTX_VAE_DECODER"] ?? "")
-            .trimmingCharacters(in: .whitespaces)
-        guard !raw.isEmpty else { return nil }
-        switch raw.lowercased() {
-        case "stock", "default", "off":
+    /// What `LTX_VAE_DECODER` asks for. `named` is `pruna`/`lean` (the tree's lean decoder file); `path` an
+    /// absolute or `~` path; `stock` (`stock`/`default`/`off`) forces the stock decoder even on a lean-default
+    /// tier — the A/B harnesses depend on that.
+    public enum VAEDecoderSelection: Equatable {
+        case unset, stock, named(String), path(URL)
+        public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+            let raw = (environment["LTX_VAE_DECODER"] ?? "").trimmingCharacters(in: .whitespaces)
+            guard !raw.isEmpty else { self = .unset; return }
+            switch raw.lowercased() {
+            case "stock", "default", "off": self = .stock
+            case "pruna", "lean": self = .named(raw.lowercased())
+            default: self = .path(URL(fileURLWithPath: (raw as NSString).expandingTildeInPath))
+            }
+        }
+    }
+
+    /// Decoder precedence: an explicit configuration path; the `LTX_VAE_DECODER` lever; the profile's default
+    /// (`defaultPath` — the low tiers' lean decoder since AB-D-0147); stock (nil). A lever that names an
+    /// absent file falls back to stock WITH A NOTE — it is a diagnostic lever. A profile DEFAULT whose file is
+    /// absent THROWS: that file is a declared component (hosted in every components repo since 2026-10-15),
+    /// and a silent fallback would ship the wrong decoder under a lean-tier declaration — the trap
+    /// BRIDGE-LTX-014 warned about.
+    public static func resolveVAEDecoder(
+        explicit: URL?, env: VAEDecoderSelection, defaultPath: URL?, ltxDir: URL,
+        fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+    ) throws -> URL? {
+        if let explicit { return explicit }
+        switch env {
+        case .stock:
+            MLXProfiler.shared.note("LTX_VAE_DECODER=stock → stock decoder")
             return nil
-        default:
-            let url = ["pruna", "lean"].contains(raw.lowercased())
-                ? ltxDir.appending(path: "vae_decoder_pruna.safetensors")
-                : URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                MLXProfiler.shared.note("LTX_VAE_DECODER=\(raw): \(url.lastPathComponent) not found — using stock decoder")
+        case .named(let name):
+            let url = ltxDir.appending(path: "vae_decoder_pruna.safetensors")
+            guard fileExists(url) else {
+                MLXProfiler.shared.note("LTX_VAE_DECODER=\(name): \(url.lastPathComponent) not found — using stock decoder")
                 return nil
             }
-            MLXProfiler.shared.note("LTX_VAE_DECODER=\(raw) → \(url.lastPathComponent)")
+            MLXProfiler.shared.note("LTX_VAE_DECODER=\(name) → \(url.lastPathComponent)")
             return url
+        case .path(let url):
+            guard fileExists(url) else {
+                MLXProfiler.shared.note("LTX_VAE_DECODER=\(url.path): not found — using stock decoder")
+                return nil
+            }
+            MLXProfiler.shared.note("LTX_VAE_DECODER → \(url.lastPathComponent)")
+            return url
+        case .unset:
+            break
         }
+        guard let defaultPath else { return nil }
+        guard fileExists(defaultPath) else { throw VAEDecoderError.defaultMissing(defaultPath.path) }
+        MLXProfiler.shared.note("profile default → \(defaultPath.lastPathComponent) (lean decoder)")
+        return defaultPath
     }
 
     /// Flow-matching noised init: noise·σ + clean·(1-σ). Stage-1 (clean=0,σ=1)=noise;
@@ -1253,6 +1289,20 @@ public final class LTX2Pipeline {
 
 /// Two-stage wiring failures — all thrown BEFORE any heavy phase (encode/denoise), so a
 /// mis-sized request costs milliseconds, not a stage-1 denoise.
+/// The lean decoder a tier defaults to is not in the tree. Thrown rather than decoding with stock: under a
+/// lean-tier declaration stock is the wrong decoder, and the file is a declared component.
+public enum VAEDecoderError: Error, CustomStringConvertible {
+    case defaultMissing(String)
+    public var description: String {
+        switch self {
+        case .defaultMissing(let path):
+            return "lean decoder missing: \(path) — this tier decodes with PrunaAI's lean decoder by default "
+                + "(LTX2Profile.recommendedLeanDecoder); re-materialize the components tree (the file ships in "
+                + "every components repo), or set LTX_VAE_DECODER=stock for a diagnostic run"
+        }
+    }
+}
+
 public enum TwoStageError: Error, CustomStringConvertible {
     case upsamplerMissing(String)
     case badGeometry(String)

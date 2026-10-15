@@ -174,6 +174,7 @@ public final class MLXLTX2Package: ModelPackage {
         pipeline = try await LTX2Pipeline.load(ltxDir: ltxDir, gemmaDir: gemmaDir,
                                                transformerPath: cfg.transformerPath,
                                                vaeDecoderPath: cfg.vaeDecoderPath,
+                                               defaultVAEDecoderPath: cfg.defaultVAEDecoderPath(ltxDir: ltxDir),
                                                granuleDirectory: cfg.resolvedGranuleDirectory,
                                                streamingOptions: cfg.resolvedStreamingOptions)
 

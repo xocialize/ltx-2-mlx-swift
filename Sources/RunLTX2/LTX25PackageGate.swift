@@ -676,8 +676,54 @@ func ltx25PackageGate() {
           "container=\(gContainer.deliveredFrames) track=\(gTrack.deliveredFrames) — "
               + "resolve from AVAsset.duration, or use the sourceAsset: overload")
 
+    // 75–78 — the lean decoder default (AB-D-0147 on AB-R-0561 / AB-R-0562): the low tiers decode with
+    // PrunaAI's converted decoder unless told otherwise; the lever still forces stock for A/Bs; a missing
+    // DEFAULT file is loud, a missing LEVER file falls back with a note (diagnostic use).
+    check("75 the low tiers recommend the lean decoder and the upper tiers do not",
+          LTX2Profile.compact24.recommendedLeanDecoder && LTX2Profile.balanced32.recommendedLeanDecoder
+              && !LTX2Profile.standard64.recommendedLeanDecoder && !LTX2Profile.max128.recommendedLeanDecoder,
+          "compact24/balanced32 → lean; standard64/max128 → stock")
+    let lean25 = LTX2Configuration(family: .ltx25, profile: .compact24)
+    let lean23 = LTX2Configuration(family: .ltx23, profile: .compact24)
+    let upper25 = LTX2Configuration(family: .ltx25, profile: .standard64)
+    check("76 the lean decoder is a declared component of BOTH families' trees",
+          [lean25, lean23].allSatisfy {
+              $0.weightSources.first { $0.role == "components" }?.matching?
+                  .contains(LTX2Configuration.leanDecoderFile) == true },
+          "componentFiles carries \(LTX2Configuration.leanDecoderFile) (hosted in every components repo 2026-10-15)")
+    let gateTree = URL(fileURLWithPath: "/tmp/ltx-gate-tree")
+    check("77 the profile default resolves on a low tier and is nil on an upper one",
+          lean25.defaultVAEDecoderPath(ltxDir: gateTree)?.lastPathComponent == LTX2Configuration.leanDecoderFile
+              && upper25.defaultVAEDecoderPath(ltxDir: gateTree) == nil,
+          "compact24 → \(lean25.defaultVAEDecoderPath(ltxDir: gateTree)?.lastPathComponent ?? "nil"); "
+              + "standard64 → \(upper25.defaultVAEDecoderPath(ltxDir: gateTree)?.lastPathComponent ?? "nil")")
+    let leanFile = gateTree.appending(path: LTX2Configuration.leanDecoderFile)
+    let customFile = gateTree.appending(path: "custom.safetensors")
+    let present: (URL) -> Bool = { _ in true }
+    let absent: (URL) -> Bool = { _ in false }
+    let rExplicit = try? LTX2Pipeline.resolveVAEDecoder(explicit: customFile, env: .stock, defaultPath: leanFile,
+                                                        ltxDir: gateTree, fileExists: present)
+    let rStockLever = try? LTX2Pipeline.resolveVAEDecoder(explicit: nil, env: .stock, defaultPath: leanFile,
+                                                          ltxDir: gateTree, fileExists: present)
+    let rDefault = try? LTX2Pipeline.resolveVAEDecoder(explicit: nil, env: .unset, defaultPath: leanFile,
+                                                       ltxDir: gateTree, fileExists: present)
+    let rNone = try? LTX2Pipeline.resolveVAEDecoder(explicit: nil, env: .unset, defaultPath: nil,
+                                                    ltxDir: gateTree, fileExists: present)
+    var missingDefaultThrew = false
+    do { _ = try LTX2Pipeline.resolveVAEDecoder(explicit: nil, env: .unset, defaultPath: leanFile,
+                                                ltxDir: gateTree, fileExists: absent) }
+    catch { missingDefaultThrew = true }
+    let rLeverAbsent = try? LTX2Pipeline.resolveVAEDecoder(explicit: nil, env: .named("pruna"), defaultPath: nil,
+                                                           ltxDir: gateTree, fileExists: absent)
+    check("78 decoder precedence: explicit > lever (stock forces stock) > profile default > stock; a missing DEFAULT throws, a missing LEVER file falls back",
+          rExplicit == customFile && rStockLever == nil && rDefault == leanFile && rNone == nil
+              && missingDefaultThrew && rLeverAbsent == nil,
+          "explicit=\(rExplicit?.lastPathComponent ?? "nil") stock-lever=\(rStockLever?.lastPathComponent ?? "nil") "
+              + "default=\(rDefault?.lastPathComponent ?? "nil") none=\(rNone?.lastPathComponent ?? "nil") "
+              + "missing-default-threw=\(missingDefaultThrew) missing-lever-fell-back=\(rLeverAbsent == nil)")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (74/74)"
+          ? "[ltx25-package-gate] PASS ✅ (78/78)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }
