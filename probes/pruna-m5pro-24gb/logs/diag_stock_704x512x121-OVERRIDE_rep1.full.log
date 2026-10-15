@@ -1,0 +1,36 @@
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] budget tier=compact24 → 19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · legacy 0.7×nominal 16.80 GB
+[t2v-spot25] prewarm 0.8s (11 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 512x288, running 704x512). MEASUREMENT ONLY; not an acceptance number.
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+⚠️  LTX_ENVELOPE_OVERRIDE=1 — resolution clamp LIFTED (profile allows 512x288, running 704x512). MEASUREMENT ONLY; not an acceptance number.
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.10 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[t2v-spot25] run 180.1s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=1.02 GB act=20.10 GB peak=21.11 GB · [afterLoad=3.30 retain=1.10 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=1.02 GB peakActivationBytes=20.10 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 21.11 GB → ❌ OVER · legacy 0.7×nominal denominator 16.80 GB
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point
+      209.52 real         5.26 user        32.88 sys
+         10064609280  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             2957159  page reclaims
+                 488  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+              428822  voluntary context switches
+              389907  involuntary context switches
+        412490087416  instructions retired
+        157371795234  cycles elapsed
+         21118603008  peak memory footprint

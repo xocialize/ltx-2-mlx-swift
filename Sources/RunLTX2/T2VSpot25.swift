@@ -37,6 +37,10 @@
 //                                                            -poison. Bypasses resolution; never an
 //                                                            acceptance number.)
 //        LTX_T2V_SAVE=<path>                                (optional MP4 write)
+//        LTX_MODELS_ROOT=<dir>                              (relocates the archive layout —
+//                                                            default /Volumes/Satechi/Models; a local
+//                                                            staging copy on a secondary station)
+//        LTX_NO_CHECKPOINT=1                                (hosted v2 shape: no transformer file)
 //
 // 🔑 MEASURED 2026-08-16 — NEITHER LEVER WORKS ALONE, and that is the whole finding. At
 // compact24 (512x288x121): baseline 31.92 GB ❌ · streaming only 24.79 ❌ · int8 encoder only
@@ -86,7 +90,10 @@ func tierBudget(for profile: LTX2Profile) -> TierBudget {
 
 func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
-    let base = "/Volumes/Satechi/Models/xocialize"
+    // LTX_MODELS_ROOT relocates the fleet archive layout (default: the Satechi volume) so the
+    // measurement can run from a local staging copy on a secondary station (AB-A-0005, M5 Pro).
+    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    let base = "\(modelsRoot)/xocialize"
     let profile = env["LTX_TIER"].flatMap { LTX2Profile(rawValue: $0) } ?? .standard64
     let quantName = env["LTX_QUANT"] ?? {
         switch profile.recommendedQuant {
@@ -115,7 +122,7 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let streamOverride: Bool? = env["LTX_STREAM_25"].map { $0 != "0" }
     // ROOT, not the tree itself: `LTX2Configuration.resolvedGranuleDirectory` appends a
     // quant-keyed subdir (int8 → "q8", bf16 → "bf16"), matching 2.3's `ltx-granules/{bf16,q8,q4}`.
-    let granuleRoot = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules-25")
+    let granuleRoot = URL(fileURLWithPath: "\(modelsRoot)/ltx-granules-25")
     let granuleTree = granuleRoot.appendingPathComponent(quant == .int8 ? "q8" : "bf16")
 
     let streamed = streamOverride ?? profile.recommendedStreamedBlocks
@@ -148,7 +155,7 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
         ltxDirectory: nil,            // set below, from the RESOLVED encoder precision
         transformerPath: transformerPath,
         gemmaDirectory: nil,          // 2.5's Gemma-4 encoder lives INSIDE the components tree
-        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+        modelsRootDirectory: URL(fileURLWithPath: modelsRoot),
         profile: profile)
     cfg.textEncoderQuant = encOverride
     var encTree = cfg.effectiveTextEncoderQuant == .int8 ? "ltx-2.5-mlx-q8" : "ltx-2.5-mlx"
@@ -211,7 +218,7 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     // The adapter is a real resident cost on the i2v path; leaving it cold would both slow the run
     // and measure paging rather than footprint (the pruna trap).
     if i2v { warm.append(URL(fileURLWithPath:
-        "/Volumes/Satechi/Models/ltx-lora-cache/i2v-adapter.safetensors")) }
+        "\(modelsRoot)/ltx-lora-cache/i2v-adapter.safetensors")) }
     prewarmFiles(warm)
     print(String(format: "[t2v-spot25] prewarm %.1fs (%d files%@)", Date().timeIntervalSince(p0),
                  warm.count, streamed ? ", transformer excluded by streamedBlocks" : ""))
