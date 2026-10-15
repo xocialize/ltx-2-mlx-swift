@@ -1,0 +1,34 @@
+[t2v-spot25] request 512×288×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] budget tier=compact24 → 19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · legacy 0.7×nominal 16.80 GB
+[t2v-spot25] prewarm 1.1s (12 files, transformer excluded by streamedBlocks)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.49 GB (both reported for comparison; the DECLARE line below uses neither)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×784 MiB (1.53 GiB resident) · sweep 18.37 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from q8
+[t2v-spot25] run 87.7s  mp4 0.8 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.37 GB act=15.71 GB peak=16.08 GB · [afterLoad=3.30 retain=1.49 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.37 GB peakActivationBytes=15.71 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 16.08 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point
+      117.49 real         6.36 user        29.91 sys
+         10025697280  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             3590437  page reclaims
+                 238  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+              434061  voluntary context switches
+              454937  involuntary context switches
+        366322686982  instructions retired
+        149998935451  cycles elapsed
+         16082619296  peak memory footprint
