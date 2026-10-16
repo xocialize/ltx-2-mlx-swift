@@ -70,7 +70,7 @@ its full 481f envelope on the heavier i2v path):
 
 | profile | quant | envelope (max) | path | **measured peak** | fits |
 |---|---|---|---|---|---|
-| `compact24` | int4 | 512×288 × 121f | one-stage | **15.4 GB** (64 s) | 24 GB Macs (M5 MBP base) |
+| `compact24` | int8 streamed · lean decoder | **704×512 × 121f** t2v · 512×288 × 121f conditioned (i2v, IC, a2v) | one-stage | **14.5 GB** t2v at 704×512 (150 s) · **15.9 GB** i2v at 512×288 (76 s) — M5 Pro 24 GB, AB-T-0298 / AB-R-0562 | 24 GB Macs (M5 MBP base) |
 | `balanced32` | int4/int8 | 576×320 × 161f | one-stage | **16.1 GB** (115 s) | 32 GB |
 | `standard64` | int8 | 704×512 × 161f | two-stage | **37.5 GB** (188 s) | 64 GB |
 | `max128` | bf16 | 704×512 × 481f | two-stage | **72.7 GB** (960 s, 481f i2v + adapter LoRA) | 96–128 GB |

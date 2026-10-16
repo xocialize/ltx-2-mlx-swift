@@ -574,9 +574,9 @@ func ltx25PackageGate() {
     check("63 every two-stage resolution lands on an even latent grid (what x2 requires)",
           evenBoth, "\(gStd.width / 32)×\(gStd.height / 32)")
 
-    // ⚠️ One-stage tiers must NOT get the /64 rule: compact24's 288 ceiling is latent 9 — odd, and
-    // perfectly legal with no upsampler in the loop. Applying /64 everywhere would silently drop
-    // compact24 from 288 to 256.
+    // ⚠️ One-stage tiers must NOT get the /64 rule: a 288 request on compact24 (its ceiling until
+    // 2026-10-15, in-envelope since) is latent 9 — odd, and perfectly legal with no upsampler in the
+    // loop. Applying /64 everywhere would silently drop such a request from 288 to 256.
     let gC = planC.resolvedGeometry(width: 512, height: 288, numFrames: 33)
     check("64 one-stage tiers keep /32 (compact24 288 = odd latent 9 is legal there)",
           gC.height == 288 && gC.width == 512, gC.summary)
@@ -722,8 +722,48 @@ func ltx25PackageGate() {
               + "default=\(rDefault?.lastPathComponent ?? "nil") none=\(rNone?.lastPathComponent ?? "nil") "
               + "missing-default-threw=\(missingDefaultThrew) missing-lever-fell-back=\(rLeverAbsent == nil)")
 
+    // 79–80 — compact24's widened envelope (AB-T-0298) and the condition that makes it honest.
+    let gWide = LTX2Configuration(family: .ltx25, profile: .compact24)
+        .resolvedGeometry(width: 704, height: 512, numFrames: 121)
+    let gWider = LTX2Configuration(family: .ltx25, profile: .compact24)
+        .resolvedGeometry(width: 1280, height: 704, numFrames: 121)
+    check("79 compact24's envelope is 704×512×121 (704×512 passes unclamped, 1280×704 clamps to it; balanced32 unchanged)",
+          gWide.width == 704 && gWide.height == 512 && gWide.deliveredFrames == 121 && !gWide.changed
+              && gWider.width == 704 && gWider.height == 512
+              && LTX2Profile.balanced32.maxWidth == 576 && LTX2Profile.balanced32.maxHeight == 320,
+          "704×512 → \(gWide.width)×\(gWide.height) changed=\(gWide.changed); 1280×704 → \(gWider.width)×\(gWider.height); "
+              + "balanced32 \(LTX2Profile.balanced32.maxWidth)×\(LTX2Profile.balanced32.maxHeight)")
+    var hintLean = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
+    var hintStock = hintLean
+    hintLean.vaeDecoderPath = URL(fileURLWithPath: "/tmp/ltx-gate-tree").appending(path: LTX2Configuration.leanDecoderFile)
+    hintStock.vaeDecoderPath = URL(fileURLWithPath: "/tmp/ltx-gate-tree/vae_decoder.safetensors")
+    let hintDefault = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .compact24)
+    var hintUpper = LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .standard64)
+    hintUpper.vaeDecoderPath = hintStock.vaeDecoderPath
+    check("80 the low tiers' streamed hints apply with the lean decoder (default or explicit) and FAIL CLOSED with an explicit stock path; upper tiers unaffected",
+          hintDefault.residentBytesHint != nil && hintLean.residentBytesHint != nil && hintStock.residentBytesHint == nil
+              && hintUpper.residentBytesHint == LTX2Configuration(family: .ltx25, repo: "mlx-community/ltx-2.5-mlx", profile: .standard64).residentBytesHint,
+          "default=\(hintDefault.residentBytesHint.map { String($0) } ?? "nil") lean=\(hintLean.residentBytesHint.map { String($0) } ?? "nil") "
+              + "stock=\(hintStock.residentBytesHint.map { String($0) } ?? "nil") (nil = quant declaration → refused on 24 GB)")
+
+    // 81–82 — the conditioned envelope (AB-T-0298): compact24 widens for plain t2v only.
+    let cCond = LTX2Configuration(family: .ltx25, profile: .compact24)
+        .resolvedGeometry(width: 704, height: 512, numFrames: 121, conditioned: true)
+    check("81 compact24 clamps CONDITIONED runs to 512×288 while plain t2v keeps 704×512",
+          cCond.width == 512 && cCond.height == 288 && cCond.changed
+              && cCond.notes.contains { $0.contains("conditioned envelope") }
+              && gWide.width == 704 && gWide.height == 512,
+          "conditioned 704×512 → \(cCond.width)×\(cCond.height) (\(cCond.notes.joined(separator: "; "))); plain → \(gWide.width)×\(gWide.height)")
+    let upperCond = LTX2Configuration(family: .ltx25, profile: .standard64)
+        .resolvedGeometry(width: 1280, height: 704, numFrames: 121, conditioned: true)
+    check("82 the conditioned envelope equals the plain one on every other tier",
+          upperCond.width == 1280 && upperCond.height == 704
+              && LTX2Profile.allCases.filter { $0 != .compact24 }.allSatisfy {
+                  $0.conditionedMaxWidth == $0.maxWidth && $0.conditionedMaxHeight == $0.maxHeight },
+          "standard64 conditioned 1280×704 → \(upperCond.width)×\(upperCond.height)")
+
     print(failures.isEmpty
-          ? "[ltx25-package-gate] PASS ✅ (78/78)"
+          ? "[ltx25-package-gate] PASS ✅ (82/82)"
           : "[ltx25-package-gate] FAIL ❌ \(failures.count): \(failures.joined(separator: ", "))")
     if !failures.isEmpty { exit(1) }
 }

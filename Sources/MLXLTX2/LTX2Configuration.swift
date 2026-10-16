@@ -10,7 +10,10 @@ import MLXToolKit
 /// 16 GB is deliberately ABSENT: the int4 DiT alone (11.3 GB) ≈ a 16 GB governor budget, and no
 /// smaller LTX-2 checkpoint exists.
 public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
-    /// 24 GB Macs (M5 MacBook Pro default): int4, one-stage, small envelope, tight decode window.
+    /// 24 GB Macs (M5 MacBook Pro default): int8 streamed, one-stage, tight decode window — and since
+    /// 2026-10-15 a 704×512×121 envelope for plain t2v (conditioned runs keep 512×288×121 —
+    /// `conditionedMaxWidth/Height`), honest ONLY under the lean decoder the tier defaults to
+    /// (AB-T-0298 on AB-R-0561's diagnostic: lean 14.5 GB there, stock 21.1 GB and swapping).
     case compact24
     /// 32 GB Macs: int4/int8, one-stage, mid envelope.
     case balanced32
@@ -31,11 +34,16 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     ///   max128     1920x1088 -> 49.30 GB of 89.6  (55%; untiled 93.68 is OVER budget)
     /// ⚠️ At max128 untiled 1080p does NOT fit. The declaration below is only honest because the
     /// pipeline tiles by construction at these grids.
+    /// compact24 512×288 → 704×512 on 2026-10-15 (AB-T-0298): under the lean decoder the tier now defaults
+    /// to, a 704×512×121 t2v run peaks 14.5 GB on a 24 GB M5 Pro with no swap (AB-R-0561 diagnostic, then
+    /// the acceptance receipt at this envelope); with the STOCK decoder the same run peaks 21.1 GB and
+    /// swaps, which is why the footprint hints fail closed when an explicit stock path is set on this
+    /// tier (`declaresStreamedFootprint`). balanced32 is unchanged (not measured at a wider envelope).
     public var maxWidth: Int  {
-        switch self { case .compact24: 512; case .balanced32: 576; case .standard64: 1280; case .max128: 1920 }
+        switch self { case .compact24: 704; case .balanced32: 576; case .standard64: 1280; case .max128: 1920 }
     }
     public var maxHeight: Int {
-        switch self { case .compact24: 288; case .balanced32: 320; case .standard64: 704; case .max128: 1088 }
+        switch self { case .compact24: 512; case .balanced32: 320; case .standard64: 704; case .max128: 1088 }
     }
     public var maxFrames: Int {
         // max128 241→481 (BRIDGE-LTX-005): 704×512×480f bf16 t2v measured 67.61 GB — the old cap
@@ -51,6 +59,15 @@ public enum LTX2Profile: String, Codable, Sendable, CaseIterable {
     /// the stock decoder: decode is not their binding stage and stock is the bit-exact reference. Resolution
     /// order and the lever are in `LTX2Pipeline.resolveVAEDecoder`.
     public var recommendedLeanDecoder: Bool { self == .compact24 || self == .balanced32 }
+    /// The envelope for CONDITIONED runs — init image, reference images (IC), init audio, and the sourced
+    /// edit modes. Conditioning scales with pixels: on compact24 an i2v run at 704×512×121 under the lean
+    /// decoder peaks 16.85–17.16 GB (17.88 on a warm-up) — inside a real 24 GB Mac's 19.07 GB budget with no
+    /// swap, but over the tier's 16.20 GB declared charge and the 16.80 GB nominal bar the charge is held to
+    /// (AB-T-0298's receipt, `probes/pruna-m5pro-24gb/envelope-704x512`). So compact24 keeps 512×288×121 for
+    /// conditioned runs, where i2v measured 15.85 GB inside the charge (AB-R-0562), and the charge stays honest;
+    /// widening it is a charge decision for the operator (~18.0 GB). Every other tier: the plain envelope.
+    public var conditionedMaxWidth: Int { self == .compact24 ? 512 : maxWidth }
+    public var conditionedMaxHeight: Int { self == .compact24 ? 288 : maxHeight }
     /// VAE temporal-decode window knob (see `LTX2Pipeline.decodePixels`; halo is fixed at 5).
     public var vaeChunkFrames: Int {
         switch self { case .compact24: 4; case .balanced32: 6; default: 8 }
@@ -697,6 +714,17 @@ extension LTX2Configuration: FootprintConfigured {
         family == .ltx25
             && effectiveStreamedBlocks
             && resolvedStreamingOptions.gatePolicy == .forceStream
+            && declaresLeanDecoder
+    }
+
+    /// The low tiers' hints were measured with the LEAN decoder at their envelope (AB-R-0561/0562, and
+    /// compact24's 704×512 envelope exists only because of it: stock peaks 21.1 GB there). An explicit
+    /// non-lean `vaeDecoderPath` on a lean-default tier therefore gets no streamed hints — the quant
+    /// declaration applies and the tier is refused, the same fail-closed rule as a resident lane.
+    /// `nil` (the profile default) and the lean file itself keep the hints; the upper tiers are unaffected.
+    private var declaresLeanDecoder: Bool {
+        guard profile?.recommendedLeanDecoder == true, let explicit = vaeDecoderPath else { return true }
+        return explicit.lastPathComponent == Self.leanDecoderFile
     }
 
     /// Expected weight bytes READ per run for the resolved lane (contract 1.35.0, AB-A-0013).

@@ -1,0 +1,243 @@
+# 6ed04e0 Pruna is the default decoder on compact24 and balanced32 (AB-D-0147, AB-T-0297): the converted file is a declared component, hosted in every components repo · Apple M5 Pro, 24 GB, macOS 27.2 · Thu Oct 15 16:13:47 PDT 2026
+# env: LTX_TIER=compact24 LTX_QUANT=int8 LTX_STREAM_25=1 LTX_ENC=q8 LTX_NO_CHECKPOINT=1 prompt='a cat playing piano' seed=42 cooldown=45s · decoder: profile default (lean) unless 'stock' rows (LTX_VAE_DECODER=stock, diagnostic)
+=== burn-in 1 t2v lean 704x512x121
+swap before: total = 3072.00M  used = 1683.31M  free = 1388.69M  (encrypted) · therm: nominal
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.6s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.14 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 147.4s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.94 GB act=13.58 GB peak=14.52 GB · [afterLoad=3.30 retain=1.14 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.94 GB peakActivationBytes=13.58 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.52 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      176.35 real         5.51 user        29.25 sys
+          9135964160  maximum resident set size
+         14596582344  peak memory footprint
+swap after:  total = 3072.00M  used = 2028.62M  free = 1043.38M  (encrypted) · therm: nominal
+=== burn-in 2 t2v lean 704x512x121
+swap before: total = 3072.00M  used = 2028.62M  free = 1043.38M  (encrypted) · therm: nominal
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.7s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.90 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 151.0s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.90 GB act=13.59 GB peak=14.49 GB · [afterLoad=3.30 retain=0.90 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.90 GB peakActivationBytes=13.59 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.49 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      179.14 real         5.38 user        27.95 sys
+         10402775040  maximum resident set size
+         14505175552  peak memory footprint
+swap after:  total = 3072.00M  used = 2028.62M  free = 1043.38M  (encrypted) · therm: fair
+=== warmup t2v lean 704x512x121
+swap before: total = 3072.00M  used = 2028.62M  free = 1043.38M  (encrypted) · therm: nominal
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.7s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.14 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 149.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.90 GB act=13.60 GB peak=14.50 GB · [afterLoad=3.30 retain=1.14 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.90 GB peakActivationBytes=13.60 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.50 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      177.65 real         5.33 user        27.81 sys
+          9082372096  maximum resident set size
+         14510009432  peak memory footprint
+swap after:  total = 3072.00M  used = 2004.62M  free = 1067.38M  (encrypted) · therm: fair
+=== t2v lean 704x512x121 rep1
+swap before: total = 3072.00M  used = 2004.62M  free = 1067.38M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.8s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.96 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 149.1s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.89 GB act=13.60 GB peak=14.49 GB · [afterLoad=3.30 retain=0.96 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.89 GB peakActivationBytes=13.60 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.49 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      177.12 real         5.30 user        27.67 sys
+          8988213248  maximum resident set size
+         14491134608  peak memory footprint
+swap after:  total = 3072.00M  used = 2000.06M  free = 1071.94M  (encrypted) · therm: fair
+=== t2v stock 704x512x121 diag1
+swap before: total = 3072.00M  used = 2000.06M  free = 1071.94M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.7s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.91 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 180.1s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.87 GB act=20.75 GB peak=21.62 GB · [afterLoad=3.30 retain=0.91 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.87 GB peakActivationBytes=20.75 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 21.62 GB → ❌ OVER · legacy 0.7×nominal denominator 16.80 GB
+      209.00 real         5.31 user        33.42 sys
+          9460629504  maximum resident set size
+         21638057656  peak memory footprint
+swap after:  total = 4096.00M  used = 2645.44M  free = 1450.56M  (encrypted) · therm: fair
+=== t2v lean 704x512x121 rep2
+swap before: total = 4096.00M  used = 2488.44M  free = 1607.56M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.8s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.89 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 148.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.89 GB act=13.61 GB peak=14.49 GB · [afterLoad=3.30 retain=0.89 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.89 GB peakActivationBytes=13.61 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.49 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      176.83 real         5.21 user        26.25 sys
+          9915170816  maximum resident set size
+         14494820984  peak memory footprint
+swap after:  total = 3072.00M  used = 2335.69M  free = 736.31M  (encrypted) · therm: fair
+=== t2v lean 704x512x121 rep3
+swap before: total = 3072.00M  used = 2319.62M  free = 752.38M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.7s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.08 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 150.7s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.94 GB act=13.54 GB peak=14.48 GB · [afterLoad=3.30 retain=1.08 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.94 GB peakActivationBytes=13.54 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.48 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      181.51 real         5.28 user        27.15 sys
+          9448079360  maximum resident set size
+         14506240536  peak memory footprint
+swap after:  total = 3072.00M  used = 2263.62M  free = 808.38M  (encrypted) · therm: fair
+=== t2v stock 704x512x121 diag2
+swap before: total = 3072.00M  used = 2263.62M  free = 808.38M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.7s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.11 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 183.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.86 GB act=20.66 GB peak=21.53 GB · [afterLoad=3.30 retain=1.11 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.86 GB peakActivationBytes=20.66 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 21.53 GB → ❌ OVER · legacy 0.7×nominal denominator 16.80 GB
+      212.97 real         5.56 user        32.95 sys
+          9573154816  maximum resident set size
+         21618445960  peak memory footprint
+swap after:  total = 3072.00M  used = 2342.44M  free = 729.56M  (encrypted) · therm: fair
+=== t2v lean 704x512x121 rep4
+swap before: total = 3072.00M  used = 2326.44M  free = 745.56M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 0.8s (11 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.91 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 151.4s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=int8 enc=int8 · resident(held)=0.83 GB act=13.66 GB peak=14.49 GB · [afterLoad=3.30 retain=0.91 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.83 GB peakActivationBytes=13.66 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 14.49 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      179.83 real         5.25 user        27.59 sys
+          9312468992  maximum resident set size
+         14504552936  peak memory footprint
+swap after:  total = 3072.00M  used = 2278.44M  free = 793.56M  (encrypted) · therm: fair
+=== warmup i2v lean 704x512x121
+swap before: total = 3072.00M  used = 2278.44M  free = 793.56M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.1s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.31 GB · post-run retain=1.12 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 176.4s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.68 GB act=17.20 GB peak=17.88 GB · [afterLoad=3.31 retain=1.12 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.68 GB peakActivationBytes=17.20 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 17.88 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      208.40 real         7.76 user        37.57 sys
+          9428664320  maximum resident set size
+         17877158816  peak memory footprint
+swap after:  total = 3072.00M  used = 2246.44M  free = 825.56M  (encrypted) · therm: fair
+=== i2v lean 704x512x121 rep1
+swap before: total = 3072.00M  used = 2238.44M  free = 833.56M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.2s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.10 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 176.7s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.58 GB act=16.58 GB peak=17.16 GB · [afterLoad=3.30 retain=1.10 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.58 GB peakActivationBytes=16.58 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 17.16 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      208.46 real         7.75 user        35.63 sys
+          9876275200  maximum resident set size
+         17157114880  peak memory footprint
+swap after:  total = 3072.00M  used = 2230.44M  free = 841.56M  (encrypted) · therm: fair
+=== i2v stock 704x512x121 diag1
+swap before: total = 3072.00M  used = 2230.44M  free = 841.56M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.2s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.92 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 207.0s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.86 GB act=19.22 GB peak=20.08 GB · [afterLoad=3.30 retain=0.92 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.86 GB peakActivationBytes=19.22 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 20.08 GB → ❌ OVER · legacy 0.7×nominal denominator 16.80 GB
+      239.72 real         7.43 user        40.75 sys
+          9221783552  maximum resident set size
+         20096305384  peak memory footprint
+swap after:  total = 3072.00M  used = 2576.62M  free = 495.38M  (encrypted) · therm: fair
+=== i2v lean 704x512x121 rep2
+swap before: total = 3072.00M  used = 2488.62M  free = 583.38M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.2s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.91 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 172.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.50 GB act=16.63 GB peak=17.13 GB · [afterLoad=3.30 retain=0.91 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.50 GB peakActivationBytes=16.63 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 17.13 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      204.47 real         7.04 user        33.76 sys
+          9549103104  maximum resident set size
+         17131113304  peak memory footprint
+swap after:  total = 3072.00M  used = 2456.62M  free = 615.38M  (encrypted) · therm: fair
+=== i2v lean 704x512x121 rep3
+swap before: total = 3072.00M  used = 2448.62M  free = 623.38M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.1s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=1.06 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 175.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.76 GB act=16.09 GB peak=16.85 GB · [afterLoad=3.30 retain=1.06 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.76 GB peakActivationBytes=16.09 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 16.85 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      207.11 real         7.05 user        34.31 sys
+          9822945280  maximum resident set size
+         16851586048  peak memory footprint
+swap after:  total = 3072.00M  used = 2376.56M  free = 695.44M  (encrypted) · therm: fair
+=== i2v stock 704x512x121 diag2
+swap before: total = 3072.00M  used = 2376.56M  free = 695.44M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.2s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.30 GB · post-run retain=0.99 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 207.8s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.58 GB act=19.47 GB peak=20.06 GB · [afterLoad=3.30 retain=0.99 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.58 GB peakActivationBytes=19.47 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 20.06 GB → ❌ OVER · legacy 0.7×nominal denominator 16.80 GB
+      240.76 real         7.12 user        40.83 sys
+          9115172864  maximum resident set size
+         20173277464  peak memory footprint
+swap after:  total = 4096.00M  used = 3127.81M  free = 968.19M  (encrypted) · therm: fair
+=== i2v lean 704x512x121 rep4
+swap before: total = 4096.00M  used = 3111.81M  free = 984.19M  (encrypted) · therm: fair
+exit=0
+[t2v-spot25] request 704×512×121f int8 · tier=compact24 · DiT lane: STREAMED · encoder: ltx-2.5-mlx-q8 · mode: i2v · gate: forceStream
+[t2v-spot25] granules /Users/mvsadmin/Models/ltx-granules-25/q8
+[t2v-spot25] prewarm 1.2s (12 files, transformer excluded by streamedBlocks)
+[t2v-spot25] phys-after-load=3.31 GB · post-run retain=0.92 GB (both reported for comparison; the DECLARE line below uses neither)
+[t2v-spot25] run 174.1s  mp4 1.7 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=i2v quant=int8 enc=int8 · resident(held)=0.49 GB act=16.37 GB peak=16.85 GB · [afterLoad=3.31 retain=0.92 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.49 GB peakActivationBytes=16.37 GB
+[t2v-spot25] ACCEPTANCE tier=compact24 budget=19.07 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 16.85 GB → ✅ WITHIN · legacy 0.7×nominal denominator 16.80 GB
+      206.09 real         6.97 user        33.39 sys
+         10154426368  maximum resident set size
+         16851897344  peak memory footprint
+swap after:  total = 4096.00M  used = 2927.75M  free = 1168.25M  (encrypted) · therm: fair
+=== DONE Thu Oct 15 17:18:53 PDT 2026

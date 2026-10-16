@@ -25,9 +25,12 @@ for line in log:
 def kind(n):
     if n.startswith("burn-in"): return "burn-in"
     if "warmup" in n: return "warm-up"
-    if n.startswith("diag"): return "diagnostic"
+    if n.startswith("diag") or " diag" in n: return "diagnostic"
     return "measured"
-def arm(n): return "pruna" if " pruna " in f" {n} " else "stock"
+def arm(n):
+    t = f" {n} "
+    return "pruna" if (" pruna " in t or " lean " in t) else "stock"
+def mode(n): return "i2v" if " i2v " in f" {n} " else "t2v"
 print(f"{'run':34} {'kind':10} {'gen s':>7} {'wall s':>7} {'res':>5} {'act':>6} {'peak':>6} {'foot':>6} {'swapΔ':>6} verdict")
 for r in runs:
     if "run_s" not in r: print(f"{r['name']:34} {kind(r['name']):10} (incomplete)"); continue
@@ -41,16 +44,25 @@ def stats(rows, label):
           f"peak max {max(r['peak'] for r in rows):.2f} GB  resident max {max(r['res'] for r in rows):.2f}  act max {max(r['act'] for r in rows):.2f}  "
           f"footprint max {max(r.get('foot_gb',0) for r in rows):.2f} GB")
     return med, hi - lo
+modes = sorted({mode(r["name"]) for r in runs}, key=lambda m: m != "t2v")
 for k in ("measured", "diagnostic"):
-    rows = [r for r in runs if kind(r["name"]) == k and "run_s" in r]
-    if not rows: continue
-    print(f"\n{k.upper()} ({rows[0]['name'].split()[1 if k=='diagnostic' else 1]})")
-    s = stats([r for r in rows if arm(r["name"]) == "stock"], "stock")
-    p = stats([r for r in rows if arm(r["name"]) == "pruna"], "pruna")
-    if s and p:
-        d = p[0] - s[0]; bar = s[1]
-        print(f"  Δmedian pruna−stock = {d:+.1f} s ({d/s[0]*100:+.1f} %) vs stock's within-arm range {bar:.1f} s → "
-              f"{'MEASURABLE' if abs(d) > bar else 'NOISE'} (bench-e2e doctrine: |Δmed| must exceed the baseline arm's spread)")
+    for md in modes:
+        rows = [r for r in runs if kind(r["name"]) == k and mode(r["name"]) == md and "run_s" in r]
+        if not rows: continue
+        print(f"\n{k.upper()} {md}")
+        s = stats([r for r in rows if arm(r["name"]) == "stock"], "stock")
+        p = stats([r for r in rows if arm(r["name"]) == "pruna"], "pruna/lean")
+        if s and p:
+            d = p[0] - s[0]; bar = s[1]
+            print(f"  Δmedian pruna−stock = {d:+.1f} s ({d/s[0]*100:+.1f} %) vs stock's within-arm range {bar:.1f} s → "
+                  f"{'MEASURABLE' if abs(d) > bar else 'NOISE'} (bench-e2e doctrine: |Δmed| must exceed the baseline arm's spread)")
+        # mixed rows (lean measured vs stock diagnostic) still deserve the comparison
+        if k == "measured" and p and not s:
+            diag = [r for r in runs if kind(r["name"]) == "diagnostic" and mode(r["name"]) == md and arm(r["name"]) == "stock" and "run_s" in r]
+            if diag:
+                sd = stats(diag, "stock(diag)")
+                d = p[0] - sd[0]
+                print(f"  Δmedian lean−stock(diag) = {d:+.1f} s ({d/sd[0]*100:+.1f} %)")
 # clip checks: within-arm identical? across arms different?
 logs = pathlib.Path("logs")
 def same(a, b): return subprocess.run(["cmp", "-s", str(a), str(b)]).returncode == 0

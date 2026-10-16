@@ -190,8 +190,12 @@ public extension LTX2Configuration {
     ///
     /// - Parameter envelopeOverride: mirrors `LTX_ENVELOPE_OVERRIDE=1`, the measurement-only hatch
     ///   that lifts the RESOLUTION clamp (never the frame clamp).
+    /// `conditioned`: the run carries an init image, reference images, IC references or init audio, and
+    /// clamps to the profile's CONDITIONED envelope (compact24: 512×288, AB-T-0298). Hosts previewing an
+    /// i2v output size must pass it, or the preview will promise a geometry the run then clamps.
     func resolvedGeometry(width: Int? = nil, height: Int? = nil, numFrames: Int? = nil,
-                          fps: Double? = nil, envelopeOverride: Bool = false) -> ResolvedGeometry {
+                          fps: Double? = nil, envelopeOverride: Bool = false,
+                          conditioned: Bool = false) -> ResolvedGeometry {
         let reqW = width ?? 704, reqH = height ?? 512, reqF = numFrames ?? 9
         var w = reqW, h = reqH, nf = reqF
         var notes: [String] = []
@@ -204,14 +208,16 @@ public extension LTX2Configuration {
                 }
                 nf = min(nf, p.maxFrames)
             } else {
-                if w > p.maxWidth || h > p.maxHeight {
-                    notes.append("clamped to the \(p.rawValue) envelope "
-                        + "(\(p.maxWidth)×\(p.maxHeight))")
+                let mw = conditioned ? p.conditionedMaxWidth : p.maxWidth
+                let mh = conditioned ? p.conditionedMaxHeight : p.maxHeight
+                if w > mw || h > mh {
+                    notes.append("clamped to the \(p.rawValue)\(conditioned ? " conditioned" : "") envelope "
+                        + "(\(mw)×\(mh))")
                 }
                 if nf > p.maxFrames {
                     notes.append("frames clamped to the \(p.rawValue) cap (\(p.maxFrames))")
                 }
-                w = min(w, p.maxWidth); h = min(h, p.maxHeight); nf = min(nf, p.maxFrames)
+                w = min(w, mw); h = min(h, mh); nf = min(nf, p.maxFrames)
             }
             let preSnapW = w, preSnapH = h
             w = max(64, (w / 32) * 32); h = max(64, (h / 32) * 32)   // latent grid is /32
@@ -318,10 +324,11 @@ public extension LTX2Configuration {
         }
 
         if let p = profile {
-            if w > p.maxWidth || h > p.maxHeight {
-                notes.append("clamped to the \(p.rawValue) envelope (\(p.maxWidth)×\(p.maxHeight))")
+            // Sourced edits are conditioned on a video by construction → the conditioned envelope.
+            if w > p.conditionedMaxWidth || h > p.conditionedMaxHeight {
+                notes.append("clamped to the \(p.rawValue) conditioned envelope (\(p.conditionedMaxWidth)×\(p.conditionedMaxHeight))")
             }
-            w = min(w, p.maxWidth); h = min(h, p.maxHeight)
+            w = min(w, p.conditionedMaxWidth); h = min(h, p.conditionedMaxHeight)
         }
 
         let grid = mode == .audioToVideo ? 64 : 32

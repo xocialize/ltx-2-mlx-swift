@@ -266,9 +266,12 @@ public final class MLXLTX2Package: ModelPackage {
         // ⚠️ The FRAME cap is deliberately still enforced: the viability question is resolution,
         // and lifting two envelope axes at once makes an over-budget result unattributable.
         let envelopeOverride = ProcessInfo.processInfo.environment["LTX_ENVELOPE_OVERRIDE"] == "1"
+        // Conditioned runs (init image, reference images, IC references, init audio) clamp to the profile's
+        // CONDITIONED envelope — compact24 keeps 512×288 there (AB-T-0298: i2v at 704×512 overshoots the charge).
+        let conditioned = t2v.initImage != nil || t2v.initAudio != nil || !(t2v.referenceImages ?? []).isEmpty || icId != nil
         let geo = configuration.resolvedGeometry(
             width: t2v.width, height: t2v.height, numFrames: t2v.numFrames, fps: t2v.fps,
-            envelopeOverride: envelopeOverride)
+            envelopeOverride: envelopeOverride, conditioned: conditioned)
         let fps = geo.fps
         let h = geo.height, wd = geo.width, nf = geo.numFrames
         if let p = configuration.profile {
