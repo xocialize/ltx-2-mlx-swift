@@ -2536,6 +2536,19 @@ if args.contains("--connector-gate") {
         print("usage: RunLTX2 --outpaint25 <job.safetensors> <out-prefix> [<job2> <prefix2> ...]"); exit(2)
     }
     try await outpaint25(jobs: stride(from: 0, to: paths.count, by: 2).map { (paths[$0], paths[$0 + 1]) })
+} else if args.contains("--vae-encode-peak") {
+    // AB-T-0338: the video VAE encode alone — phys high-water, MLX active peak, pool (EncodePeakProbe.swift).
+    let ints = positional.compactMap { Int($0) }
+    try vaeEncodePeakProbe(width: ints.count > 0 ? ints[0] : 768,
+                           height: ints.count > 1 ? ints[1] : 448,
+                           frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--vae-encode-exact-gate") {
+    // AB-T-0338: GPU vs CPU encode per conv route, with the stock route as the poison arm.
+    try vaeEncodeExactGate()
+} else if args.contains("--vae-encode-compare") {
+    let paths = positional.filter { !$0.hasPrefix("--") }
+    guard paths.count == 2 else { print("usage: RunLTX2 --vae-encode-compare <a> <b>"); exit(2) }
+    try vaeEncodeCompare(paths[0], paths[1])
 } else if args.contains("--ic-spot25") {
     // AB-A-0048: one live IC-adapter render on the 2.5 base through the package surface.
     // usage: --ic-spot25 [W] [H] [F]  (env LTX_IC_* — see ICSpot25.swift)

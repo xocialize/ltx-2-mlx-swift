@@ -357,6 +357,26 @@ public struct VideoVAEDecoder {
 public struct VideoVAEEncoder {
     let w: [String: MLXArray]
 
+    /// How the causal convs reach mlx's conv3d kernels (AB-T-0338).
+    public enum ConvRoute: Sendable {
+        /// Default. Depth padding 1 on the replicate-padded stream, the two outer output frames
+        /// dropped. A non-zero depth padding keeps mlx-swift 0.32 off its per-frame Winograd split
+        /// (mlx#3785), so the conv runs implicit GEMM — the 0.31 kernel, exact-class — with no
+        /// padded copy of the input. The zero spatial pad rides the same argument.
+        case implicitGEMM
+        /// 79b5814: spatial `padded` copy, then `ExactConv.conv3d`, which reaches implicit GEMM by
+        /// appending a zero channel (a second copy) that mlx pads to the next multiple of 16 (a
+        /// third). Exact, and +4.7 GB live at 768×448×121.
+        case exactConv
+        /// mlx's default dispatch on the pre-padded input: lossy Winograd on 0.32 (relL2 5.1e-3
+        /// vs implicit GEMM) and the heaviest route (57.6 GB live). Kept as the exactness gate's
+        /// poison arm.
+        case stock
+    }
+
+    /// The conv route. Only `--vae-encode-exact-gate` changes it.
+    public var convRoute: ConvRoute = .implicitGEMM
+
     static let resStageBlocks: [Int: Int] = [0: 4, 2: 6, 4: 4, 6: 2, 8: 2]
     // SpaceToDepthDownsample at odd indices: (in, out, stride)
     static let downConfig: [Int: (Int, Int, (Int, Int, Int))] = [
@@ -378,7 +398,20 @@ public struct VideoVAEEncoder {
     }
 
     /// pixels (B,3,F,H,W) in [-1,1] → latent (B,128,F',H',W'), 8×temporal/32×spatial.
+    ///
+    /// MEMORY (AB-T-0338). The encode's activations at full resolution are ~1.4 GB each at
+    /// 768×448×121 (fp32, 128 ch), all of slightly different sizes, so mlx's pool reuses almost
+    /// none of them: uncapped, the pool grew to 58 GB inside this call and set the whole IC run's
+    /// peak. The pool is therefore capped at 0 for the call and restored after (the decode's
+    /// `LTX_VAE_CACHE_GB` lever, made unconditional here), and every res block is evaluated so the
+    /// in-flight graph is one block deep. Neither changes a value: eval boundaries and the pool
+    /// are invisible to the arithmetic. With the implicit-GEMM route, the encode adds 12–13 GB of
+    /// phys at that geometry, against 57.9 GB at 79b5814 and 38.6 GB at 89d4dfc
+    /// (`RunLTX2 --vae-encode-peak`).
     public func encode(_ pixels: MLXArray) -> MLXArray {
+        let savedCacheLimit = Memory.cacheLimit
+        Memory.cacheLimit = 0
+        defer { Memory.cacheLimit = savedCacheLimit }
         var x = pixels.asType(.float32).transposed(0, 2, 3, 4, 1)  // BFHWC
         x = patchifySpatial(x, patchSize: 4)                       // 3 → 48
         x = convCausal(x, "conv_in")
@@ -407,6 +440,7 @@ public struct VideoVAEEncoder {
             x = convCausal(silu(pixelNorm(x)), "\(p).conv1")
             x = convCausal(silu(pixelNorm(x)), "\(p).conv2")
             x = x + residual
+            eval(x)   // one block in flight (AB-T-0338): 17.1 → 12.1 GB at 768×448×121, same values
         }
         return x
     }
@@ -436,10 +470,20 @@ public struct VideoVAEEncoder {
         var x = x0
         let first = MLX.repeated(x[0..., 0 ..< 1], count: tk - 1, axis: 1)
         x = MLX.concatenated([first, x], axis: 1)
-        x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
-        var y = ExactConv.conv3d(x, weight: w["\(prefix).conv.weight"]!)
-        y = y + w["\(prefix).conv.bias"]!
-        return y
+        let weight = w["\(prefix).conv.weight"]!, bias = w["\(prefix).conv.bias"]!
+        switch convRoute {
+        case .implicitGEMM:
+            // F+2 frames in, depth padding 1 → F+2 frames out; frame o reads input frames o−1…o+1,
+            // so outputs 1…F are the valid causal conv and 0 and F+1 touch the zero depth pad.
+            let y = MLX.conv3d(x, weight, stride: 1, padding: 1)
+            return y[0..., 1 ..< (y.dim(1) - 1)] + bias
+        case .exactConv, .stock:
+            x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
+            let y = convRoute == .exactConv
+                ? ExactConv.conv3d(x, weight: weight)
+                : MLX.conv3d(x, weight, stride: 1, padding: 0)
+            return y + bias
+        }
     }
 
     /// Reverse per-channel normalization on a (B,C,F,H,W) latent → (B,C,F,H,W).
