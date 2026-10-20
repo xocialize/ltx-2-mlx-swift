@@ -87,8 +87,21 @@ public struct AudioVAEDecoder {
     /// Causal Conv2d (kernel 3): pad top (ks-1) on H, symmetric on W; conv.
     private func convCausal(_ x0: MLXArray, _ prefix: String) -> MLXArray {
         let ks = 3
-        let x = MLX.padded(x0, widths: [IntOrPair(0), IntOrPair((ks - 1, 0)), IntOrPair((1, 1)), IntOrPair(0)])
-        var y = conv2d(x, w["\(prefix).conv.weight"]!, stride: 1, padding: 0)
+        var x = MLX.padded(x0, widths: [IntOrPair(0), IntOrPair((ks - 1, 0)), IntOrPair((1, 1)), IntOrPair(0)])
+        var weight = w["\(prefix).conv.weight"]!
+        // conv_in's 8 input channels would send it to mlx's `pad_in_channels_conv_2D_gpu` (stride 1,
+        // 9 taps, 5+ channels not a multiple of 16), which frees its zero fill value before the
+        // command buffer runs (AB-L-0243). The decode runs under a pool cap of 0 (AB-T-0339), where
+        // that buffer goes straight back to the OS: a GPU fault or silently wrong values. Padding the
+        // channels to 16 here is the helper's own pad with real graph zeros — the same
+        // implicit-GEMM kernel on the same inputs, so the values are bit-identical.
+        let c = x.dim(-1)
+        if c >= 5, c % 16 != 0 {
+            let extra = (c + 15) / 16 * 16 - c
+            x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(0), IntOrPair((0, extra))])
+            weight = MLX.padded(weight, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(0), IntOrPair((0, extra))])
+        }
+        var y = conv2d(x, weight, stride: 1, padding: 0)
         y = y + w["\(prefix).conv.bias"]!
         return y
     }

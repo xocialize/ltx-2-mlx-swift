@@ -470,8 +470,12 @@ public struct VideoVAEEncoder {
                 eval(x)
             }
         }
-        x = convCausal(silu(pixelNorm(x)), "conv_out")  // 1024 → 129
-        x = x[.ellipsis, 0 ..< 128]                      // mean channels
+        // 1024 → 129, of which only the 128 mean channels are kept — so only those are computed. With
+        // all 129, the 129-wide output sent the conv to mlx's `pad_and_slice_conv_3D_gpu`, which frees
+        // its zero fill value before the command buffer runs (AB-L-0243): under this call's pool cap
+        // of 0 a GPU-fault risk (the garbage could only reach the discarded channels, so never a
+        // value). Same kernel, same reduction per output channel.
+        x = convCausal(silu(pixelNorm(x)), "conv_out", outputChannels: 128)
         x = normalize(x)
         return x.transposed(0, 4, 1, 2, 3)               // BCFHW
     }
@@ -511,12 +515,14 @@ public struct VideoVAEEncoder {
     }
 
     /// Causal Conv3dBlock: replicate first frame (k-1) at front, zeros spatial pad, conv.
-    private func convCausal(_ x0: MLXArray, _ prefix: String) -> MLXArray {
+    /// `outputChannels` keeps only the weight's first n output channels.
+    private func convCausal(_ x0: MLXArray, _ prefix: String, outputChannels: Int? = nil) -> MLXArray {
         let tk = 3
         var x = x0
         let first = MLX.repeated(x[0..., 0 ..< 1], count: tk - 1, axis: 1)
         x = MLX.concatenated([first, x], axis: 1)
-        let weight = w["\(prefix).conv.weight"]!, bias = w["\(prefix).conv.bias"]!
+        var weight = w["\(prefix).conv.weight"]!, bias = w["\(prefix).conv.bias"]!
+        if let n = outputChannels { weight = weight[0 ..< n]; bias = bias[0 ..< n] }
         switch convRoute {
         case .implicitGEMM:
             // F+2 frames in, depth padding 1 → F+2 frames out; frame o reads input frames o−1…o+1,
