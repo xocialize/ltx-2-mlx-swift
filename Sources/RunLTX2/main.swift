@@ -2554,6 +2554,15 @@ if args.contains("--connector-gate") {
     try vaeEncodePeakProbe(width: ints.count > 0 ? ints[0] : 768,
                            height: ints.count > 1 ? ints[1] : 448,
                            frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--vae-decode-peak") {
+    // AB-T-0339: the decode phase alone — video + audio, per-step phys / active / pool (DecodePeakProbe.swift).
+    let ints = positional.compactMap { Int($0) }
+    try vaeDecodePeakProbe(width: ints.count > 0 ? ints[0] : 768,
+                           height: ints.count > 1 ? ints[1] : 448,
+                           frames: ints.count > 2 ? ints[2] : 121)
+} else if args.contains("--vae-decode-exact-gate") {
+    // AB-T-0339: GPU vs CPU decode per conv route (stock = poison), plus capped-vs-uncapped identity.
+    try vaeDecodeExactGate()
 } else if args.contains("--vae-encode-exact-gate") {
     // AB-T-0338: GPU vs CPU encode per conv route, with the stock route as the poison arm.
     try vaeEncodeExactGate()

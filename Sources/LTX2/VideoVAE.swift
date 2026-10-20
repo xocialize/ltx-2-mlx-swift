@@ -16,6 +16,30 @@ import MLXProfiling
 public struct VideoVAEDecoder {
     let w: [String: MLXArray]
 
+    /// How the non-causal convs reach mlx's conv3d kernels (AB-T-0339) — the encoder's
+    /// `ConvRoute`, adapted to the symmetric replicate pad.
+    public enum ConvRoute: Sendable {
+        /// Default. Depth padding 1 on the replicate-padded stream (F+2 frames), the two outer
+        /// output frames dropped. A non-zero depth padding keeps mlx-swift 0.32 off its per-frame
+        /// Winograd split (mlx#3785), so the conv runs implicit GEMM with no padded copy of the
+        /// input; the zero spatial pad rides the same argument. Every decoder width, stock and
+        /// PrunaVAED, is a multiple of 16, so no conv takes mlx's channel-padding path either.
+        case implicitGEMM
+        /// 79b5814: spatial `padded` copy, then `ExactConv.conv3d`, whose appended zero channel sends
+        /// every conv through mlx's `pad_and_slice_conv_3D_gpu` (a channel pad to the next multiple
+        /// of 16). Exact in isolation — but under the decode's pool cap of 0 that route returned
+        /// WRONG values on full-resolution graphs: relL2 1.8e-2 vs the same decode uncapped for the
+        /// 1080p 2×2 tiled and 704×512×241 chunked decodes, 3.7e-2 for a whole 768×448×121 last
+        /// stage, reproducible, while a 2 GB cap or no cap was bit-exact. Do not route back here.
+        case exactConv
+        /// mlx's default dispatch on the pre-padded input: lossy per-frame Winograd on 0.32. Kept
+        /// only as the exactness gate's poison arm.
+        case stock
+    }
+
+    /// The conv route. Only `--vae-decode-exact-gate` changes it.
+    public var convRoute: ConvRoute = .implicitGEMM
+
     // up_blocks: ResStage block counts at even indices; DepthToSpace at odd.
     static let resStageBlocks: [Int: Int] = [0: 2, 2: 2, 4: 4, 6: 6, 8: 4]
     // (spatial_factor, temporal_factor) for DepthToSpace at odd indices 1,3,5,7.
@@ -34,7 +58,18 @@ public struct VideoVAEDecoder {
         VideoVAEDecoder(weights: try MLX.loadArrays(url: path))
     }
 
-    /// latent: (B, C=128, F, H, W) PyTorch layout → pixels (B, 3, F*8-7, H*32, W*32) in [-1,1].
+    /// latent: (B, C=128, F, H, W) PyTorch layout → pixels (B, 3, F*8-7, H*32, W*32) in [-1,1],
+    /// EVALUATED.
+    ///
+    /// MEMORY (AB-T-0339). The output is evaluated before it is returned. It used to come back
+    /// lazy — the last stage (four full-resolution res blocks + conv_out) was a pending graph that
+    /// the caller evaluated after `decodePixels` had restored the pool cap, so it ran with mlx's
+    /// pool uncapped: at 768×448×121 that tail alone added 24.4 GB of phys, against 12.4 GB for the
+    /// rest of the decode, and left a 21.8 GB pool for whatever ran next (icT2V's audio decode, +11
+    /// GB). Each res-block conv is evaluated too, so at most one conv's intermediates are in flight.
+    /// Neither changes a value — eval boundaries are invisible to the arithmetic, and per-conv eval
+    /// is bit-identical to per-stage eval — and the decode adds 10.9 GB at that geometry
+    /// (`RunLTX2 --vae-decode-peak`).
     public func decode(_ latent: MLXArray) -> MLXArray {
         let prof = MLXProfiler.shared
         var x = latent.asType(.float32).transposed(0, 2, 3, 4, 1)  // BFHWC
@@ -43,13 +78,11 @@ public struct VideoVAEDecoder {
 
         var upIdx = 0
         for i in 0 ..< 9 {
-            // Per-up-block attribution (LOW-TIER-PLAN T0). Timing is only honest at an eval, so
-            // when profiling we also materialize the even (res) stages — profiler-off behavior is
-            // unchanged (evals only between upsample stages, as before).
+            // Per-up-block attribution (LOW-TIER-PLAN T0). Every stage ends evaluated (res stages
+            // per conv, upsample stages here), so span timing is honest with the profiler off too.
             let span = prof.begin("vae-decode", "up\(i)", note: "in=\(x.shape)")
             if i % 2 == 0 {
                 x = resStage(x, "up_blocks.\(i)", VideoVAEDecoder.resStageBlocks[i]!)
-                if prof.enabled { eval(x) }
             } else {
                 // Pruned decoders (PrunaVAED) prefix the upsample with a channel adapter;
                 // the stock decoder has none, so presence is keyed off the weights.
@@ -70,7 +103,7 @@ public struct VideoVAEDecoder {
         x = conv3dBlock(silu(pixelNorm(x)), "conv_out")
         x = unpatchifySpatial(x, patchSize: 4)
         x = x.transposed(0, 4, 1, 2, 3)  // BCFHW
-        if prof.enabled { eval(x) }
+        eval(x)   // inside the caller's pool cap — see the MEMORY note above
         prof.end(span)
         return x
     }
@@ -274,8 +307,10 @@ public struct VideoVAEDecoder {
             let p = "\(prefix).res_blocks.\(j)"
             let residual = x
             x = conv3dBlock(silu(pixelNorm(x)), "\(p).conv1")
+            eval(x)   // one conv in flight (AB-T-0339): 13.7 → 10.9 GB at 768×448×121, same values
             x = conv3dBlock(silu(pixelNorm(x)), "\(p).conv2")
             x = x + residual
+            eval(x)
         }
         return x
     }
@@ -310,11 +345,22 @@ public struct VideoVAEDecoder {
             let last = MLX.repeated(x[0..., (x.dim(1) - 1)...], count: tpad, axis: 1)
             x = MLX.concatenated([first, x, last], axis: 1)
         }
-        // zeros spatial pad (H,W) = 1
-        x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
-        var y = ExactConv.conv3d(x, weight: w["\(prefix).conv.weight"]!)
-        y = y + w["\(prefix).conv.bias"]!
-        return y
+        let weight = w["\(prefix).conv.weight"]!, bias = w["\(prefix).conv.bias"]!
+        switch convRoute {
+        case .implicitGEMM:
+            // F+2 frames in, depth padding 1 → F+2 frames out; frame o reads input frames o−1…o+1,
+            // so outputs 1…F are the valid conv over the replicate-padded stream and 0 and F+1
+            // touch the zero depth pad.
+            let y = MLX.conv3d(x, weight, stride: 1, padding: 1)
+            return y[0..., 1 ..< (y.dim(1) - 1)] + bias
+        case .exactConv, .stock:
+            // zeros spatial pad (H,W) = 1
+            x = MLX.padded(x, widths: [IntOrPair(0), IntOrPair(0), IntOrPair(1), IntOrPair(1), IntOrPair(0)])
+            let y = convRoute == .exactConv
+                ? ExactConv.conv3d(x, weight: weight)
+                : MLX.conv3d(x, weight, stride: 1, padding: 0)
+            return y + bias
+        }
     }
 
     private func denormalize(_ x: MLXArray) -> MLXArray {

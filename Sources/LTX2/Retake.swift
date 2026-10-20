@@ -150,12 +150,13 @@ extension LTX2Pipeline {
         // 5. Decode (the existing tiled/chunked decode path).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let pixels = try decodePixels(vspatial)
         // ⚠️ For .replaceVideo the caller should MUX THE SOURCE TRACK rather than this decode —
         // a frozen latent round-trips the audio VAE and is near- but not bit-identical. Returned
-        // anyway so callers without the source track still get audio.
+        // anyway so callers without the source track still get audio. Decoded first, as t2v does
+        // (the decodes are independent; second, it would run with the pixel volume live).
         let waveform = decodeAudio(afinal)
-        eval(pixels); if let waveform { eval(waveform) }
+        let pixels = try decodePixels(vspatial)
+        eval(pixels)
         dropDecoder()
         return Output(video: pixels, audio: waveform)
     }

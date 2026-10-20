@@ -467,22 +467,34 @@ public final class LTX2Pipeline {
         return parts.count == 1 ? parts[0] : MLX.concatenated(parts, axis: 2)
     }
 
+    /// The decode phase's pool discipline — T3b lever 3 (the Wan `cacheLimit` lever). mlx's pool
+    /// retains a decode's intermediates, which are large and odd-sized, so almost none get reused:
+    /// measured +36.7 GB inside ONE 18-frame window @704×512 on top of ~24 GB active. A cap scoped
+    /// to the call frees them as they die; the previous limit is restored after. `LTX_VAE_CACHE_GB`
+    /// overrides (-1 = leave uncapped). Both the video and the audio decode run under it: the
+    /// audio decode's live peak is 3.4 GB at 768×448×121, but uncapped it left a 10.3 GB pool —
+    /// and stacked on the video decode's pool when it ran second (AB-T-0339). Values do not depend
+    /// on it (the conv routes it runs are gated pool-invariant: `--vae-decode-exact-gate`).
+    public static func withDecodePoolCap<T>(_ body: () throws -> T) rethrows -> T {
+        let capGB = ProcessInfo.processInfo.environment["LTX_VAE_CACHE_GB"].flatMap { Int($0) } ?? 0
+        let saved = Memory.cacheLimit
+        if capGB >= 0 { Memory.cacheLimit = capGB * 1_000_000_000 }
+        defer { if capGB >= 0 { Memory.cacheLimit = saved } }
+        return try body()
+    }
+
     /// Sink form — one chunk-policy code path for both lanes (the VideoVAE pattern).
     func decodePixels(_ spatial: MLXArray, sink: (MLXArray) throws -> Void) throws {
+        try Self.withDecodePoolCap { try decodePixelsCapped(spatial, sink: sink) }
+    }
+
+    private func decodePixelsCapped(_ spatial: MLXArray, sink: (MLXArray) throws -> Void) throws {
         // Whole-clip decode reports once here; the chunked path refines with per-chunk
         // step/totalSteps from inside `decodeChunked`.
         LTX2Progress.report(.decode)
         let env = ProcessInfo.processInfo.environment
         let chunk = env["LTX_VAE_CHUNK"].flatMap { Int($0) } ?? vaeChunkFrames
         let halo = env["LTX_VAE_HALO"].flatMap { Int($0) } ?? 5
-        // T3b lever 3 (the Wan `cacheLimit` lever): the MLX pool retains the decode's conv
-        // intermediates — measured +36.7 GB inside ONE 18-frame window @704×512 on top of ~24 GB
-        // active. A decode-scoped cap forces buffer reuse; restored after. `LTX_VAE_CACHE_GB`
-        // overrides (-1 = leave uncapped).
-        let capGB = env["LTX_VAE_CACHE_GB"].flatMap { Int($0) } ?? 0
-        let saved = Memory.cacheLimit
-        if capGB >= 0 { Memory.cacheLimit = capGB * 1_000_000_000 }
-        defer { if capGB >= 0 { Memory.cacheLimit = saved } }
         // Spatial halo+crop tiling (BLOCKSTREAM-EXPANSION-EVAL §3, `--vae-tile-gate`): 4K-only by
         // arithmetic — at ≤720p the tile windows span the whole grid, so default OFF; opt in via
         // LTX_VAE_TILES ("2" → 2×2, "2x3" → tilesH×tilesW) + LTX_VAE_SHALO (spatial halo, default 5
@@ -765,10 +777,21 @@ public final class LTX2Pipeline {
     /// Requires the decoder stage to be resident (`ensureDecoder()` ran).
     func decodeAudio(_ audioTokens: MLXArray) -> MLXArray? {
         guard let audioVAE, let vocoder else { return nil }
-        let B = audioTokens.dim(0), T = audioTokens.dim(1)
-        let audioLatent = audioTokens.reshaped(B, T, 8, 16).transposed(0, 2, 1, 3)  // (B,8,T,16)
-        let mel = audioVAE.decode(audioLatent)                                       // (B,2,T',64)
-        return vocoder(mel)                                                          // (B,2,T_48k)
+        return Self.decodeAudio(audioTokens, audioVAE: audioVAE, vocoder: vocoder)
+    }
+
+    /// The audio decode itself, EVALUATED under the decode pool cap (`withDecodePoolCap`). Static so
+    /// `--vae-decode-peak` measures this code rather than a copy of it.
+    public static func decodeAudio(_ audioTokens: MLXArray, audioVAE: AudioVAEDecoder,
+                                   vocoder: Vocoder) -> MLXArray {
+        withDecodePoolCap {
+            let B = audioTokens.dim(0), T = audioTokens.dim(1)
+            let audioLatent = audioTokens.reshaped(B, T, 8, 16).transposed(0, 2, 1, 3)  // (B,8,T,16)
+            let mel = audioVAE.decode(audioLatent)                                       // (B,2,T',64)
+            let waveform = vocoder(mel)                                                  // (B,2,T_48k)
+            eval(waveform)
+            return waveform
+        }
     }
 
     /// Text-to-video(+audio). Returns video pixels (1,3,F,H,W) in [-1,1] (channels-first)
@@ -910,12 +933,13 @@ public final class LTX2Pipeline {
         quiesceStreaming()      // stop granule IO before the decode phase
         dropDiTIfSequential()   // low tiers: decode never carries the DiT (T3c)
 
-        // 6. Decode
+        // 6. Decode — audio first, as t2v does: the two decodes are independent, and decoded second
+        // the audio would run with the whole pixel volume live (AB-T-0339).
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
-        let pixels = try decodePixels(vspatial)
         let waveform = decodeAudio(afinal)
-        eval(pixels); if let waveform { eval(waveform) }
+        let pixels = try decodePixels(vspatial)
+        eval(pixels)
         dropDecoder()
         return Output(video: pixels, audio: waveform)
     }
@@ -1032,10 +1056,13 @@ public final class LTX2Pipeline {
 
         let vspatial = vfinal.reshaped(1, fLat, hLat, wLat, 128).transposed(0, 4, 1, 2, 3)
         try ensureDecoder()
+        // Audio first, as t2v does (AB-T-0339). Decoded after the video, with the video decode's
+        // last stage still pending outside the pool cap, it set every IC arm's peak: 74.7–76.4 GB
+        // against the base arm's 63.4 at 768×448×121 (AB-R-0598).
+        let waveform = decodeAudio(afinal)
         let decSpan = MLXProfiler.shared.begin("vae-decode", "video", note: "\(numFrames)f")
         let pixels = try decodePixels(vspatial)
-        let waveform = decodeAudio(afinal)
-        eval(pixels); if let waveform { eval(waveform) }
+        eval(pixels)
         MLXProfiler.shared.end(decSpan)
         dropDecoder()
         MLXProfiler.shared.endRun()

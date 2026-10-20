@@ -61,12 +61,15 @@ func vaeEncodePeakProbe(width: Int, height: Int, frames: Int) throws {
 }
 
 /// `--vae-encode-compare <a.safetensors> <b.safetensors>`: relL2 / cosine / maxAbs between two
-/// saved `--vae-encode-peak` latents.
+/// saved `--vae-encode-peak` latents or `--vae-decode-peak` outputs, per array both files hold.
 func vaeEncodeCompare(_ a: String, _ b: String) throws {
-    let x = try MLX.loadArrays(url: URL(fileURLWithPath: a))["latent"]!
-    let y = try MLX.loadArrays(url: URL(fileURLWithPath: b))["latent"]!
-    print(String(format: "[vae-encode-compare] relL2 %.3e · cosine %.8f · maxAbs %.3e",
-                 relL2(x, y), cosine(x, y), maxAbs(x, y)))
+    let xs = try MLX.loadArrays(url: URL(fileURLWithPath: a))
+    let ys = try MLX.loadArrays(url: URL(fileURLWithPath: b))
+    for key in xs.keys.sorted() {
+        guard let x = xs[key], let y = ys[key] else { continue }
+        print(String(format: "[vae-encode-compare] %@ · relL2 %.3e · cosine %.8f · maxAbs %.3e",
+                     key as NSString, relL2(x, y), cosine(x, y), maxAbs(x, y)))
+    }
 }
 
 /// ‖a − b‖ / ‖b‖ in fp32.
