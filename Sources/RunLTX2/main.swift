@@ -1521,6 +1521,9 @@ final class PhysSampler: @unchecked Sendable {
     /// falling out as 0.00). The inter-stage FLOOR is what actually stays held, so
     /// `activation = peak − floor` is the transient the governor must budget on top of it.
     private var _min: UInt64 = .max
+    /// High-water since the last `takePhaseMax()` — one phase's own peak, which the new-high-water
+    /// trace cannot show once an earlier phase has set a higher one (AB-T-0338).
+    private var _phaseMax: UInt64 = 0
     private var _running = false
     private var _t0 = Date()
     /// `LTX_PHYS_TRACE=1` prints a line on every NEW high-water, timestamped from `start()`.
@@ -1550,6 +1553,7 @@ final class PhysSampler: @unchecked Sendable {
         var newHighWater = false
         if p > _max { _max = p; newHighWater = true }
         if p < _min { _min = p }
+        if p > _phaseMax { _phaseMax = p }
         let elapsed = Date().timeIntervalSince(_t0)
         lock.unlock()
         if newHighWater && trace {
@@ -1560,6 +1564,14 @@ final class PhysSampler: @unchecked Sendable {
         lock.lock(); let p = physFootprintBytes(); _max = p; _min = p; _t0 = Date(); lock.unlock()
     }
     func maxBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _max }
+    /// The high-water since the previous call (or `start()`), then restarts the window at the
+    /// current footprint.
+    func takePhaseMax() -> UInt64 {
+        let p = physFootprintBytes()
+        lock.lock(); defer { lock.unlock() }
+        let m = max(_phaseMax, p); _phaseMax = p
+        return m
+    }
     /// Low-water during the measured window — the retained set under eviction. `.max` if the
     /// sampler never observed a sample (window too short to sample at 25 ms).
     func minBytes() -> UInt64 { lock.lock(); defer { lock.unlock() }; return _min }

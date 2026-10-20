@@ -19,6 +19,8 @@
 //        LTX_IC_QUANT=bf16|int8                        DiT precision (default bf16 — the fixture's faithful tier)
 //        LTX_IC_BASE=1                                 SAME prompt/seed with NO adapter (the A/B control arm)
 //        LTX_IC_SAVE=<path.mp4>                        write the artifact (never swallowed)
+//        LTX_PHYS_PHASES=1                             print each phase's own phys high-water as it ends
+//                                                      (with LTX_PROGRESS=1; phases are the progress events)
 //        LTX_SEED=42
 //
 // Geometry is UNCONSTRAINED (`profile: nil`) on purpose — the fixture is 768 wide and max128 would
@@ -26,6 +28,7 @@
 // FIXTURE-PARITY measurement, not a tier-admissibility claim; `--t2v-spot25` owns those.
 
 import Foundation
+import Synchronization
 import MLX
 import MLXLTX2
 import MLXToolKit
@@ -115,7 +118,27 @@ func icSpot25(width: Int, height: Int, frames: Int) async throws {
     let request = T2VRequest(prompt: prompt, numFrames: frames, fps: 24,
                              width: width, height: height, seed: seed, metaData: meta)
 
+    // `LTX_PHYS_PHASES=1`: a phase ends when the next one begins. Step-less `encode` events are
+    // numbered: on an IC arm #1 is the reference video ingest, LipDub's #2 its audio reference, and
+    // the last one loads the prompt encoder; `encode i/n` are the prompt's layers.
+    let phases = env["LTX_PHYS_PHASES"] == "1"
+    let phaseState = Mutex<(label: String?, bareEncodes: Int)>((nil, 0))
     let progressSink: RunProgress.Sink = { r in
+        if phases {
+            phaseState.withLock { st in
+                var label = r.phase.rawValue
+                if label == "encode" {
+                    if r.step == nil { st.bareEncodes += 1; label = "encode#\(st.bareEncodes)" }
+                    else { label = "encode (prompt layers)" }
+                }
+                guard label != st.label else { return }
+                let m = sampler.takePhaseMax()
+                if let last = st.label {
+                    print(String(format: "[PHYS-PHASE] %@ max %.2f GB", last as NSString, gbOf(m)))
+                }
+                st.label = label
+            }
+        }
         var line = "[progress] \(r.phase.rawValue)"
         if let s = r.step, let t = r.totalSteps { line += " \(s)/\(t)" }
         if let st = r.stage, let ts = r.totalStages { line += "  stage \(st)/\(ts)" }
@@ -126,6 +149,9 @@ func icSpot25(width: Int, height: Int, frames: Int) async throws {
     let resp = try await RunProgress.$sink.withValue(
         env["LTX_PROGRESS"] == "1" ? progressSink : nil) { try await pkg.run(request) } as! T2VResponse
     let runS = Date().timeIntervalSince(r0)
+    if phases, let last = phaseState.withLock({ $0.label }) {
+        print(String(format: "[PHYS-PHASE] %@ max %.2f GB", last as NSString, gbOf(sampler.takePhaseMax())))
+    }
     let peak = sampler.maxBytes(); let held = sampler.minBytes(); sampler.stop()
 
     let save = env["LTX_IC_SAVE"].map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
