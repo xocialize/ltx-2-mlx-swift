@@ -258,10 +258,12 @@ func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
             return T2VRequest(prompt: prompt, numFrames: nf, fps: 24,
                               width: width, height: height, seed: 42)
         }
-        return T2VRequest(prompt: prompt,
-                          initImage: MLXToolKit.Image(format: .png, data: initPNG),
-                          numFrames: nf, fps: 24, width: width, height: height, seed: 42,
-                          metaData: [LoRAMetaKeys.id: .string("i2v-adapter")])
+        return try! HarnessAdapters.resolved(
+            T2VRequest(prompt: prompt,
+                       initImage: MLXToolKit.Image(format: .png, data: initPNG),
+                       numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                       adapters: [AdapterRef(id: HarnessAdapters.catalogID("i2v-adapter"))]),
+            family: .ltx25)
     }
 
     // Warmup at 9f — kernel compile is per-process and would otherwise land inside the measured

@@ -1,5 +1,12 @@
 # LTX-2.3 IC-LoRA — Integration Plan (L4, ACTIVE)
 
+> ⟲ **2026-11-07 (v0.21.0, AB-A-0197): the request intake and the fetch described below are
+> retired.** Adapters now ride the engine's typed contract (mlx-engine-swift ≥0.70.0, contract
+> 1.53.0 + 1.55.0): `T2VRequest.adapters` → the engine fetches at the pinned commit and checks the
+> sha256 → the package reads `resolvedAdapters` (`Sources/MLXLTX2/LTXAdapters.swift`). The
+> `loraId`/`loraStrength`/`ic.*` metaData keys, `LoRARegistry`, `LoRACache` and `--lora-fetch-gate`
+> no longer exist. The DiT-side mechanics (low-rank ADD, reference tokens) are unchanged.
+
 **Status:** REVISED 2026-07-02 — oracle mechanics read, candidates confirmed, open questions from
 the original scoping (kept at bottom) answered. Follow-on to `LORA-PLAN.md` (plain/runtime LoRA,
 DONE + validated). IC builds on its weight hook, registry, and cache.

@@ -60,9 +60,10 @@ public extension LTX2Configuration {
     ///   - initImage: the request carries an init image (i2v) — adds the adapter-fetch node.
     ///   - storeRoot: engine model store; when supplied and sources are missing, a materialize
     ///     node is prepended. Pass `nil` to omit that check.
-    ///   - adapterCached: whether the i2v adapter is already local (`LoRACache.isCached`). When
-    ///     `false` the fetch node is included — it is a **4.93 GB** download that happens INSIDE
-    ///     `run()` (AB-R-0114), so a UI that omits it shows a stall with no explanation.
+    ///   - adapterCached: whether the i2v adapter is already local (`engine.adapterNeedsDownload(id:)`
+    ///     is false). When `false` the fetch node is included — a **4.93 GB** download the engine
+    ///     makes before the run (contract 1.53.0; AB-R-0114), so a UI that omits it shows a stall
+    ///     with no explanation. `engine.prepareAdapters(_:)` moves it out of the run entirely.
     func plannedStages(initImage: Bool = false,
                        storeRoot: URL? = nil,
                        adapterCached: Bool = true) -> [RunStage] {
@@ -80,7 +81,7 @@ public extension LTX2Configuration {
             stages.append(RunStage(
                 id: "adapter", phase: nil, title: "Prepare image adapter",
                 detail: "One-time 4.93 GB download for image-to-video.",
-                emitsProgress: false,      // fetched inside run(); no phase is emitted
+                emitsProgress: false,      // fetched by the engine before run(); no phase is emitted
                 emitsSubSteps: false, expectedSubSteps: nil))
         }
 

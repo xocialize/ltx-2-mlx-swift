@@ -5,8 +5,8 @@
 // headless, against `IC-P3-FIXTURE.md`'s canonical params so the four perceptual reads have their
 // established baseline (the 2026-07-03 2.3 result in `LTX_TESTING/fixtures/`).
 //
-// It drives `MLXLTX25Package` with the same `ICMetaKeys` intake the app uses (`ic.adapterId`,
-// `ic.adapterStrength`, `ic.referencePath`, `ic.referenceStrength`) and the dual-part prompt
+// It drives `MLXLTX25Package` through the typed-adapter intake the engine feeds (`adapters`,
+// resolved here by `HarnessAdapters`; the `ic.*` metaData keys before 0.21.0) and the dual-part prompt
 // `"Reference sheet: {elements}\n\nGenerated video: {action}"` — nothing here re-implements a
 // resolution the wrapper owns (registry entry → `stage2: skip`, downscale 1, looped-still ingest).
 //
@@ -17,6 +17,8 @@
 //        LTX_IC_ACTION=<text>                          the "Generated video:" half
 //        LTX_IC_STRENGTH=1.4 · LTX_IC_REF_STRENGTH=1.0
 //        LTX_IC_QUANT=bf16|int8                        DiT precision (default bf16 — the fixture's faithful tier)
+//        LTX_MODELS_ROOT=<dir>                         weights root (default /Volumes/Satechi/Models); adapters
+//                                                      from <root>/ltx-lora-cache unless LTX_LORA_CACHE is set
 //        LTX_IC_BASE=1                                 SAME prompt/seed with NO adapter (the A/B control arm)
 //        LTX_IC_SAVE=<path.mp4>                        write the artifact (never swallowed)
 //        LTX_PHYS_PHASES=1                             print each phase's own phys high-water as it ends
@@ -36,7 +38,9 @@ import LTX2
 
 func icSpot25(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
-    let base = "/Volumes/Satechi/Models/xocialize"
+    // LTX_MODELS_ROOT relocates the archive layout, as in --t2v-spot25 (default: the Satechi volume).
+    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    let base = "\(modelsRoot)/xocialize"
     let adapter = env["LTX_IC_ADAPTER"] ?? "ingredients"
     let baseArm = env["LTX_IC_BASE"] == "1"
     let quantName = (env["LTX_IC_QUANT"] ?? "bf16").lowercased()
@@ -78,7 +82,7 @@ func icSpot25(width: Int, height: Int, frames: Int) async throws {
         ltxDirectory: URL(fileURLWithPath: "\(base)/ltx-2.5-mlx"),
         transformerPath: transformerPath,
         gemmaDirectory: nil,           // 2.5's Gemma-4 encoder lives inside the components tree
-        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),   // ⇒ ltx-lora-cache/
+        modelsRootDirectory: URL(fileURLWithPath: modelsRoot),
         profile: nil)                  // Unconstrained: the 768-wide fixture must not clamp to 704
     cfg.streamedBlocks = false         // resident DiT — the fixture regime, not a low-tier claim
 
@@ -96,7 +100,7 @@ func icSpot25(width: Int, height: Int, frames: Int) async throws {
                 .filter { $0.pathExtension == "safetensors" })
         } else { warm.append(p) }
     }
-    if !baseArm { warm.append(URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-lora-cache/\(adapter).safetensors")) }
+    if !baseArm { warm.append(HarnessAdapters.directory.appendingPathComponent("\(adapter).safetensors")) }
     prewarmFiles(warm)
     print(String(format: "[ic-spot25] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
 
@@ -108,15 +112,20 @@ func icSpot25(width: Int, height: Int, frames: Int) async throws {
     let loadS = Date().timeIntervalSince(l0)
     let afterLoad = physFootprintBytes()
 
-    var meta: [String: MetaValue] = [:]
+    // Typed adapter (contract 1.53.0): the reference binds to the adapter's first slot of its media
+    // (an image → Ingredients' reference_sheet, a clip → reference_video/control_video), resolved
+    // against the bundled catalog the way the engine would.
+    var adapters: [AdapterRef] = []
     if !baseArm {
-        meta[ICMetaKeys.adapterId] = .string(adapter)
-        meta[ICMetaKeys.adapterStrength] = .double(Double(loraStrength))
-        meta[ICMetaKeys.referencePath] = .string(refPath)
-        meta[ICMetaKeys.referenceStrength] = .double(Double(refStrength))
+        adapters = [AdapterRef(
+            id: HarnessAdapters.catalogID(adapter), strength: Double(loraStrength),
+            conditioning: [try HarnessAdapters.reference(adapter: adapter, path: refPath,
+                                                         strength: Double(refStrength), family: .ltx25)])]
     }
-    let request = T2VRequest(prompt: prompt, numFrames: frames, fps: 24,
-                             width: width, height: height, seed: seed, metaData: meta)
+    let request = try HarnessAdapters.resolved(
+        T2VRequest(prompt: prompt, numFrames: frames, fps: 24, width: width, height: height,
+                   seed: seed, adapters: adapters),
+        family: .ltx25)
 
     // `LTX_PHYS_PHASES=1`: a phase ends when the next one begins. Step-less `encode` events are
     // numbered: on an IC arm #1 is the reference video ingest, LipDub's #2 its audio reference, and

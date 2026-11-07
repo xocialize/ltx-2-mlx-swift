@@ -1,5 +1,12 @@
 # LTX-2.3 Runtime LoRA — Implementation Plan
 
+> ⟲ **2026-11-07 (v0.21.0, AB-A-0197): the request intake and the fetch described below are
+> retired.** Adapters now ride the engine's typed contract (mlx-engine-swift ≥0.70.0, contract
+> 1.53.0 + 1.55.0): `T2VRequest.adapters` → the engine fetches at the pinned commit and checks the
+> sha256 → the package reads `resolvedAdapters` (`Sources/MLXLTX2/LTXAdapters.swift`). The
+> `loraId`/`loraStrength`/`ic.*` metaData keys, `LoRARegistry`, `LoRACache` and `--lora-fetch-gate`
+> no longer exist. The DiT-side mechanics (low-rank ADD, reference tokens) are unchanged.
+
 **Capability:** load + hot-switch LoRA adapters on the resident LTX-2.3 DiT, **by extending the
 forward pass (runtime low-rank add), not by swapping modules.** Lighter than a module-swap,
 survives q8/q4 (low-rank factors stay full precision), and hot-swaps with zero base reload.

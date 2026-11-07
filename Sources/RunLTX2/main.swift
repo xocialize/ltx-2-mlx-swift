@@ -1744,49 +1744,6 @@ func memBenchGate(quant: String) async throws {
     print(String(format: "[mem-bench] SUMMARY quant=%@ resident=%llu peak=%llu activation=%llu", quant as NSString, floor, peak, activation))
 }
 
-// MARK: - Gap-queue P2 — LoRA fetch gate (no GPU, real network)
-//
-// Proves the first-use adapter download is never silent: fetches a registry adapter into a FRESH
-// directory with a bound WeightDownloadProgress sink and prints every report. PASS = the file
-// lands with plausible size AND at least one progress report fired. Cleans up after itself when
-// it created the temp dir.
-func loraFetchGate(id: String, directory: String?) async throws {
-    let registry = try LoRARegistry.bundled()
-    guard let entry = registry.entry(id: id) else {
-        print("[lora-fetch-gate] FAIL ❌ unknown adapter '\(id)'")
-        return
-    }
-    let ownsDir = directory == nil
-    let dir = directory.map { URL(fileURLWithPath: $0) }
-        ?? FileManager.default.temporaryDirectory.appendingPathComponent("lora-fetch-gate-\(UUID().uuidString)")
-    defer { if ownsDir { try? FileManager.default.removeItem(at: dir) } }
-    let cache = LoRACache(directory: dir)
-    print("[lora-fetch-gate] \(id) → \(dir.path)  cached=\(cache.isCached(entry))")
-
-    final class Counter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var n = 0
-        func bump() -> Int { lock.lock(); defer { lock.unlock() }; n += 1; return n }
-        var count: Int { lock.lock(); defer { lock.unlock() }; return n }
-    }
-    let reports = Counter()
-    let t0 = Date()
-    let file = try await WeightDownloadProgress.$sink.withValue({ fraction, rate in
-        _ = reports.bump()
-        let mbps = rate.map { String(format: "  %.1f MB/s", $0 / 1e6) } ?? ""
-        print(String(format: "[lora-fetch-gate] %3.0f%%%@", fraction * 100, mbps))
-    }) {
-        try await cache.ensure(entry)
-    }
-    let bytes = ((try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? UInt64) ?? 0
-    let pass = bytes > 50_000_000 && reports.count >= 1
-    print(String(format: "[lora-fetch-gate] %.2f GB in %.0fs · %d progress report(s) · isCached now %@",
-                 Double(bytes) / 1e9, Date().timeIntervalSince(t0),
-                 reports.count, "\(cache.isCached(entry))" as NSString))
-    print(pass ? "[lora-fetch-gate] PASS ✅ — download visible end-to-end"
-               : "[lora-fetch-gate] FAIL ❌ (bytes=\(bytes), reports=\(reports.count))")
-}
-
 // MARK: - SPEED-PLAN S4 — SDPA fused-path probe
 //
 // The DiT has a single SDPA call site (`MLXFast.scaledDotProductAttention`, mask .none), but MLX
@@ -2008,16 +1965,18 @@ func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     // rides the wrapper's full ic.* intake (registry lookup, LoRA apply at entry default
     // strength, reference ingest at the entry's declared downscale).
     func request(_ nf: Int) -> T2VRequest {
-        var meta: [String: MetaValue] = [:]
+        var adapters: [AdapterRef] = []
         if let ic = env["LTX_IC_ADAPTER"], !ic.isEmpty {
-            meta[ICMetaKeys.adapterId] = .string(ic)
-            if let ref = env["LTX_IC_REF"], !ref.isEmpty {
-                meta[ICMetaKeys.referencePath] = .string(ref)
-            }
+            let refs = try! env["LTX_IC_REF"].flatMap { $0.isEmpty ? nil : $0 }.map {
+                [try HarnessAdapters.reference(adapter: ic, path: $0, family: cfg.family)]
+            } ?? []
+            adapters = [AdapterRef(id: HarnessAdapters.catalogID(ic), conditioning: refs)]
         }
-        return T2VRequest(prompt: env["LTX_T2V_PROMPT"] ?? "a fox running down a beach at sunset, waves rolling in",
-                          numFrames: nf, fps: 24, width: width, height: height, seed: 42,
-                          metaData: meta)
+        return try! HarnessAdapters.resolved(
+            T2VRequest(prompt: env["LTX_T2V_PROMPT"] ?? "a fox running down a beach at sunset, waves rolling in",
+                       numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                       adapters: adapters),
+            family: cfg.family)
     }
     // Warmup at 9f (kernel compile + decode/encode stacks) — excluded from the measured peak.
     _ = try await pkg.run(request(9))
@@ -2113,10 +2072,12 @@ func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
 
     let png = try syntheticInitPNG(width: width, height: height)
     func request(_ nf: Int) -> T2VRequest {
-        T2VRequest(prompt: "a fox running down a beach at sunset, waves rolling in",
-                   initImage: MLXToolKit.Image(format: .png, data: png),
-                   numFrames: nf, fps: 24, width: width, height: height, seed: 42,
-                   metaData: [LoRAMetaKeys.id: .string("i2v-adapter")])
+        try! HarnessAdapters.resolved(
+            T2VRequest(prompt: "a fox running down a beach at sunset, waves rolling in",
+                       initImage: MLXToolKit.Image(format: .png, data: png),
+                       numFrames: nf, fps: 24, width: width, height: height, seed: 42,
+                       adapters: [AdapterRef(id: HarnessAdapters.catalogID("i2v-adapter"))]),
+            family: cfg.family)
     }
 
     // Warmup at 9f: compiles kernels + applies the LoRA + loads the decode/encode stacks —
@@ -2480,8 +2441,10 @@ if args.contains("--connector-gate") {
 } else if args.contains("--mem-bench") {
     try await memBenchGate(quant: positional.first ?? "bf16")
 } else if args.contains("--lora-fetch-gate") {
-    try await loraFetchGate(id: positional.first ?? "fantasy-anime",
-                            directory: positional.dropFirst().first)
+    // Retired with contract 1.53.0 (AB-A-0197): the package no longer downloads adapters. The
+    // engine fetches them at the pinned commit, checks the sha256 and reports progress through its
+    // own WeightDownloadProgress plane (`prepareAdapters` / `adapterMaterializationPreview`).
+    print("[lora-fetch-gate] retired — adapter fetch is engine-side since contract 1.53.0 (AB-A-0197)")
 } else if args.contains("--sdpa-probe") {
     sdpaProbeGate()
 } else if args.contains("--modality-tile-gate") {
@@ -2600,6 +2563,5 @@ if args.contains("--connector-gate") {
     print("                 [--blocks 2] [--runs 2] [--cooldown 45] [--size 704x512] [--frames 24] [--two-stage]")
     print("                 (protocol A/B harness: ABBA order, excluded warmups, phys sampling, receipts → probes/)")
     print("       RunLTX2 --sdpa-probe                   (SPEED-PLAN S4: fused-SDPA vs manual compose at production shapes)")
-    print("       RunLTX2 --lora-fetch-gate [id] [dir]   (P2: adapter download with visible progress; default fantasy-anime, temp dir)")
     print("       RunLTX2 --i2v-spot [w] [h] [frames]    (BRIDGE-LTX-005 max128 i2v SPLIT measure, default 704 512 481)")
 }

@@ -26,6 +26,17 @@ Distilled **text-to-video** (one-stage + two-stage upsampled) and **image-to-vid
 conditioning via `T2VRequest.initImage`), each across a **bf16 / int8 / int4** quant ladder. Output
 is an MP4 with synchronized 48 kHz stereo audio (the joint DiT denoises video + audio together).
 
+**Adapters** ride the engine's typed contract (mlx-engine-swift ≥0.70.0, contract 1.53.0 + 1.55.0's
+conditioning groups; AB-A-0197). Both t2v surfaces declare `AdapterSupport` (base `ltx-2.3` /
+`ltx-2.5`, diffusers-PEFT, plain + IC, one per request, per-request binding). A host registers
+`LTXAdapters.catalog(for:)`, the bundled format-3 registry with ids `ltx:<id>`, and requests name
+`AdapterRef`s; the engine fetches each file at its pinned commit, checks its sha256, orders the IC
+conditioning into slots and checks Ingredients' `exactlyOne` sheet group. The package reads
+`resolvedAdapters`: it applies the low-rank ADD and ingests the references (clips by time, stills
+looped, `subject_images` + `location_image` composed into a sheet, dub audio). No `metaData` adapter
+keys and no package-side download remain; only `ic.muxDubAudio` (an output choice) is read.
+`AdapterTests` runs the ADP-1..4 gate on both manifests.
+
 Pipeline: `prompt → Gemma-3 (49 hidden states) → connector → joint-AV DiT → distilled Euler
 denoise → 128-ch video VAE decode (+ audio VAE → BigVGAN + BWE) → MP4`.
 

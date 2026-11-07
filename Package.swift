@@ -79,7 +79,10 @@ let package = Package(
         // canonical a2v surface this package declares and routes.
         // 0.55.0 = contract 1.41.0: `ActivationScaling` + `WorkloadDeclaring` (AB-A-0074) — the
         // per-profile geometry envelope declared as a line the engine can enforce and advise on.
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.55.0"),
+        // 0.70.0 = contract 1.55.0: typed adapters (1.53.0 — `AdapterSupport`, `resolvedAdapters`,
+        // `AdapterDescriptor`, the ADP gate) plus `conditioningGroups` (1.55.0), which Ingredients'
+        // sheet-or-subjects slots need (AB-A-0197).
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.70.0"),
         // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
         // extracted from this package's in-tree implementation (and wan-core's) once the
         // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo

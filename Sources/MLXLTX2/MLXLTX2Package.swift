@@ -106,9 +106,10 @@ public final class MLXLTX2Package: ModelPackage {
                         + "Joint audio-video DiT with a Gemma-3 text encoder, a 128-ch video VAE, "
                         + "and a BigVGAN/BWE audio vocoder; distilled (8 steps). Supports i2v via "
                         + "`initImage` (first-frame conditioning). Output is an MP4 with synced 48kHz audio. "
-                        + "Optional runtime LoRA via metaData: `loraId` (registry id of a style/motion "
-                        + "effect; absent = base) + `loraStrength` (override; default per entry), "
-                        + "hot-swapped on the resident DiT.")
+                        + "Takes one typed adapter per request (`adapters`, contract 1.53.0): a plain "
+                        + "style/motion LoRA, or an IC adapter with its reference conditioning, "
+                        + "applied to the resident DiT for that run.")
+                    .declaring(adapters: LTXAdapters.support(for: .ltx23))
             ]
         )
     }
@@ -117,11 +118,12 @@ public final class MLXLTX2Package: ModelPackage {
     // envelope clamp; was private, and nothing outside the module can see it either way.
     let configuration: Configuration
     private var pipeline: LTX2Pipeline?
-    // Per-request runtime-LoRA state (the "extend" capability): curated registry + lazy HF cache,
-    // plus the currently-applied selection so an unchanged request doesn't re-apply.
-    private var registry: LoRARegistry?
-    private var cache: LoRACache?
-    private var appliedLoRA: (id: String, strength: Float)?
+    // Typed adapters (contract 1.53.0, AB-A-0197): the engine fetches and verifies the files and
+    // hands them over as `resolvedAdapters`. The package keeps only the bundled registry, for the
+    // IC ingest details the engine's descriptor does not carry, and the identity of the set it
+    // applied, so an unchanged request does not re-apply.
+    private var adapterRegistry: LTXAdapterRegistry?
+    private var appliedAdapters: [String] = []
 
     public nonisolated init(configuration: Configuration) {
         self.configuration = configuration
@@ -178,19 +180,13 @@ public final class MLXLTX2Package: ModelPackage {
                                                granuleDirectory: cfg.resolvedGranuleDirectory,
                                                streamingOptions: cfg.resolvedStreamingOptions)
 
-        // Runtime-LoRA registry (HF-referencing manifest) + lazy download cache. Optional: if the
-        // bundled manifest is missing, LoRA selection is simply unavailable (base still runs).
-        registry = try? LoRARegistry.bundled()
-        let cacheRoot = configuration.modelsRootDirectory
-            ?? (try? FileManager.default.url(for: .cachesDirectory, in: .userDomainMask,
-                                             appropriateFor: nil, create: true))
-            ?? FileManager.default.temporaryDirectory
-        cache = LoRACache(directory: cacheRoot.appendingPathComponent("ltx-lora-cache"))
-        appliedLoRA = nil
+        // Optional: without it an IC adapter still runs, with each input ingested by its media.
+        adapterRegistry = try? LTXAdapterRegistry.bundled()
+        appliedAdapters = []
     }
 
     public func unload() async {
-        pipeline = nil; appliedLoRA = nil
+        pipeline = nil; appliedAdapters = []
         MLX.Memory.clearCache()   // release the retained MLX pool so eviction frees RSS (not just drop refs)
     }
 
@@ -202,7 +198,10 @@ public final class MLXLTX2Package: ModelPackage {
         guard let pipeline else { throw PackageError.notLoaded }
         // `.videoEdit` (retake/extend, AB-R-0133): its own branch — the T2V path below is
         // untouched, so nothing about existing generation changes shape.
+        // It takes no adapters (the vedit surface declares none), so detach any a previous run left
+        // on the resident DiT.
         if request.capability == .videoEdit, let vedit = request as? VEditRequest {
+            try syncAdapters(.empty, pipeline: pipeline)
             return try await runVideoEdit(vedit, pipeline: pipeline)
         }
         guard request.capability == .textToVideo, let t2v = request as? T2VRequest else {
@@ -213,45 +212,25 @@ public final class MLXLTX2Package: ModelPackage {
         // the compatibility alias). Branches before the LoRA/IC intake exactly as that lane does.
         // The engine pre-flight only lets this field reach a surface that DECLARES
         // `T2VControls.supportsInitAudio` — the 2.5 descriptor does, the 2.3 one does not.
+        // Typed adapters (contract 1.53.0): the engine resolved, fetched and hash-checked them, and
+        // ordered an IC adapter's conditioning into its slots. What remains here is what only the
+        // package knows: the dialect, and one IC adapter at a time.
+        let adapterRun = try LTXAdapterRun(t2v.resolvedAdapters, registry: adapterRegistry)
         if let audio = t2v.initAudio {
+            // The a2v core takes no adapters: refuse rather than drop them, and detach any a
+            // previous run left on the resident DiT.
+            guard adapterRun.loras.isEmpty else {
+                throw PackageError.unsupportedRequestFeature(
+                    "adapters with initAudio — audio-to-video runs without adapters")
+            }
+            try syncAdapters(.empty, pipeline: pipeline)
             return try await runAudioToVideo(t2v, audio: audio, pipeline: pipeline)
         }
-
-        // Per-request runtime LoRA (the "extend" capability), carried opaquely in metaData:
-        //   metaData["loraId"]       registry id of the effect (absent/empty → pristine base)
-        //   metaData["loraStrength"] optional strength override (else the entry default)
-        // Hot-swapped on the resident DiT (no reload); unchanged selection across calls is a no-op.
-        // IC adapters (kind == "ic") must ride the IC intake below — as a plain LoRA they'd apply
-        // WITHOUT their reference conditioning and silently generate garbage-adjacent output.
-        let icId = t2v.metaData[ICMetaKeys.adapterId]?.asString.flatMap { $0.isEmpty ? nil : $0 }
-        let selectedId = icId
-            ?? t2v.metaData[LoRAMetaKeys.id]?.asString.flatMap { $0.isEmpty ? nil : $0 }
-        if let id = selectedId {
-            guard let registry, let cache, let entry = registry.entry(id: id) else {
-                throw LoRARegistryError.unknownAdapter(id)
-            }
-            if entry.isIC && icId == nil {
-                throw PackageError.configurationMismatch(
-                    expected: "IC adapter '\(id)' via the ic.* metaData intake (needs a reference)",
-                    got: "plain loraId selection")
-            }
-            let strength = t2v.metaData[LoRAMetaKeys.strength]?.asFloat
-                ?? t2v.metaData[ICMetaKeys.adapterStrength]?.asFloat
-                ?? entry.defaultStrength
-            // Re-apply when the selection changed OR the DiT was evicted/reloaded since (low-tier
-            // decode evicts the DiT; a reloaded DiT is a pristine base → activeLoRATargets == 0).
-            if appliedLoRA?.id != id || appliedLoRA?.strength != strength || pipeline.activeLoRATargets == 0 {
-                let file = try await cache.ensure(entry)
-                let span = MLXProfiler.shared.begin("lora-apply", id, note: file.lastPathComponent)
-                try pipeline.setLoRAs([(file, strength)])
-                MLXProfiler.shared.end(span)
-                appliedLoRA = (id, strength)
-            }
-        } else if appliedLoRA != nil {
-            pipeline.clearLoRAs()
-            appliedLoRA = nil
-        }
+        try syncAdapters(adapterRun, pipeline: pipeline)
         try Task.checkCancellation()
+        // Media that arrive as bytes but are read through AVFoundation by URL.
+        let scratch = RunScratch()
+        defer { scratch.removeAll() }
 
         // Geometry comes from the SHARED resolver (AB-T-0080), not from rules repeated here. A
         // host can call `configuration.resolvedGeometry(...)` to learn the real output size before
@@ -268,7 +247,7 @@ public final class MLXLTX2Package: ModelPackage {
         let envelopeOverride = ProcessInfo.processInfo.environment["LTX_ENVELOPE_OVERRIDE"] == "1"
         // Conditioned runs (init image, reference images, IC references, init audio) clamp to the profile's
         // CONDITIONED envelope — compact24 keeps 512×288 there (AB-T-0298: i2v at 704×512 overshoots the charge).
-        let conditioned = t2v.initImage != nil || t2v.initAudio != nil || !(t2v.referenceImages ?? []).isEmpty || icId != nil
+        let conditioned = t2v.initImage != nil || t2v.initAudio != nil || !(t2v.referenceImages ?? []).isEmpty || adapterRun.ic != nil
         let geo = configuration.resolvedGeometry(
             width: t2v.width, height: t2v.height, numFrames: t2v.numFrames, fps: t2v.fps,
             envelopeOverride: envelopeOverride, conditioned: conditioned)
@@ -304,55 +283,74 @@ public final class MLXLTX2Package: ModelPackage {
         let (out, muxAudioURL, streamedWriter) = try await LTX2Progress.$sink.withValue(forward) {
             () async throws -> (LTX2Pipeline.Output, URL?, MP4StreamWriter?) in
 
-            // IC reference ingest (IC-LORA-PLAN P2/P3): the reference image rides metaData as a
-            // file path (interim until the ConditioningInput contract lands, P5). Built at the
+            // IC reference ingest: the conditioning arrives in the descriptor's slot order with the
+            // groups already checked. Each input is prepared the way its slot's `ingest` says, at the
             // CLAMPED generation geometry / the adapter's declared downscale; frames snapped 8k+1.
             var references: [ReferenceConditioning] = []
             var audioReferences: [ReferenceConditioning] = []
             var muxAudioURL: URL?   // ic.muxDubAudio: replace the regenerated track with the dub
-            if let icId {
-                guard let registry, let entry = registry.entry(id: icId) else {
-                    throw LoRARegistryError.unknownAdapter(icId)
-                }
-                guard let refPath = t2v.metaData[ICMetaKeys.referencePath]?.asString, !refPath.isEmpty else {
-                    throw PackageError.configurationMismatch(
-                        expected: "ic.referencePath (file path of the reference image) for '\(icId)'",
-                        got: "no reference")
-                }
-                let ds = max(1, entry.referenceDownscale ?? 1)
+            if let (adapter, entry) = adapterRun.ic {
+                let ds = max(1, entry?.runtime.referenceDownscale ?? 1)
                 let refFrames = ReferenceConditioning.snapFrames(nf)
-                // Route by media: a video clip samples frames by time (Cameraman-class refs);
-                // anything else decodes as a still and tiles (Ingredients sheets).
-                let pixels: MLXArray
-                if VideoInput.looksLikeVideo(refPath) {
-                    pixels = try await VideoInput.referenceClipFrames(
-                        url: URL(fileURLWithPath: refPath),
-                        width: wd / ds, height: h / ds, frames: refFrames, fps: fps)
-                } else {
-                    let refData = try Data(contentsOf: URL(fileURLWithPath: refPath))
-                    pixels = try ImageInput.referenceStillFrames(
-                        Image(format: .png, data: refData), width: wd / ds, height: h / ds, frames: refFrames)
+                func strength(_ input: ConditioningInput) -> Float {
+                    Float(input.strength ?? entry?.slot(input.role)?.defaultStrength ?? 1.0)
                 }
-                let refStrength = t2v.metaData[ICMetaKeys.referenceStrength]?.asFloat ?? 1.0
-                references.append(try pipeline.encodeReference(
-                    pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: refStrength))
+                var sheetSubjects: [Image] = [], sheetLocation: Image?, sheetStrength: Float?
+                var referenceVideoURL: URL?, dubAudioURL: URL?
+                for input in adapter.conditioning {
+                    switch input.media {
+                    case .video(let video):
+                        // Clip references sample frames by time (Cameraman, union-control, LipDub).
+                        let url = try scratch.write(video.data, ext: video.format.rawValue)
+                        referenceVideoURL = referenceVideoURL ?? url
+                        let pixels = try await VideoInput.referenceClipFrames(
+                            url: url, width: wd / ds, height: h / ds, frames: refFrames, fps: fps)
+                        references.append(try pipeline.encodeReference(
+                            pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: strength(input)))
+                    case .image(let image) where entry?.slot(input.role)?.ingest == "sheetBuilder":
+                        // Ingredients' subjects (+ location) are composed into one sheet below.
+                        if input.role == IngredientsSheet.locationRole { sheetLocation = image }
+                        else { sheetSubjects.append(image) }
+                        sheetStrength = sheetStrength ?? strength(input)
+                    case .image(let image):
+                        // A still is a looped-still reference (an Ingredients sheet).
+                        let pixels = try ImageInput.referenceStillFrames(
+                            image, width: wd / ds, height: h / ds, frames: refFrames)
+                        references.append(try pipeline.encodeReference(
+                            pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: strength(input)))
+                    case .audio(let audio):
+                        dubAudioURL = try scratch.write(audio.data, ext: audio.format.rawValue)
+                    }
+                }
+                if !sheetSubjects.isEmpty || sheetLocation != nil {
+                    let sheet = try IngredientsSheet.compose(subjects: sheetSubjects, location: sheetLocation)
+                    let pixels = try ImageInput.referenceStillFrames(
+                        sheet, width: wd / ds, height: h / ds, frames: refFrames)
+                    references.append(try pipeline.encodeReference(
+                        pixels: pixels, fps: fps, downscaleFactor: Float(ds), strength: sheetStrength ?? 1.0))
+                }
+                guard !references.isEmpty else {
+                    throw PackageError.unsupportedRequestFeature(
+                        "adapter \"\(adapter.id)\" conditioning — an IC adapter needs a visual reference")
+                }
 
-                // LipDub-class adapters (`audioReference: true`): the dub audio appends to the AUDIO
-                // stream with negative-time positions. Source = ic.dubAudioPath (a wav/audio file),
-                // falling back to the reference video's own track (the oracle's default).
-                if entry.audioReference == true {
-                    let audioPath = t2v.metaData[ICMetaKeys.dubAudioPath]?.asString ?? refPath
-                    let span = Double(nf) / fps
+                // LipDub-class adapters: the dub audio appends to the AUDIO stream with negative-time
+                // positions. Source = the bound audio slot, else the reference video's own track
+                // (the oracle's default).
+                if dubAudioURL != nil || entry?.runtime.audioReference == true {
+                    guard let audioURL = dubAudioURL ?? referenceVideoURL else {
+                        throw PackageError.unsupportedRequestFeature(
+                            "adapter \"\(adapter.id)\" conditioning — reference audio needs an audio "
+                                + "input or a reference video with a track")
+                    }
                     let waveform = try await AudioInput.referenceWaveform(
-                        url: URL(fileURLWithPath: audioPath), maxSeconds: span)
+                        url: audioURL, maxSeconds: Double(nf) / fps)
                     audioReferences.append(try pipeline.encodeAudioReference(waveform: waveform))
                     // Correct-deliverable option (I7): the model's regenerated audio is prosodic
                     // babble by design — opt in to muxing the ACTUAL dub into the output MP4.
-                    if case .bool(true) = t2v.metaData[ICMetaKeys.muxDubAudio] ?? .null {
-                        muxAudioURL = URL(fileURLWithPath: audioPath)
-                    } else if t2v.metaData[ICMetaKeys.muxDubAudio]?.asString == "true" {
-                        muxAudioURL = URL(fileURLWithPath: audioPath)
-                    }
+                    let mux = t2v.metaData[ICMetaKeys.muxDubAudio]
+                    if case .bool(true) = mux ?? .null { muxAudioURL = audioURL }
+                    else if mux?.asString == "true" { muxAudioURL = audioURL }
                 }
             }
 
@@ -469,6 +467,35 @@ public final class MLXLTX2Package: ModelPackage {
         return T2VResponse(video: Video(
             format: .mp4, data: mp4,
             durationSeconds: Double(framesCL.dim(1)) / fps, frameRate: fps))
+    }
+}
+
+extension MLXLTX2Package {
+    /// Make `run`'s adapters the DiT's active set. Re-applied when the set changed OR the DiT was
+    /// evicted and reloaded since (low-tier decode evicts it; a reloaded DiT is a pristine base, so
+    /// `activeLoRATargets == 0`).
+    private func syncAdapters(_ run: LTXAdapterRun, pipeline: LTX2Pipeline) throws {
+        guard !run.loras.isEmpty else {
+            if !appliedAdapters.isEmpty || pipeline.activeLoRATargets > 0 {
+                pipeline.clearLoRAs()
+                appliedAdapters = []
+            }
+            return
+        }
+        guard run.key != appliedAdapters || pipeline.activeLoRATargets == 0 else { return }
+        let span = MLXProfiler.shared.begin(
+            "lora-apply", run.key.joined(separator: ","),
+            note: run.loras.map(\.url.lastPathComponent).joined(separator: ", "))
+        defer { MLXProfiler.shared.end(span) }
+        do {
+            try pipeline.setLoRAs(run.loras)
+        } catch {
+            // A failure part-way leaves an unknown set: detach so the next request starts clean.
+            pipeline.clearLoRAs()
+            appliedAdapters = []
+            throw error
+        }
+        appliedAdapters = run.key
     }
 }
 
