@@ -2357,6 +2357,20 @@ if args.contains("--connector-gate") {
                         width: positional.dropFirst(2).first.flatMap { Int($0) },
                         height: positional.dropFirst(3).first.flatMap { Int($0) },
                         frames: positional.dropFirst(4).first.flatMap { Int($0) })
+} else if args.contains("--ffn-chunk-gate") {
+    try ffnChunkGate()
+} else if args.contains("--ffn-chunk-micro") {
+    // RunLTX2 --ffn-chunk-micro <N> <chunk>[,<chunk>...]
+    guard positional.count >= 2, let n = Int(positional[positional.startIndex]) else {
+        print("usage: RunLTX2 --ffn-chunk-micro <N> <chunk>[,<chunk>...]"); exit(2)
+    }
+    try ffnChunkMicro(tokens: n, chunks: positional[positional.startIndex + 1].split(separator: ",").compactMap { Int($0) })
+} else if args.contains("--ffn-chunk-probe") {
+    // RunLTX2 --ffn-chunk-probe <W> <H> <F>   (env: see FFNChunkProbe.swift)
+    guard positional.count >= 3, let w = Int(positional[positional.startIndex]),
+          let h = Int(positional[positional.startIndex + 1]), let f = Int(positional[positional.startIndex + 2])
+    else { print("usage: RunLTX2 --ffn-chunk-probe <W> <H> <F>"); exit(2) }
+    try ffnChunkProbe(width: w, height: h, frames: f)
 } else if args.contains("--dit25-probe-compare") {
     guard let a = positional.first, let b = positional.dropFirst().first else {
         print("usage: RunLTX2 --dit25-probe-compare <a.safetensors> <b.safetensors>"); exit(2)
@@ -2556,6 +2570,9 @@ if args.contains("--connector-gate") {
     print("       RunLTX2 --mem-bench25 [bf16|q8|ditq8] [W H F]  (2.5 footprint)")
     print("       RunLTX2 --dit25-probe <bf16|ditq8> <out.safetensors>   (ONE arm per process)")
     print("       RunLTX2 --dit25-probe-compare <a> <b>                  (inputs-identical control + cosine)")
+    print("       RunLTX2 --ffn-chunk-gate                               (FF chunking: ranges, wiring, kernel regime, real block 0)")
+    print("       RunLTX2 --ffn-chunk-probe <W> <H> <F>                  (FF chunking A/B per forward + AdaLN share)")
+    print("       RunLTX2 --ffn-chunk-micro <N> <chunk,...>              (one FF whole vs chunked, per stage; LTX_FFN_SWEEP=1 row sweep)")
     print("            └ MLX_PROFILE=1 LTX_PHYS_TRACE=1 for per-phase attribution;")
     print("              LTX_CACHE_LIMIT_GB=2 for the shipping-path (capped) regime")
     print("       RunLTX2 --speed-bench [bf16|int8|int4] [w] [h] [frames]   (SPEED-PLAN S6 quant ladder, default 704 512 121)")

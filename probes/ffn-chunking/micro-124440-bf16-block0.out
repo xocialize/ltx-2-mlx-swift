@@ -1,0 +1,28 @@
+[ffn-micro] N=124440 dtype=bfloat16 proj_in [16384, 4096] bias=false proj_out [4096, 16384] bias=false
+[ffn-micro] split=equal (FFChunking.ranges)
+[ffn-micro] sweep proj_in  M=   1024  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   4096  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   5376  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   5461  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   5462  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   5504  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=   8192  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_in  M=  16384  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   1024  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   4096  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   5376  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   5461  vs M=1024: max|Δ| 0.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   5462  vs M=1024: max|Δ| 2.000e+00   vs previous M: 2.000e+00
+[ffn-micro] sweep proj_out M=   5504  vs M=1024: max|Δ| 2.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=   8192  vs M=1024: max|Δ| 2.000e+00   vs previous M: 0.000e+00
+[ffn-micro] sweep proj_out M=  16384  vs M=1024: max|Δ| 2.000e+00   vs previous M: 0.000e+00
+--- equal split, chunk 16384 ---
+[ffn-micro] N=124440 dtype=bfloat16 proj_in [16384, 4096] bias=false proj_out [4096, 16384] bias=false
+[ffn-micro] split=equal (FFChunking.ranges)
+[ffn-micro] control: proj_in whole vs itself  max|Δ| 0.000e+00 rows 0
+[ffn-micro] chunk  16384  proj_in max|Δ| 0.000e+00 rows 0/124440 · gelu 0.000e+00 rows 0 · proj_out 0.000e+00 rows 0 · whole FF 0.000e+00 rows 0
+--- remainder split, chunk 20000 ---
+[ffn-micro] N=124440 dtype=bfloat16 proj_in [16384, 4096] bias=false proj_out [4096, 16384] bias=false
+[ffn-micro] split=remainder (upstream torch.split)
+[ffn-micro] control: proj_in whole vs itself  max|Δ| 0.000e+00 rows 0
+[ffn-micro] chunk  20000  proj_in max|Δ| 0.000e+00 rows 0/124440 · gelu 0.000e+00 rows 0 · proj_out 4.000e+00 rows 3185 · whole FF 4.000e+00 rows 3185

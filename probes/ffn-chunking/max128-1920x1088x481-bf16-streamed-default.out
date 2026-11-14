@@ -1,0 +1,16 @@
+[ffn-probe] geom=1920x1088x481f → latent 61x34x60  videoTokens=124440 audioTokens=501 sigma=0.909375
+[ffn-probe] quant=bf16 lane=streamed (gate pinned) arms=off,eval,lazy reps=2 minTokens=65536 chunkTokens=16384 → chunking ENGAGES (8 chunks of 15555–15555 tokens)
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+[ffn-probe] DiT loaded + warmed in 9.8s · phys 7.05 GB
+[ffn-probe] ADALN prelude (2 embeddings + 8 AdaLN MLPs, scalar path): median 1.833 ms  min 1.804 ms  max 2.193 ms  (n=32)
+[ffn-probe] rep 0 arm off    841.32s  phys peak  60.80 GB (base   5.85, +54.95)  mlx peak active  34.18 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 0 arm eval    844.85s  phys peak  45.97 GB (base  43.04, + 2.93)  mlx peak active  35.87 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 0 arm lazy    855.14s  phys peak  55.19 GB (base  17.56, +37.63)  mlx peak active  34.71 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm lazy    853.67s  phys peak  55.19 GB (base  32.49, +22.70)  mlx peak active  34.71 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm eval    843.20s  phys peak  45.97 GB (base  29.15, +16.82)  mlx peak active  35.87 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm off    842.52s  phys peak  60.86 GB (base  24.69, +36.17)  mlx peak active  34.24 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] SUMMARY geom=1920x1088x481 videoTokens=124440 quant=bf16 lane=streamed minTokens=65536 chunkTokens=16384 engages=true
+[ffn-probe] SUMMARY arm off  phys peak worst  60.86 GB  rise worst 54.95 GB  mlx peak active worst  34.24 GB  time median   842.52s (min 841.32 max 842.52)  bit-identical to off: yes
+[ffn-probe] SUMMARY arm eval  phys peak worst  45.97 GB  rise worst 16.82 GB  mlx peak active worst  35.87 GB  time median   844.85s (min 843.20 max 844.85)  bit-identical to off: yes
+[ffn-probe] SUMMARY arm lazy  phys peak worst  55.19 GB  rise worst 37.63 GB  mlx peak active worst  34.71 GB  time median   855.14s (min 853.67 max 855.14)  bit-identical to off: yes

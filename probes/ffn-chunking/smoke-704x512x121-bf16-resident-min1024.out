@@ -1,0 +1,16 @@
+[ffn-probe] geom=704x512x121f → latent 16x16x22  videoTokens=5632 audioTokens=126 sigma=0.909375
+[ffn-probe] quant=bf16 lane=resident arms=off,lazy,eval reps=2 minTokens=1024 chunkTokens=1024 → chunking ENGAGES (6 chunks)
+[ffn-probe] DiT loaded + warmed in 10.0s · phys 40.52 GB
+[ffn-probe] warm forward (off, discarded) 8.23s
+[ffn-probe] ADALN prelude (2 embeddings + 8 AdaLN MLPs, scalar path): median 1.826 ms  min 1.785 ms  max 2.187 ms  (n=32)
+[ffn-probe] ADALN share of the warm forward: 0.0222%  (1.826 ms / 8.23 s)
+[ffn-probe] rep 0 arm off      6.05s  phys peak  43.49 GB (base  41.61, + 1.88)  mlx peak active  40.48 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 0 arm lazy      6.57s  phys peak  44.32 GB (base  41.31, + 3.01)  mlx peak active  41.30 GB  max|Δ| video 2.513e-01 audio 5.461e-03
+[ffn-probe] rep 0 arm eval      6.22s  phys peak  42.60 GB (base  42.48, + 0.12)  mlx peak active  40.17 GB  max|Δ| video 2.513e-01 audio 5.461e-03
+[ffn-probe] rep 1 arm eval      6.23s  phys peak  42.60 GB (base  40.86, + 1.74)  mlx peak active  40.17 GB  max|Δ| video 2.513e-01 audio 5.461e-03
+[ffn-probe] rep 1 arm lazy      6.59s  phys peak  44.32 GB (base  40.86, + 3.46)  mlx peak active  41.30 GB  max|Δ| video 2.513e-01 audio 5.461e-03
+[ffn-probe] rep 1 arm off      6.19s  phys peak  43.50 GB (base  42.41, + 1.08)  mlx peak active  40.49 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] SUMMARY geom=704x512x121 videoTokens=5632 quant=bf16 lane=resident minTokens=1024 chunkTokens=1024 engages=true
+[ffn-probe] SUMMARY arm off  phys peak worst  43.50 GB  rise worst  1.88 GB  mlx peak active worst  40.49 GB  time median     6.19s (min 6.05 max 6.19)  bit-identical to off: yes
+[ffn-probe] SUMMARY arm lazy  phys peak worst  44.32 GB  rise worst  3.46 GB  mlx peak active worst  41.30 GB  time median     6.59s (min 6.57 max 6.59)  bit-identical to off: NO
+[ffn-probe] SUMMARY arm eval  phys peak worst  42.60 GB  rise worst  1.74 GB  mlx peak active worst  40.17 GB  time median     6.23s (min 6.22 max 6.23)  bit-identical to off: NO

@@ -1,0 +1,16 @@
+[ffn-probe] geom=1280x704x161f → latent 21x22x40  videoTokens=18480 audioTokens=168 sigma=0.909375
+[ffn-probe] quant=bf16 lane=resident arms=off,lazy,eval reps=2 minTokens=16384 chunkTokens=9240 → chunking ENGAGES (2 chunks of 9240–9240 tokens)
+[ffn-probe] DiT loaded + warmed in 4.5s · phys 40.53 GB
+[ffn-probe] warm forward (off, discarded) 32.66s
+[ffn-probe] ADALN prelude (2 embeddings + 8 AdaLN MLPs, scalar path): median 2.135 ms  min 1.859 ms  max 3.280 ms  (n=32)
+[ffn-probe] ADALN share of the warm forward: 0.0065%  (2.135 ms / 32.66 s)
+[ffn-probe] rep 0 arm off     32.78s  phys peak  48.54 GB (base  46.96, + 1.58)  mlx peak active  42.93 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 0 arm lazy     33.43s  phys peak  49.10 GB (base  46.68, + 2.42)  mlx peak active  43.34 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 0 arm eval     33.47s  phys peak  47.39 GB (base  47.39, + 0.00)  mlx peak active  42.82 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm eval     33.53s  phys peak  47.34 GB (base  45.86, + 1.47)  mlx peak active  42.82 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm lazy     32.77s  phys peak  49.10 GB (base  45.72, + 3.38)  mlx peak active  43.34 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] rep 1 arm off     32.18s  phys peak  48.55 GB (base  47.27, + 1.27)  mlx peak active  42.94 GB  max|Δ| video 0.000e+00 audio 0.000e+00
+[ffn-probe] SUMMARY geom=1280x704x161 videoTokens=18480 quant=bf16 lane=resident minTokens=16384 chunkTokens=9240 engages=true
+[ffn-probe] SUMMARY arm off  phys peak worst  48.55 GB  rise worst  1.58 GB  mlx peak active worst  42.94 GB  time median    32.78s (min 32.18 max 32.78)  bit-identical to off: yes
+[ffn-probe] SUMMARY arm lazy  phys peak worst  49.10 GB  rise worst  3.38 GB  mlx peak active worst  43.34 GB  time median    33.43s (min 32.77 max 33.43)  bit-identical to off: yes
+[ffn-probe] SUMMARY arm eval  phys peak worst  47.39 GB  rise worst  1.47 GB  mlx peak active worst  42.82 GB  time median    33.53s (min 33.47 max 33.53)  bit-identical to off: yes

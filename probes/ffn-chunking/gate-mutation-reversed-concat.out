@@ -1,0 +1,11 @@
+[ffn-chunk-gate] ✅ ranges: contiguous cover, chunk sizes 13306…16384 within [8192, 16384], nil below 65536
+[ffn-chunk-gate] ✅ ranges: 124,440 tokens (1920x1088x481 stage 2) → 8 chunks of 15,555
+[ffn-chunk-gate] ❌ wiring (tiny DiT, 12 tokens in 3 chunks, lazy): video cos 0.99918926 max|Δ| 5.52e-02 · audio cos 0.99760813
+[ffn-chunk-gate] ❌ wiring (tiny DiT, 12 tokens in 3 chunks, eval): video cos 0.99918926 max|Δ| 5.52e-02 · audio cos 0.99760813
+[ffn-chunk-gate] ✅ kernel regime: one FF at 70000 tokens, equal chunks vs whole  max|Δ| 0.000e+00 (must be 0)
+[ffn-chunk-gate] ✅ poison: upstream's remainder split (tail 4464 rows) differs, max|Δ| 6.250e-02 — the check can fail
+[ffn-chunk-gate] ❌ real code path (bf16 block 0, 70000 tokens, lazy): max|Δ| video 3.046e+00 audio 0.000e+00 (must be 0)
+[ffn-chunk-gate] ❌ real code path (bf16 block 0, 70000 tokens, eval): max|Δ| video 3.046e+00 audio 0.000e+00 (must be 0)
+[ffn-chunk-gate] ❌ real code path (int8 block 0, 70000 tokens, lazy): max|Δ| video 3.047e+00 audio 0.000e+00 (must be 0)
+[ffn-chunk-gate] ❌ real code path (int8 block 0, 70000 tokens, eval): max|Δ| video 3.047e+00 audio 0.000e+00 (must be 0)
+[ffn-chunk-gate] FAIL ❌ (6)

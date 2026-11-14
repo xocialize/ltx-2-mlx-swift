@@ -51,12 +51,63 @@ final class AttentionBiasStore {
     var videoSelf: MLXArray?
 }
 
+/// Feed-forward chunking: at `minTokens` and above, the block feed-forward runs over slices of the
+/// token axis and concatenates (NVlabs/Sana `models/ltx25/RTX5090/memory.py` @ cf67a3a — same two
+/// numbers). The FF is per-token; what changes is its inner activation, `ffMult`x the hidden width
+/// (N x 16384 on the video stream), which is otherwise live for every token at once.
+///
+/// ⚠️ The slices are EQUAL, not upstream's `chunkTokens` + remainder, and that is what keeps the
+/// result bit-identical. mlx picks the GEMM kernel from the shape: `proj_out` (K = 16384 in,
+/// 4096 out) takes the split-K kernel when `K >= 3 * max(M, N)`, i.e. at M <= 5461 rows, and the
+/// regular one above — and the two sum K in a different order (mlx 0.32.3 `matmul.cpp`, the NAX
+/// path; measured: rows computed at M <= 5461 differ from the same rows at M >= 5462, and are
+/// M-independent on either side). A short remainder chunk would land on the other kernel. Equal
+/// slices of a stream that chunks at all are at least `chunkTokens / 2` rows, so keep
+/// `chunkTokens / 2` above a third of the FF inner width.
+public struct FFChunking: Equatable, Sendable {
+    /// Chunk only when the stream has at least this many tokens (upstream `min_tokens`).
+    public var minTokens: Int
+    /// The most tokens one chunk may hold (upstream `chunk_tokens`).
+    public var chunkTokens: Int
+    /// `eval` each chunk's output before building the next. Without it the chunks are one lazy
+    /// graph and freeing each chunk's inner activation is left to mlx's evaluation order.
+    public var evalPerChunk: Bool
+    public init(minTokens: Int = 65_536, chunkTokens: Int = 16_384, evalPerChunk: Bool = false) {
+        self.minTokens = minTokens
+        self.chunkTokens = chunkTokens
+        self.evalPerChunk = evalPerChunk
+    }
+
+    /// The token ranges for a stream of `n` tokens, or nil when it runs whole.
+    public func ranges(tokens n: Int) -> [Range<Int>]? {
+        guard chunkTokens > 0, n >= minTokens, n > chunkTokens else { return nil }
+        let count = (n + chunkTokens - 1) / chunkTokens
+        let base = n / count, extra = n % count
+        var out: [Range<Int>] = []
+        out.reserveCapacity(count)
+        var start = 0
+        for i in 0 ..< count {
+            let end = start + base + (i < extra ? 1 : 0)
+            out.append(start ..< end)
+            start = end
+        }
+        return out
+    }
+}
+
 public struct DiT {
     let store: DiTWeightStore
     var w: [String: MLXArray] { store.w }
     let cfg: DiTConfig
     let dtype: DType
     let quantGroupSize = 64
+    /// On by default, with a per-chunk `eval`: on a 1920x1088x481 stage-2 forward (124,440 video
+    /// tokens, bf16, streamed) that takes the phys_footprint peak from 60.86 GB to 45.97 GB at the
+    /// same step time (842.5 s vs 844.9 s), bit-identical. Without the `eval` the lazy graph keeps
+    /// most of it (55.19 GB) and runs 1.5% slower. Streams under 65,536 tokens — every geometry
+    /// except HD past ~257 frames — take the unchunked path unchanged. nil = never chunk.
+    /// Receipts: `probes/ffn-chunking/README.md`.
+    public var ffChunking: FFChunking? = FFChunking(evalPerChunk: true)
     /// Runtime LoRA adapters, keyed on the `dense()` prefix (e.g. `transformer_blocks.0.attn1.to_q`).
     /// A reference type so apply/detach mutate it without mutating this value-type struct (a struct
     /// copy shares the same store); empty = pristine base, so `dense` is bit-identical when unused.
@@ -390,7 +441,16 @@ public struct DiT {
     }
 
     private func feedForward(_ x: MLXArray, _ prefix: String) -> MLXArray {
-        dense(geluApproximate(dense(x, "\(prefix).proj_in")), "\(prefix).proj_out")
+        guard let c = ffChunking, let ranges = c.ranges(tokens: x.dim(-2)) else {
+            return dense(geluApproximate(dense(x, "\(prefix).proj_in")), "\(prefix).proj_out")
+        }
+        let parts = ranges.map { r -> MLXArray in
+            let y = dense(geluApproximate(dense(x[.ellipsis, r, 0...], "\(prefix).proj_in")),
+                          "\(prefix).proj_out")
+            if c.evalPerChunk { eval(y) }
+            return y
+        }
+        return MLX.concatenated(parts, axis: -2)
     }
 
     // MARK: - conditioning helpers
