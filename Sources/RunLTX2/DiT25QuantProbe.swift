@@ -30,8 +30,8 @@ import LTX2
 import MLX
 import MLXRandom
 
-private let probeBase = "/Volumes/Satechi/Models/xocialize"
-private let probeBase23 = "/Volumes/Satechi/Models/dgrauet"
+private let probeBase = "\(ltxModelsRoot)/xocialize"
+private let probeBase23 = "\(ltxModelsRoot)/dgrauet"
 
 /// Shipping envelope, stage-2 grid: 704×512×121f → F=16, H=16, W=22 → 5632 video tokens
 /// (the N=5632 already quoted in the attention receipts).

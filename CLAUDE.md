@@ -22,7 +22,7 @@ refactor touched every transformer block. Do not start new feature work on 2.3.
 | `--dit-tiny-kf25` | keyframes_abs_pos_embedding + `ff_bias:false`; fixture seeds a NON-ZERO embedding (a zero one makes the delta a no-op) |
 | `--ancestral-step` | stage-1 ancestral Euler, INJECTED noise (cross-binding RNG is not bit-identical) |
 | `--denoise-wiring` | that the two deltas REACH the DiT through `run`/`runConditioned` — components were once gated while nothing called them |
-| `--ffn-chunk` | feed-forward chunking (`DiT.ffChunking`, on by default): chunked == unchunked at max\|Δ\| 0 on block 0 of the real bf16 and int8 checkpoints at 70,000 tokens, with a remainder-split poison control. Needs `LTX_MODELS_ROOT` when the weights are not on `/Volumes/Satechi/Models` |
+| `--ffn-chunk` | feed-forward chunking (`DiT.ffChunking`, on by default): chunked == unchunked at max\|Δ\| 0 on block 0 of the real bf16 and int8 checkpoints at 70,000 tokens, with a remainder-split poison control. |
 | `--keyframe-slots` | slot geometry, `(t+0.5)/fps` spans, seed survival at σ 0.05 vs 1.0 |
 | `--dfr-layout` | canvas/tile/stitch geometry, bit-exact vs the Python port |
 | `--dfr` | DFR orchestration: frame contract, trims, fps split, tile-local conditioning, per-tile seeds, clean re-blend |
@@ -102,6 +102,13 @@ C–F reachable). `parity/` — Python golden dumpers + (gitignored) `goldens/`.
 ## Conventions
 
 - Build: `xcrun swift build` (release Xcode 27 is the active toolchain since 2026-09-17, no DEVELOPER_DIR override; AB-A-0077).
+- **Weight paths in RunLTX2 come from `ltxModelsRoot`** (`Sources/RunLTX2/ModelsRoot.swift`), never a
+  literal: `LTX_MODELS_ROOT` if set, else the first known archive root that holds an LTX tree
+  (`/Volumes/DEV_VOL1/Models/Models`, then `/Volumes/Satechi/Models`). The archive moved to
+  DEV_VOL1; before the resolver (2026-11-15) the root was a literal in 27 files and most of the
+  board could not find its weights. A new gate builds its paths as `"\(ltxModelsRoot)/..."`.
+  ⚠️ The 2.3 trees (`dgrauet/ltx-2.3-mlx{,-q8,-q4}`) are not on this machine's mounted volumes as of
+  2026-11-15, so the 2.3 gates that read real weights cannot run here until they are restored.
 - Cores are functional (`[String: MLXArray]` + explicit ops keyed by oracle weight-key strings);
   fp32 except the DiT (bf16). New component → port from oracle → `parity/dump_*` golden →
   `RunLTX2 --*-gate` (cosine ≥0.999) → commit.

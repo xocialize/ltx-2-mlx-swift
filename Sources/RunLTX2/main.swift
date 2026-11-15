@@ -28,8 +28,8 @@ let packageRoot = URL(fileURLWithPath: #filePath)
 let defaultGoldens = packageRoot
     .appendingPathComponent("parity/goldens/text_encode/goldens.safetensors").path
 let goldensBase = packageRoot.appendingPathComponent("parity/goldens").path
-let defaultConnector = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/connector.safetensors"
-let defaultGemma = "/Volumes/Satechi/Models/mlx-community/gemma-3-12b-it-4bit"
+let defaultConnector = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/connector.safetensors"
+let defaultGemma = "\(ltxModelsRoot)/mlx-community/gemma-3-12b-it-4bit"
 
 func cosine(_ a: MLXArray, _ b: MLXArray) -> Float {
     let af = a.asType(.float32).reshaped(-1)
@@ -590,7 +590,7 @@ func gemma4Gate() async throws {
     let meta = try JSONSerialization.jsonObject(
         with: Data(contentsOf: URL(fileURLWithPath: "\(dir)/meta.json"))) as! [String: Any]
     let gemmaDir = ProcessInfo.processInfo.environment["LTX_GEMMA4_DIR"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1"
     print("[gemma4-gate] encoder: \(gemmaDir)")
 
     // Encode peak = load the encoder + one 49-state forward. Reset here so the goldens
@@ -781,8 +781,8 @@ func keyframeSlotsGate() throws {
 func pipeline25Gate() throws {
     var fails: [String] = []
     let dirs: [(String, String, Bool)] = [
-        ("2.5", "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx", true),
-        ("2.3", "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx", false),
+        ("2.5", "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx", true),
+        ("2.3", "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx", false),
     ]
     for (label, path, want) in dirs {
         guard FileManager.default.fileExists(atPath: path) else {
@@ -935,7 +935,7 @@ func ditTinyGate() throws {
 /// Full-scale DiT parity: real distilled transformer (bf16) vs oracle goldens.
 func ditFullGate() throws {
     let dir = "\(goldensBase)/dit_full"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[dit-full-gate] loading real distilled transformer (bf16)…")
     let dit = try DiT.load(weightsPath: URL(fileURLWithPath: weightsPath), config: DiTConfig(), computeDtype: .bfloat16)
@@ -956,7 +956,7 @@ func ditFullGate() throws {
 /// Video VAE decode parity: latent → pixels vs oracle golden (fp32).
 func vaeDecodeGate() throws {
     let dir = "\(goldensBase)/vae_decode"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
     let pixels = dec.decode(io["latent"]!)
@@ -974,7 +974,7 @@ func vaeDecodeGate() throws {
 /// ground truth for the adapter, since oracle and port were written from one reading.
 func vaeDecodePrunaGate() throws {
     let dir = "\(goldensBase)/vae_decode_pruna"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
     let pixels = dec.decode(io["latent"]!)
@@ -1006,8 +1006,8 @@ func vaeDecodeBench() throws {
         ("704×512×121f", 16, 16, 22),
     ]
     let variants: [(String, String)] = [
-        ("stock", "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"),
-        ("pruna", "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"),
+        ("stock", "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vae_decoder.safetensors"),
+        ("pruna", "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vae_decoder_pruna.safetensors"),
     ]
     let reps = 3
     let sampler = PhysSampler()
@@ -1056,7 +1056,7 @@ func vaeDecodeBench() throws {
 /// Video VAE encode parity: pixels → latent vs oracle golden (fp32).
 func vaeEncodeGate() throws {
     let dir = "\(goldensBase)/vae_encode"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vae_encoder.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vae_encoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
     let latent = enc.encode(io["pixels"]!)
@@ -1170,7 +1170,7 @@ func icIngestGate() throws {
             print("[ic-ingest-gate] snapFrames(\(input)) = \(got), want \(want) FAIL ❌"); exit(1)
         }
     }
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let dir = "\(goldensBase)/ic_ingest"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dims = io["dims"]!.asArray(Float.self)
@@ -1192,7 +1192,7 @@ func icIngestGate() throws {
 
 /// End-to-end one-stage t2v parity (real weights): noise → denoise → unpatchify → VAE decode.
 func e2eGate() throws {
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let dir = "\(goldensBase)/e2e_t2v"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[e2e-gate] loading real DiT (bf16) + VAE decoder…")
@@ -1226,7 +1226,7 @@ func e2eGate() throws {
 /// Audio VAE decode parity: audio latent → mel vs oracle golden (fp32).
 func audioVaeDecodeGate() throws {
     let dir = "\(goldensBase)/audio_vae_decode"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let dec = try AudioVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
     let mel = dec.decode(io["latent"]!)
@@ -1242,7 +1242,7 @@ func audioVaeDecodeGate() throws {
 /// golden (fp32), + the LipDub patchify/negative-positions helper on the golden latent.
 func audioVaeEncodeGate() throws {
     let dir = "\(goldensBase)/audio_vae_encode"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/audio_vae.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try AudioVAEEncoder.load(path: URL(fileURLWithPath: weightsPath))
     let processor = AudioMelProcessor()
@@ -1278,7 +1278,7 @@ func audioVaeEncodeGate() throws {
 /// Vocoder+BWE parity: mel → 48kHz waveform vs oracle golden (fp32).
 func vocoderGate() throws {
     let dir = "\(goldensBase)/vocoder"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/vocoder.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/vocoder.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let voc = try Vocoder.load(path: URL(fileURLWithPath: weightsPath))
     let wav = voc(io["mel"]!)
@@ -1293,7 +1293,7 @@ func vocoderGate() throws {
 /// Composed audio-decode parity: audio tokens (1,T,128) → unpatchify → AudioVAE → Vocoder → wav.
 /// Mirrors LTX2Pipeline.decodeAudio without loading the full pipeline.
 func audioDecodeGate() throws {
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let dir = "\(goldensBase)/audio_decode"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let audioVAE = try AudioVAEDecoder.load(path: URL(fileURLWithPath: "\(base)/audio_vae.safetensors"))
@@ -1313,7 +1313,7 @@ func audioDecodeGate() throws {
 /// Spatial-x2 upsampler parity: latent → 2×-spatial latent vs oracle golden (fp32).
 func upsamplerGate() throws {
     let dir = "\(goldensBase)/upsampler"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/spatial_upscaler_x2_v1_1.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/spatial_upscaler_x2_v1_1.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let up = try Upsampler.load(path: URL(fileURLWithPath: weightsPath))
     let out = up(io["latent"]!)
@@ -1329,7 +1329,7 @@ func upsamplerGate() throws {
 /// Loads each checkpoint through `Upsampler.load(path:)`, so the sidecar-config variant
 /// resolution — the actual production path — is what gets exercised, not a hand-picked enum.
 func upsamplerVariantsGate() throws {
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let cases: [(name: String, file: String, goldens: String, expect: Upsampler.Variant)] = [
         ("x1.5 spatial (rational 3/2)", "spatial_upscaler_x1_5_v1_0.safetensors", "upsampler_x1_5", .spatialX1_5),
         ("x2 temporal (drop frame 0)", "temporal_upscaler_x2_v1_0.safetensors", "upsampler_temporal", .temporalX2),
@@ -1359,7 +1359,7 @@ func upsamplerVariantsGate() throws {
 
 /// Two-stage upscale-step parity: half-res latent → denorm → upsample → renorm vs oracle.
 func upscaleStepGate() throws {
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let dir = "\(goldensBase)/upscale_step"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     let enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: "\(base)/vae_encoder.safetensors"))
@@ -1375,7 +1375,7 @@ func upscaleStepGate() throws {
 
 /// q8 DiT parity: int8-quantized transformer (bf16 activations) vs oracle q8 golden.
 func ditQ8Gate() throws {
-    let q8 = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx-q8/transformer-distilled.safetensors"
+    let q8 = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx-q8/transformer-distilled.safetensors"
     let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q8/io.safetensors"))     // q8 outputs
@@ -1398,7 +1398,7 @@ func ditQ8Gate() throws {
 /// quant-aware path as q8 — `DiT.load` auto-detects 4-bit from the scales shape; this gate just
 /// checks Swift-q4-forward == oracle-q4-forward on identical q4 weights (so the bar stays 0.999).
 func ditQ4Gate() throws {
-    let q4 = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx-q4/transformer-distilled.safetensors"
+    let q4 = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx-q4/transformer-distilled.safetensors"
     let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))   // inputs (reused)
     let exp = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_q4/io.safetensors"))     // q4 outputs
@@ -1421,7 +1421,7 @@ func ditQ4Gate() throws {
 /// timesteps (frame-0 tokens at 0, rest at sigma) vs oracle golden. Reuses dit_full inputs;
 /// timesteps + expected outputs come from the dit_pertoken fixture.
 func ditPerTokenGate() throws {
-    let bf16 = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let bf16 = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
     let base = "\(goldensBase)"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_full/io.safetensors"))       // base inputs
     let pt = try MLX.loadArrays(url: URL(fileURLWithPath: "\(base)/dit_pertoken/io.safetensors"))   // timesteps + outputs
@@ -1447,7 +1447,7 @@ func ditPerTokenGate() throws {
 ///   3. detach → output restores to the base exactly
 func loraGate(loraPath: String) throws {
     let dir = "\(goldensBase)/dit_full"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/transformer-distilled.safetensors"
     let io = try MLX.loadArrays(url: URL(fileURLWithPath: "\(dir)/io.safetensors"))
     print("[lora-gate] lora: \(loraPath)")
     print("[lora-gate] loading real distilled transformer (bf16)…")
@@ -1616,7 +1616,7 @@ func prewarmFiles(_ paths: [URL]) {
 /// path, and the engine ships `min(2 GB, 5% budget)` by default, so an uncapped CLI peak overstates
 /// the app path (measured up to ~11 GB at large geometry on 2.3). This prints which regime it ran in.
 func memBench25Gate(encoderQuant: String, width: Int, height: Int, frames: Int) async throws {
-    let base = "/Volumes/Satechi/Models/xocialize"
+    let base = "\(ltxModelsRoot)/xocialize"
     // "q8" = int8 ENCODER sibling; "ditq8" = int8 DiT sibling (bf16 encoder); "bf16" = stock.
     let treeName: String
     switch encoderQuant {
@@ -1694,7 +1694,7 @@ func memBench25Gate(encoderQuant: String, width: Int, height: Int, frames: Int) 
 }
 
 func memBenchGate(quant: String) async throws {
-    let base = "/Volumes/Satechi/Models/dgrauet"
+    let base = "\(ltxModelsRoot)/dgrauet"
     let ltxDir = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx")
     let gemmaDir = URL(fileURLWithPath: defaultGemma)
     let transformerPath: URL?
@@ -1863,7 +1863,7 @@ func sdpaMaskProbeGate() {
 // fixed shape. Compare `run2` across --speed-bench bf16 | int8 | int4. Per-step detail: add
 // MLX_PROFILE=1. Per-step latent redundancy (S3 ceiling): add LTX_STEP_DELTA=1.
 func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async throws {
-    let base = "/Volumes/Satechi/Models/dgrauet"
+    let base = "\(ltxModelsRoot)/dgrauet"
     let ltxDir = URL(fileURLWithPath: "\(base)/ltx-2.3-mlx")
     let gemmaDir = URL(fileURLWithPath: defaultGemma)
     let transformerPath: URL?
@@ -1927,13 +1927,13 @@ func speedBenchGate(quant: String, width: Int, height: Int, frames: Int) async t
 /// code path otherwise. Peaks are the datum; single-run wall-clock is not (BENCH.md).
 func t2vSpotGate(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
-    let base = "/Volumes/Satechi/Models/dgrauet"
+    let base = "\(ltxModelsRoot)/dgrauet"
     let cfg = LTX2Configuration(
         quant: .bf16,
         ltxDirectory: URL(fileURLWithPath: "\(base)/ltx-2.3-mlx"),
         transformerPath: nil,
         gemmaDirectory: URL(fileURLWithPath: defaultGemma),
-        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+        modelsRootDirectory: URL(fileURLWithPath: ltxModelsRoot),
         profile: nil)
     let lane = env["LTX_STREAM_MUX"] == "0" ? "MATERIALIZED" : "STREAMED"
     print("[t2v-spot] request \(width)×\(height)×\(frames)f bf16 · mux lane: \(lane)")
@@ -2015,7 +2015,7 @@ func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
         default: return "bf16"
         }
     }()
-    let base = "/Volumes/Satechi/Models/dgrauet"
+    let base = "\(ltxModelsRoot)/dgrauet"
     let transformerPath: URL?
     let quant: Quant
     switch quantName {
@@ -2035,7 +2035,7 @@ func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
         transformerPath: transformerPath,
         gemmaDirectory: URL(fileURLWithPath: defaultGemma),
         // The LoRA cache root (`ltx-lora-cache/i2v-adapter.safetensors`, already fetched by the app).
-        modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+        modelsRootDirectory: URL(fileURLWithPath: ltxModelsRoot),
         profile: profile)
     print("[i2v-spot] request \(width)×\(height)×\(frames)f \(quantName) · profile=\(profile.rawValue) · lora=i2v-adapter")
 
@@ -2053,7 +2053,7 @@ func i2vSpotGate(width: Int, height: Int, frames: Int) async throws {
             warm.append(p)
         }
     }
-    warm.append(URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-lora-cache/i2v-adapter.safetensors"))
+    warm.append(URL(fileURLWithPath: "\(ltxModelsRoot)/ltx-lora-cache/i2v-adapter.safetensors"))
     prewarmFiles(warm)
     print(String(format: "[i2v-spot] prewarm %.1fs (%d files)", Date().timeIntervalSince(p0), warm.count))
 
@@ -2164,7 +2164,7 @@ func vaeChunkGate(fLat: Int, chunk: Int, halo: Int, pruna: Bool = false) async t
     // width-independent, but its channel-adapter blocks sit inside each chunk's decode, so the
     // seam is worth re-proving on the variant that actually ships it.
     let file = pruna ? "vae_decoder_pruna.safetensors" : "vae_decoder.safetensors"
-    let weightsPath = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx/\(file)"
+    let weightsPath = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx/\(file)"
     print("[vae-chunk-gate] decoder=\(pruna ? "pruna" : "stock")")
     let dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weightsPath))
     let hLat = 512 / 32, wLat = 704 / 32
@@ -2393,7 +2393,7 @@ if args.contains("--connector-gate") {
 } else if args.contains("--lora-gate25") {
     // AB-A-0015: does a 2.3-authored runtime LoRA apply on the 2.5 DiT?
     // usage: --lora-gate25 <lora.safetensors> [bf16|ditq8]
-    try loraGate25(loraPath: positional.first ?? "/Volumes/Satechi/Models/ltx-lora-cache/transition.safetensors",
+    try loraGate25(loraPath: positional.first ?? "\(ltxModelsRoot)/ltx-lora-cache/transition.safetensors",
                    quant: positional.count > 1 ? positional[1] : "bf16")
 } else if args.contains("--lora-gate") {
     try loraGate(loraPath: positional.first ?? "/tmp/ltx_transition_lora.safetensors")
@@ -2476,7 +2476,7 @@ if args.contains("--connector-gate") {
     // BRIDGE-LTX-012 fidelity gate: packed-factor delta vs full precision on the real adapter.
     let bits = positional.compactMap { Int($0) }.first ?? 8
     let path = positional.first { Int($0) == nil }
-        ?? "/Volumes/Satechi/Models/ltx-lora-cache/i2v-adapter.safetensors"
+        ?? "\(ltxModelsRoot)/ltx-lora-cache/i2v-adapter.safetensors"
     let (worst, mean) = try LTX2LoRA.factorQuantFidelity(
         url: URL(fileURLWithPath: path), bits: bits, sample: 48)
     print(String(format: "[lora-quant-gate] bits=%d sample=48  worst cos=%.6f  mean cos=%.6f", bits, worst, mean))

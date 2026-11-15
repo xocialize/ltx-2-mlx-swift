@@ -36,8 +36,8 @@ import MLX
 import MLXLTX2
 import MLXRandom
 
-private let triangleTree = "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx"
-private let defaultClip = "/Volumes/Satechi/Models/_ForgeSmokeCorpus/video/hard-cut-14s.mp4"
+private let triangleTree = "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx"
+private let defaultClip = "\(ltxModelsRoot)/_ForgeSmokeCorpus/video/hard-cut-14s.mp4"
 
 /// Peak-signal-to-noise ratio over [-1,1] pixel tensors (dynamic range 2.0).
 private func psnr(_ a: MLXArray, _ b: MLXArray) -> Double {

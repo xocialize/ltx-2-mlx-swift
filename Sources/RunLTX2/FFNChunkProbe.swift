@@ -23,7 +23,7 @@
 // fixed key at the stage-2 entry sigma.
 //
 // usage: RunLTX2 --ffn-chunk-probe <W> <H> <F>
-//   env: LTX_MODELS_ROOT=<dir>          (default /Volumes/Satechi/Models)
+//   env: LTX_MODELS_ROOT=<dir>          (default: ModelsRoot.swift)
 //        LTX_QUANT=bf16|int8            (default bf16; int8 = the -ditq8 tree)
 //        LTX_STREAM_25=1|0              (default 0 = resident; 1 = granules, gate pinned)
 //        LTX_FFN_ARMS=off,lazy,eval     (default all three; `off` must be present)
@@ -93,7 +93,7 @@ private func adalnPrelude(_ dit: DiT, sigma: MLXArray) -> [MLXArray]? {
 /// usage: RunLTX2 --ffn-chunk-micro <N> <chunk>[,<chunk>...]   (env LTX_MODELS_ROOT, LTX_FFN_DTYPE=bf16|fp32)
 func ffnChunkMicro(tokens n: Int, chunks: [Int]) throws {
     let env = ProcessInfo.processInfo.environment
-    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    let modelsRoot = ltxModelsRoot
     let dtype: DType = env["LTX_FFN_DTYPE"] == "fp32" ? .float32 : .bfloat16
     let granule = URL(fileURLWithPath: "\(modelsRoot)/ltx-granules-25/bf16")
     // Block 0 only: read its tensors straight from the checkpoint header (lazy load, 4 arrays evaluated).
@@ -181,7 +181,7 @@ func ffnChunkMicro(tokens n: Int, chunks: [Int]) throws {
 
 func ffnChunkProbe(width: Int, height: Int, frames: Int) throws {
     let env = ProcessInfo.processInfo.environment
-    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    let modelsRoot = ltxModelsRoot
     let quant = env["LTX_QUANT"] ?? "bf16"
     let streamed = env["LTX_STREAM_25"] == "1"
     let reps = env["LTX_FFN_REPS"].flatMap { Int($0) } ?? 2
@@ -503,8 +503,7 @@ func ffnChunkGate() throws {
     Memory.clearCache()
 
     // --- 4. the real code path: block 0 of each present checkpoint as a one-layer DiT ---
-    let modelsRoot = ProcessInfo.processInfo.environment["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 }
-        ?? "/Volumes/Satechi/Models"
+    let modelsRoot = ltxModelsRoot
     var ranReal = false
     for (label, tree) in [("bf16", "ltx-2.5-mlx"), ("int8", "ltx-2.5-mlx-ditq8")] {
         let path = "\(modelsRoot)/xocialize/\(tree)/transformer-distilled.safetensors"

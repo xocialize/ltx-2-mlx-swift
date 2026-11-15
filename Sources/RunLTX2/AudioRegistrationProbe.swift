@@ -17,7 +17,7 @@ import MLX
 import LTX2
 
 func audioRegistrationProbe() throws {
-    let ltxDir = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let ltxDir = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     let enc = try AudioVAEEncoder.load(path: ltxDir.appending(path: "audio_vae.safetensors"))
 
     let sr = 16000.0

@@ -37,13 +37,13 @@ func outpaint25(jobs: [(input: String, prefix: String)]) async throws {
     // LTX_OP_BASE=23 runs the 2.3 tree — the base every published outpaint adapter was TRAINED on,
     // i.e. the control arm for "does this 2.3 adapter transfer to 2.5". 2.5 stays the default.
     let on23 = env["LTX_OP_BASE"] == "23"
-    let base = on23 ? "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
-        : (env["LTX25_DIR"] ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let base = on23 ? "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
+        : (env["LTX25_DIR"] ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     let ltxDir = URL(fileURLWithPath: base)
     guard LTX2Pipeline.isLTX25(ltxDir: ltxDir) != on23 else {
         print("[outpaint25] FAIL ❌ \(base) is not the LTX-\(on23 ? "2.3" : "2.5") tree it was selected as"); exit(2)
     }
-    let loraPath = env["LTX_OP_LORA"] ?? "/Volumes/Satechi/Models/ltx-lora-cache/in-outpainting.safetensors"
+    let loraPath = env["LTX_OP_LORA"] ?? "\(ltxModelsRoot)/ltx-lora-cache/in-outpainting.safetensors"
     let baseArm = loraPath == "none"   // the no-adapter control: same reference, same seed, bare base
     guard baseArm || FileManager.default.fileExists(atPath: loraPath) else {
         print("[outpaint25] FAIL ❌ adapter not found: \(loraPath)"); exit(2)

@@ -29,7 +29,7 @@ import MLX
 
 func gemma4TokenizerGate(gemma4Dir: String?) async throws {
     let dir = URL(fileURLWithPath: gemma4Dir
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1")
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/gemma4-12b-ltx-v1")
     guard FileManager.default.fileExists(atPath: dir.appendingPathComponent("config.json").path) else {
         print("[gemma4-tokenizer-gate] FAIL ❌ no Gemma-4 dir at \(dir.path)"); exit(2)
     }

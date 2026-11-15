@@ -17,7 +17,7 @@ import LTX2
 import MLXLTX2
 import MLXToolKit
 
-private let modelBase = "/Volumes/Satechi/Models/xocialize"
+private let modelBase = "\(ltxModelsRoot)/xocialize"
 
 /// True when the safetensors header carries quantization params (`.scales` siblings) — the same
 /// signal `DiT.dense()` uses to pick `quantizedMatmul`.

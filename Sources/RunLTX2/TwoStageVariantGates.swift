@@ -20,7 +20,7 @@ import LTX2
 import MLX
 
 func twoStageVariantsGate(which: String) async throws {
-    let base = "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    let base = "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
     let ltxDir = URL(fileURLWithPath: base)
     let gemmaDir = URL(fileURLWithPath: defaultGemma)
 

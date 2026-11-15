@@ -13,11 +13,11 @@ import MLXToolKit
 
 enum HarnessAdapters {
     /// Local adapter files, `<registry id>.safetensors` — the layout the package's own cache used
-    /// before 1.53.0: `$LTX_LORA_CACHE`, else `<LTX_MODELS_ROOT or /Volumes/Satechi/Models>/ltx-lora-cache`.
+    /// before 1.53.0: `$LTX_LORA_CACHE`, else `<ltxModelsRoot>/ltx-lora-cache` (ModelsRoot.swift).
     static var directory: URL {
         let env = ProcessInfo.processInfo.environment
         if let dir = env["LTX_LORA_CACHE"], !dir.isEmpty { return URL(fileURLWithPath: dir) }
-        let root = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+        let root = ltxModelsRoot
         return URL(fileURLWithPath: root).appendingPathComponent("ltx-lora-cache")
     }
 

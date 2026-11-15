@@ -26,7 +26,7 @@ import LTX2
 import MLXLTX2
 
 let vaeModelsDir = ProcessInfo.processInfo.environment["LTX_MODELS_DIR"]
-    ?? "/Volumes/Satechi/Models/dgrauet/ltx-2.3-mlx"
+    ?? "\(ltxModelsRoot)/dgrauet/ltx-2.3-mlx"
 
 func tileGatesMain(args: [String], positional: [String]) async throws {
     let pruna = args.contains("--pruna")
@@ -431,7 +431,7 @@ func vaeRFProbe(pruna: Bool) throws {
 // MARK: - --vae-encode-tile-probe (scale sweep: is parity tile-size-limited?)
 
 func vaeEncodeTileProbe() throws {
-    let tree = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let tree = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     let enc = try VideoVAEEncoder.load(path: tree.appendingPathComponent("vae_encoder.safetensors"))
     MLXRandom.seed(0x2026_0823)
     func fixture(_ f: Int, _ h: Int, _ w: Int) -> MLXArray {
@@ -482,7 +482,7 @@ func vaeEncodeTileProbe() throws {
 /// (~74 dB). The temporal bar is therefore 0.995 (measured 0.9971 + margin), NOT 0.999, and the
 /// difference is doctrine, not sloppiness: parity with the VENDOR's product, per AB-R-0133.
 func vaeEncodeTileGate() throws {
-    let tree = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let tree = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     let enc = try VideoVAEEncoder.load(path: tree.appendingPathComponent("vae_encoder.safetensors"))
     MLXRandom.seed(0x2026_0823)
     // Smooth low-frequency content, NOT white noise — noise has no spatial coherence, so a seam

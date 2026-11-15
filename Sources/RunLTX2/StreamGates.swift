@@ -76,13 +76,13 @@ private struct QuantPaths {
             is25 = false
             checkpoint = URL(
                 fileURLWithPath:
-                    "/Volumes/Satechi/Models/dgrauet/\(repo)/transformer-distilled.safetensors")
-            granules = URL(fileURLWithPath: "/Volumes/Satechi/Models/ltx-granules/\(quant)")
+                    "\(ltxModelsRoot)/dgrauet/\(repo)/transformer-distilled.safetensors")
+            granules = URL(fileURLWithPath: "\(ltxModelsRoot)/ltx-granules/\(quant)")
         } else if let repo = repos25[quant] {
             is25 = true
             checkpoint = URL(
                 fileURLWithPath:
-                    "/Volumes/Satechi/Models/xocialize/\(repo)/transformer-distilled.safetensors")
+                    "\(ltxModelsRoot)/xocialize/\(repo)/transformer-distilled.safetensors")
             // ⚠️ The granule subdir is keyed by QUANT, not by the repo suffix — it must match
             // `LTX2Configuration.resolvedGranuleDirectory` (int8 → "q8"), which is what the
             // shipping pipeline appends to `granuleRootDirectory`. The ARM is named `25-ditq8`
@@ -91,7 +91,7 @@ private struct QuantPaths {
             // looked for `.../ditq8/q8/` and failed to bind.
             granules = URL(
                 fileURLWithPath:
-                    "/Volumes/Satechi/Models/ltx-granules-25/\(quant == "25-ditq8" ? "q8" : "bf16")")
+                    "\(ltxModelsRoot)/ltx-granules-25/\(quant == "25-ditq8" ? "q8" : "bf16")")
         } else {
             return nil
         }
@@ -632,7 +632,7 @@ func streamBudgetGate(quant: String, videoN: Int, budgetGB: Double, steps: Int) 
 /// (`ff_bias: false`) and 59 vs 58 globals (the keyframes embedding). If a 2.3 LoRA resolves ZERO
 /// targets the dialect does not carry; if it resolves the SAME count it does.
 func loraGate25(loraPath: String, quant: String) throws {
-    let base = "/Volumes/Satechi/Models/xocialize"
+    let base = "\(ltxModelsRoot)/xocialize"
     let tree = URL(fileURLWithPath: "\(base)/ltx-2.5-mlx")
     let weights = quant == "ditq8"
         ? URL(fileURLWithPath: "\(base)/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")

@@ -23,14 +23,14 @@ import MLX
 private func sayAB(_ m: String) { print(m); fflush(stdout) }
 
 func quantAB(width: Int, height: Int, frames: Int, seeds: [UInt64]) async throws {
-    let bf16Dir = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let bf16Dir = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     // B arm is selectable so the same blinded protocol covers the DiT experiment:
     //   LTX_AB_TREE=ltx-2.5-mlx-ditq8  → int8 DiT (bf16 encoder)
     //   unset                          → int8 ENCODER (bf16 DiT), the original arm
     // Both trees differ from bf16Dir in exactly ONE component, which is what keeps the
     // comparison attributable.
     let bTree = ProcessInfo.processInfo.environment["LTX_AB_TREE"] ?? "ltx-2.5-mlx-q8"
-    let q8Dir = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/\(bTree)")
+    let q8Dir = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/\(bTree)")
     for d in [bf16Dir, q8Dir] where !FileManager.default.fileExists(atPath: d.path) {
         sayAB("[quant-ab] missing model tree: \(d.path)"); exit(2)
     }

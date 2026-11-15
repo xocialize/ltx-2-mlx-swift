@@ -17,8 +17,8 @@ import Foundation
 import MLX
 import LTX2
 
-private let diffvaeWeights = "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/vae_diffusion_decoder.safetensors"
-private let durationWeights = "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/duration_head.safetensors"
+private let diffvaeWeights = "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/vae_diffusion_decoder.safetensors"
+private let durationWeights = "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/duration_head.safetensors"
 
 // MARK: - DiffVAE
 

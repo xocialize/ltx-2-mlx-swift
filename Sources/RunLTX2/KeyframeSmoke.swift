@@ -8,19 +8,19 @@ import MLXToolKit
 
 func keyframeSmoke() async throws {
     let env = ProcessInfo.processInfo.environment
-    let smoke = env["LTX_KF_DIR"] ?? "/Volumes/Satechi/Models/_smoke"
+    let smoke = env["LTX_KF_DIR"] ?? "\(ltxModelsRoot)/_smoke"
     let first = "\(smoke)/kf-first.png", last = "\(smoke)/kf-last.png"
     let w = Int(env["LTX_KF_W"] ?? "1280")!, h = Int(env["LTX_KF_H"] ?? "704")!
     let f = Int(env["LTX_KF_F"] ?? "121")!
     let out = env["LTX_KF_OUT"] ?? "\(smoke)/kf-local.mp4"
 
     var c = LTX2Configuration(family: .ltx25,
-                              modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+                              modelsRootDirectory: URL(fileURLWithPath: ltxModelsRoot),
                               profile: .standard64)
     c.quant = .int8
-    c.ltxDirectory = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    c.ltxDirectory = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     c.transformerPath = URL(fileURLWithPath:
-        "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+        "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
     let pkg = MLXLTX25Package(configuration: c)
     try await pkg.load()
 

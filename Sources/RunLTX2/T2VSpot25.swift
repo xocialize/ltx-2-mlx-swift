@@ -38,7 +38,7 @@
 //                                                            acceptance number.)
 //        LTX_T2V_SAVE=<path>                                (optional MP4 write)
 //        LTX_MODELS_ROOT=<dir>                              (relocates the archive layout —
-//                                                            default /Volumes/Satechi/Models; a local
+//                                                            default: ModelsRoot.swift; a local
 //                                                            staging copy on a secondary station)
 //        LTX_NO_CHECKPOINT=1                                (hosted v2 shape: no transformer file)
 //
@@ -90,9 +90,9 @@ func tierBudget(for profile: LTX2Profile) -> TierBudget {
 
 func t2vSpot25Gate(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
-    // LTX_MODELS_ROOT relocates the fleet archive layout (default: the Satechi volume) so the
+    // LTX_MODELS_ROOT relocates the fleet archive layout (default: ModelsRoot.swift) so the
     // measurement can run from a local staging copy on a secondary station (AB-A-0005, M5 Pro).
-    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    let modelsRoot = ltxModelsRoot
     let base = "\(modelsRoot)/xocialize"
     let profile = env["LTX_TIER"].flatMap { LTX2Profile(rawValue: $0) } ?? .standard64
     let quantName = env["LTX_QUANT"] ?? {

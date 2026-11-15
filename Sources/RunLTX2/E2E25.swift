@@ -14,7 +14,7 @@ private func say(_ m: String) { print(m); fflush(stdout) }
 
 func e2e25(width: Int, height: Int, frames: Int) async throws {
     let base = ProcessInfo.processInfo.environment["LTX25_DIR"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx"
     let ltxDir = URL(fileURLWithPath: base)
     guard FileManager.default.fileExists(atPath: base) else {
         say("[e2e25] model dir not present: \(base)"); exit(2)
@@ -90,7 +90,7 @@ func e2e25(width: Int, height: Int, frames: Int) async throws {
 /// as run context, NOT as an A/B — single-pair desktop timings drift ±15 s (see BENCH.md).
 func dfr25(width: Int, height: Int, frames: Int, rounds: Int) async throws {
     let base = ProcessInfo.processInfo.environment["LTX25_DIR"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx"
     let ltxDir = URL(fileURLWithPath: base)
     guard FileManager.default.fileExists(atPath: base) else {
         say("[dfr25] model dir not present: \(base)"); exit(2)

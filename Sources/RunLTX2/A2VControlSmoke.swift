@@ -17,12 +17,12 @@ func a2vControlSmoke() async throws {
     // 161 frames against the vendor's 241 and was not a like-for-like control at all.
     let profile: LTX2Profile = (env["A2V_TIER"].flatMap { LTX2Profile(rawValue: $0) }) ?? .max128
     var c = LTX2Configuration(family: .ltx25,
-                              modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+                              modelsRootDirectory: URL(fileURLWithPath: ltxModelsRoot),
                               profile: profile)
     c.quant = .int8
-    c.ltxDirectory = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    c.ltxDirectory = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     c.transformerPath = URL(fileURLWithPath:
-        "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+        "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
     let pkg = MLXLTX25Package(configuration: c)
     try await pkg.load()
 

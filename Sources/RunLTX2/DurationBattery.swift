@@ -59,7 +59,7 @@ private let durationBattery: [DurationCase] = [
 ]
 
 func durationBatteryRun(modelDir: String?) async throws {
-    let tree = URL(fileURLWithPath: modelDir ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let tree = URL(fileURLWithPath: modelDir ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     guard LTX2Pipeline.isLTX25(ltxDir: tree) else {
         print("[duration-battery] FAIL ❌ not a 2.5 tree: \(tree.path) — the duration head is 2.5-only")
         exit(2)

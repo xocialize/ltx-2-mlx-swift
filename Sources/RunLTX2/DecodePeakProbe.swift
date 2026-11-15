@@ -28,7 +28,7 @@ import LTX2
 
 func vaeDecodePeakProbe(width: Int, height: Int, frames: Int) throws {
     let env = ProcessInfo.processInfo.environment
-    let tree = "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx"
+    let tree = "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx"
     let weights = env["LTX_DEC_WEIGHTS"] ?? "\(tree)/vae_decoder.safetensors"
     let steps = (env["LTX_DEC_STEPS"] ?? "audio,video").split(separator: ",").map(String.init)
     let mode = env["LTX_DEC_MODE"] ?? "whole"
@@ -114,7 +114,7 @@ func vaeDecodePeakProbe(width: Int, height: Int, frames: Int) throws {
 ///    which the decoder no longer builds.
 func vaeDecodeExactGate() throws {
     let weights = ProcessInfo.processInfo.environment["LTX_DEC_WEIGHTS"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/vae_decoder.safetensors"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/vae_decoder.safetensors"
     var dec = try VideoVAEDecoder.load(path: URL(fileURLWithPath: weights))
     let small = MLXRandom.normal([1, 128, 3, 8, 8], key: MLXRandom.key(7))
     eval(small)

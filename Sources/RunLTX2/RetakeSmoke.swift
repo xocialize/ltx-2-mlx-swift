@@ -14,12 +14,12 @@ import MLXToolKit
 
 func retakeSmoke() async throws {
     let cfg = LTX2Configuration(family: .ltx25,
-                                modelsRootDirectory: URL(fileURLWithPath: "/Volumes/Satechi/Models"),
+                                modelsRootDirectory: URL(fileURLWithPath: ltxModelsRoot),
                                 profile: .standard64)
     var c = cfg; c.quant = .int8
-    c.ltxDirectory = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    c.ltxDirectory = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     c.transformerPath = URL(fileURLWithPath:
-        "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
+        "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx-ditq8/transformer-distilled.safetensors")
     let pkg = MLXLTX25Package(configuration: c)
     try await pkg.load()
 

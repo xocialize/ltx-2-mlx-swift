@@ -17,7 +17,7 @@
 //        LTX_IC_ACTION=<text>                          the "Generated video:" half
 //        LTX_IC_STRENGTH=1.4 · LTX_IC_REF_STRENGTH=1.0
 //        LTX_IC_QUANT=bf16|int8                        DiT precision (default bf16 — the fixture's faithful tier)
-//        LTX_MODELS_ROOT=<dir>                         weights root (default /Volumes/Satechi/Models); adapters
+//        LTX_MODELS_ROOT=<dir>                         weights root (default: ModelsRoot.swift); adapters
 //                                                      from <root>/ltx-lora-cache unless LTX_LORA_CACHE is set
 //        LTX_IC_BASE=1                                 SAME prompt/seed with NO adapter (the A/B control arm)
 //        LTX_IC_SAVE=<path.mp4>                        write the artifact (never swallowed)
@@ -38,8 +38,8 @@ import LTX2
 
 func icSpot25(width: Int, height: Int, frames: Int) async throws {
     let env = ProcessInfo.processInfo.environment
-    // LTX_MODELS_ROOT relocates the archive layout, as in --t2v-spot25 (default: the Satechi volume).
-    let modelsRoot = env["LTX_MODELS_ROOT"].flatMap { $0.isEmpty ? nil : $0 } ?? "/Volumes/Satechi/Models"
+    // LTX_MODELS_ROOT relocates the archive layout, as in --t2v-spot25 (default: ModelsRoot.swift).
+    let modelsRoot = ltxModelsRoot
     let base = "\(modelsRoot)/xocialize"
     let adapter = env["LTX_IC_ADAPTER"] ?? "ingredients"
     let baseArm = env["LTX_IC_BASE"] == "1"

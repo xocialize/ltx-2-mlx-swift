@@ -140,7 +140,7 @@ func enhancerBatteryRun(gemmaDir: String?, maxTokens: Int, seed: UInt64,
     let genBytes = safetensorBytes(genDir)
 
     // The 2.5 encoder, for the structural half of C5. Read only — no weights, no GPU.
-    let ltxDir = URL(fileURLWithPath: "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx")
+    let ltxDir = URL(fileURLWithPath: "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx")
     let g4Dir = LTX2Pipeline.gemma4Dir(ltxDir: ltxDir)
     let g4Type = FileManager.default.fileExists(atPath: g4Dir.path)
         ? (modelType(ofDirectory: g4Dir) ?? "<no config.json>") : "<tree absent>"

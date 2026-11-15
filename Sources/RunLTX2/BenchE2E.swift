@@ -55,7 +55,7 @@ import LTX2
 /// is USB, and bf16's working set faulting from it inside live command buffers IS the watchdog
 /// abort. Point LTX_BENCH_BASE at a fast-storage staging tree for bf16 arms.
 func benchBase() -> String {
-    ProcessInfo.processInfo.environment["LTX_BENCH_BASE"] ?? "/Volumes/Satechi/Models/dgrauet"
+    ProcessInfo.processInfo.environment["LTX_BENCH_BASE"] ?? "\(ltxModelsRoot)/dgrauet"
 }
 func benchGemma() -> String {
     ProcessInfo.processInfo.environment["LTX_BENCH_GEMMA"] ?? defaultGemma
@@ -64,7 +64,7 @@ func benchGemma() -> String {
 /// The 2.5 trees live under a different namespace than the 2.3 ones (`xocialize` vs `dgrauet`),
 /// which is why `model=` carries a root rather than just a name.
 func benchBase25() -> String {
-    ProcessInfo.processInfo.environment["LTX_BENCH_BASE_25"] ?? "/Volumes/Satechi/Models/xocialize"
+    ProcessInfo.processInfo.environment["LTX_BENCH_BASE_25"] ?? "\(ltxModelsRoot)/xocialize"
 }
 
 struct BenchArm {

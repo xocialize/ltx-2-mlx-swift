@@ -19,7 +19,7 @@ import LTX2
 func vaeEncodePeakProbe(width: Int, height: Int, frames: Int) throws {
     let env = ProcessInfo.processInfo.environment
     let weights = env["LTX_ENC_WEIGHTS"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/vae_encoder.safetensors"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/vae_encoder.safetensors"
     let onCPU = env["LTX_ENC_CPU"] == "1"
     let info = GPU.deviceInfo()
     print(String(format: "[vae-encode-peak] %dx%dx%df · %@ · maxRecommendedWorkingSet %.2f GB (gc limit ≈ %.2f GB)",
@@ -90,7 +90,7 @@ func relL2(_ a: MLXArray, _ b: MLXArray) -> Float {
 ///     apart on this mlx — that is exit 2, INCONCLUSIVE, not a pass.
 func vaeEncodeExactGate() throws {
     let weights = ProcessInfo.processInfo.environment["LTX_ENC_WEIGHTS"]
-        ?? "/Volumes/Satechi/Models/xocialize/ltx-2.5-mlx/vae_encoder.safetensors"
+        ?? "\(ltxModelsRoot)/xocialize/ltx-2.5-mlx/vae_encoder.safetensors"
     var enc = try VideoVAEEncoder.load(path: URL(fileURLWithPath: weights))
     let pixels = MLXRandom.uniform(Float(-1) ..< Float(1), [1, 3, 17, 256, 256], key: MLXRandom.key(7))
     eval(pixels)
