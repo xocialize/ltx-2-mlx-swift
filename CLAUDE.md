@@ -34,8 +34,9 @@ and the published 2.3 repos are unchanged. Retired, because each reads a 2.3 tre
   and need `LTX_MODELS_DIR`.
 
 Not affected: every 2.5 gate, and the fixture gates that load no weight tree (`--dit-tiny-gate`,
-`--ic-tiny-gate`, `--stream-tiny-gate`). The Gemma-3 encoder and the 2.3 granules are still on
-disk. A change to a shared path can no longer be shown harmless to 2.3 on real weights here; say
+`--ic-tiny-gate`, `--stream-tiny-gate`). The Gemma-3 encoder is still on disk. The local 2.3
+granules (`ltx-granules/{bf16,q4,q8}`) were deleted on 2026-11-16; `xocialize/ltx-2.3-granules`
+is the published copy. A change to a shared path can no longer be shown harmless to 2.3 on real weights here; say
 that in the commit instead of claiming it.
 
 ### The 2.5 gate board (all green)
