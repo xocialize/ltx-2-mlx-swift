@@ -15,6 +15,29 @@ the in-dir `gemma4-12b-ltx-v1/`, never a path-name parse), so 2.3 output is byte
 verified: `--e2e25` reproduces its documented baseline exactly after the audio-optional
 refactor touched every transformer block. Do not start new feature work on 2.3.
 
+⟲ **The 2.3 real-weight gates are RETIRED on this station (2026-11-16, operator decision,
+AB-T-0494).** The `dgrauet/ltx-2.3-mlx{,-q8,-q4}` trees are on no mounted volume and are not being
+restored. "Still gates" above is history: the 2.3 board last ran in full on 2026-08-03. The code
+and the published 2.3 repos are unchanged. Retired, because each reads a 2.3 tree:
+
+- **Component gates:** `--connector-gate`, `--text-encode-gate`, `--dit-full-gate`, `--dit-q8-gate`,
+  `--dit-q4-gate`, `--dit-pertoken-gate`, `--vae-decode-gate`, `--vae-decode-pruna-gate`,
+  `--vae-encode-gate`, `--vae-chunk-gate`, `--audio-vae-decode-gate`, `--audio-vae-encode-gate`,
+  `--audio-decode-gate`, `--vocoder-gate`, `--upsampler-gate`, `--upsampler-variants-gate`,
+  `--upscale-step-gate`, `--ic-ingest-gate`, `--lora-gate`, `--e2e-gate`.
+- **Spots and benches:** `--t2v-spot`, `--i2v-spot`, `--mem-bench`, `--speed-bench`,
+  `--vae-decode-bench`, `--two-stage-variants-gate`.
+- **2.3 arms of shared harnesses:** `--stream-parity-gate` / `--stream-auto-gate` /
+  `--stream-budget-gate` with quant `bf16|q8|q4` (the `25-*` quants are unaffected),
+  `--dit25-probe bf16-23|q8-23`, the 2.3 model in `--bench-e2e`, the 2.3 arm of `--outpaint25`.
+  `--pipeline-25-gate` prints SKIP for its 2.3 directory. The tile gates default to the 2.3 tree
+  and need `LTX_MODELS_DIR`.
+
+Not affected: every 2.5 gate, and the fixture gates that load no weight tree (`--dit-tiny-gate`,
+`--ic-tiny-gate`, `--stream-tiny-gate`). The Gemma-3 encoder and the 2.3 granules are still on
+disk. A change to a shared path can no longer be shown harmless to 2.3 on real weights here; say
+that in the commit instead of claiming it.
+
 ### The 2.5 gate board (all green)
 
 | gate | covers |
