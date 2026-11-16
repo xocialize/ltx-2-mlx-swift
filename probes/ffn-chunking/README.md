@@ -89,12 +89,51 @@ checkpoints at 70,000 tokens, lazy and eval, max|Δ| must be 0. Mutation-tested 
 remainder split in `FFChunking.ranges` fails 5 checks (`gate-mutation-remainder-split.out`),
 reversed concat order fails 6 (`gate-mutation-reversed-concat.out`).
 
+## Whole run at the max128 corner (2026-11-16)
+
+`RunLTX2 --t2v-spot25 1920 1088 481` under `LTX_TIER=max128 LTX_PHYS_TRACE=1`: the real pipeline
+through `MLXLTX2Package`, bf16, DiT streamed with the gate pinned, bf16 encoder, 2×2 decode tiling.
+Release binaries of `1ec183f` (v0.21.0, no chunking) and `c27c198` (v0.22.0), identical
+`Package.resolved`. One run per arm, serial, each started after 180 s of idle GPU with 94% of
+memory free. Peak is the `phys_footprint` high-water; the denoise figure is the high-water before
+the decode starts (stage 2 ends near 3,130 s).
+
+| arm | whole-run peak | denoise high-water | binds | run time |
+|---|---|---|---|---|
+| v0.21.0, chunking off | 63.13 GB | 61.20 GB | decode | 4054.2 s |
+| v0.22.0, chunking on | 63.13 GB | 47.09 GB | decode | 4055.3 s |
+| v0.22.0 + `LTX_STREAM_MUX=1` | **47.33 GB** | 47.33 GB | denoise | 4067.9 s |
+
+- **Chunking alone does not move the corner's whole-run peak.** The decode sets it, at 63.13 GB in
+  both binaries, reached on the last decode step. Chunking lowers the denoise phase by 14.1 GB, so
+  the margin between denoise and the decode peak goes from 1.9 to 16.0 GB. Run time is unchanged.
+- **The decode peak is held output.** On the materialized path the high-water climbs about 1.7 GB
+  every 64.7 s through the decode (47.66 → 63.13 GB over the last ten steps on v0.22.0): decoded
+  chunks are kept and concatenated at the end. The fp32 pixel volume at this geometry is 12.06 GB.
+- **Streaming the decode into the MP4 writer removes it.** With `LTX_STREAM_MUX=1` (an existing
+  opt-in, plain t2v only) the decode stays under the denoise high-water and the run peaks at
+  47.33 GB: 15.8 GB (25%) under the shipped path, for +12.6 s (+0.3%). The post-run retained
+  figure is 3.37 GB against 0.79 GB.
+- **The two changes need each other at this corner.** Streamed decode without chunking would peak
+  at the unchunked denoise high-water, 61.20 GB. That arm was not run: the env var changes only
+  the decode, and the decode code is the same in both binaries. Chunking without streamed decode is
+  the 63.13 GB row.
+- **Against the old declaration.** The corner measured 74.39 GB before the decode fix (22f8553).
+  63.13 GB is the post-fix number for the shipped path, and the two binaries agree on it to
+  0.00 GB. This is the 481f point of AB-T-0340 lane 1. The hints are not changed here.
+
+Not shown: output identity of the streamed-mux run against the materialized run (no MP4 was
+saved; all three report 35.4 MB); the 121f and 241f points; any mode other than plain t2v. The
+streamed decode does not cover i2v, keyframes, IC or a muxed dub, so a tier figure, which must
+cover every mode the tier can reach, cannot drop on this alone.
+
+Files: `wholerun-max128-1920x1088x481-v0.21.0-chunk-off.out`, `…-v0.22.0-chunk-on.out`,
+`…-v0.22.0-chunk-on-streammux.out`.
+
 ## What this does not show
 
-- **Whole-run peak.** The probe measures the DiT forward only. The max128 corner's declared
-  whole-run peak is 74.39 GB and the unchunked forward peaks at 60.86 GB, so another phase
-  (decode) most likely binds there and the declaration would not move. That is an inference, not a
-  measurement; `--t2v-spot25` owns it (AB-T-0340).
+- **Whole-run peak below the corner.** Only 1920x1088x481 was run whole. At 1920x1088x241 (63,240
+  tokens) chunking does not engage.
 - **Where it engages.** Only streams of 65,536+ video tokens: 1920x1088 from 257 frames up. No
   `standard64`, `balanced32` or `compact24` geometry reaches it.
 - **GPU sharing.** Another session's worker used the GPU in short bursts during the session. Step
