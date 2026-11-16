@@ -1,0 +1,266 @@
+[queue] GPU idle for 180 s after waiting 190 s · start 2026-11-16 01:12:04 · binary /Volumes/Satechi/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/.build/ab-t-0484/src-v0.21.0/.build/release/RunLTX2
+[queue] memory before: System-wide memory free percentage: 94%
+[t2v-spot25] request 1920×1088×481f bf16 · tier=max128 · DiT lane: STREAMED · encoder: ltx-2.5-mlx · mode: t2v · gate: forceStream
+[t2v-spot25] granules /Volumes/DEV_VOL1/Models/Models/ltx-granules-25/bf16
+[t2v-spot25] budget tier=max128 → 115.45 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · legacy 0.7×nominal 89.60 GB
+[t2v-spot25] prewarm 9.7s (13 files, transformer excluded by streamedBlocks)
+[PHYS-HW] +    0.0s  0.11 GB
+[PHYS-HW] +    0.0s  0.12 GB
+[PHYS-HW] +    0.1s  0.12 GB
+[PHYS-HW] +    0.1s  0.48 GB
+[PHYS-HW] +    0.1s  1.34 GB
+[PHYS-HW] +    0.2s  2.20 GB
+[PHYS-HW] +    0.2s  3.21 GB
+[PHYS-HW] +    0.2s  3.33 GB
+[PHYS-HW] +    0.3s  3.34 GB
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[PHYS-HW] +    0.3s  3.35 GB
+[PHYS-HW] +    0.3s  4.21 GB
+[BlockStreamer] streaming set 0 from bf16
+[PHYS-HW] +    0.4s  4.21 GB
+[PHYS-HW] +    0.4s  4.21 GB
+[PHYS-HW] +    0.5s  4.21 GB
+[PHYS-HW] +    0.5s  4.21 GB
+[PHYS-HW] +    0.5s  4.21 GB
+[PHYS-HW] +    0.6s  4.21 GB
+[PHYS-HW] +    0.6s  4.21 GB
+[PHYS-HW] +    0.6s  4.21 GB
+[PHYS-HW] +    0.7s  4.21 GB
+[PHYS-HW] +    0.7s  4.21 GB
+[PHYS-HW] +    0.7s  4.21 GB
+[PHYS-HW] +    0.8s  4.21 GB
+[PHYS-HW] +    0.8s  4.21 GB
+[PHYS-HW] +    0.8s  4.21 GB
+[PHYS-HW] +    0.9s  4.21 GB
+[PHYS-HW] +    0.9s  4.21 GB
+[PHYS-HW] +    0.9s  4.21 GB
+[PHYS-HW] +    1.0s  4.21 GB
+[PHYS-HW] +    1.0s  4.21 GB
+[PHYS-HW] +    1.0s  4.21 GB
+[PHYS-HW] +    1.1s  4.21 GB
+[PHYS-HW] +    1.1s  4.21 GB
+[PHYS-HW] +    1.1s  4.21 GB
+[PHYS-HW] +    1.2s  4.21 GB
+[PHYS-HW] +    1.2s  4.21 GB
+[PHYS-HW] +    1.3s  4.21 GB
+[PHYS-HW] +    1.3s  4.21 GB
+[PHYS-HW] +    1.5s  4.21 GB
+[PHYS-HW] +    1.5s  4.21 GB
+[PHYS-HW] +    1.6s  4.88 GB
+[PHYS-HW] +    1.7s  4.89 GB
+[PHYS-HW] +    1.7s  4.89 GB
+[PHYS-HW] +    1.8s  4.89 GB
+[PHYS-HW] +    1.8s  4.96 GB
+[PHYS-HW] +    1.9s  5.13 GB
+[PHYS-HW] +    1.9s  5.15 GB
+[PHYS-HW] +    2.0s  5.15 GB
+[PHYS-HW] +    2.1s  6.33 GB
+[PHYS-HW] +    2.1s  6.35 GB
+[PHYS-HW] +    2.2s  6.36 GB
+[PHYS-HW] +    2.3s  6.69 GB
+[PHYS-HW] +    2.7s  6.69 GB
+[PHYS-HW] +   11.3s  7.48 GB
+[PHYS-HW] +   11.3s  8.90 GB
+[PHYS-HW] +   11.4s  10.30 GB
+[PHYS-HW] +   11.4s  11.74 GB
+[PHYS-HW] +   11.4s  13.06 GB
+[PHYS-HW] +   11.5s  14.46 GB
+[PHYS-HW] +   11.5s  15.73 GB
+[PHYS-HW] +   11.5s  17.17 GB
+[PHYS-HW] +   11.6s  18.54 GB
+[PHYS-HW] +   11.6s  19.90 GB
+[PHYS-HW] +   11.6s  20.82 GB
+[PHYS-HW] +   11.7s  21.81 GB
+[PHYS-HW] +   11.7s  22.97 GB
+[PHYS-HW] +   11.7s  24.00 GB
+[PHYS-HW] +   11.8s  25.31 GB
+[PHYS-HW] +   11.8s  25.96 GB
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[BlockStreamer] streaming set 0 from bf16
+[progress] encode (no sub-steps)
+[progress] encode 1/48
+[progress] encode 2/48
+[progress] encode 3/48
+[progress] encode 4/48
+[progress] encode 5/48
+[progress] encode 6/48
+[progress] encode 7/48
+[progress] encode 8/48
+[progress] encode 9/48
+[progress] encode 10/48
+[progress] encode 11/48
+[progress] encode 12/48
+[progress] encode 13/48
+[progress] encode 14/48
+[progress] encode 15/48
+[progress] encode 16/48
+[progress] encode 17/48
+[progress] encode 18/48
+[progress] encode 19/48
+[progress] encode 20/48
+[progress] encode 21/48
+[progress] encode 22/48
+[progress] encode 23/48
+[progress] encode 24/48
+[progress] encode 25/48
+[progress] encode 26/48
+[progress] encode 27/48
+[progress] encode 28/48
+[progress] encode 29/48
+[progress] encode 30/48
+[progress] encode 31/48
+[progress] encode 32/48
+[progress] encode 33/48
+[progress] encode 34/48
+[progress] encode 35/48
+[progress] encode 36/48
+[progress] encode 37/48
+[progress] encode 38/48
+[progress] encode 39/48
+[progress] encode 40/48
+[progress] encode 41/48
+[progress] encode 42/48
+[progress] encode 43/48
+[progress] encode 44/48
+[progress] encode 45/48
+[progress] encode 46/48
+[progress] encode 47/48
+[progress] encode 48/48
+[t2v-spot25] phys-after-load=5.51 GB · post-run retain=0.82 GB (both reported for comparison; the DECLARE line below uses neither)
+[PHYS-HW] +    0.0s  0.82 GB
+[PHYS-HW] +    0.0s  2.14 GB
+[PHYS-HW] +    0.1s  3.73 GB
+[PHYS-HW] +    0.1s  5.25 GB
+[PHYS-HW] +    0.1s  6.87 GB
+[PHYS-HW] +    0.2s  8.13 GB
+[PHYS-HW] +    0.2s  9.69 GB
+[PHYS-HW] +    0.2s  11.23 GB
+[PHYS-HW] +    0.3s  12.88 GB
+[PHYS-HW] +    0.3s  14.07 GB
+[PHYS-HW] +    0.3s  15.25 GB
+[PHYS-HW] +    0.4s  16.31 GB
+[PHYS-HW] +    0.4s  17.90 GB
+[PHYS-HW] +    0.4s  19.45 GB
+[PHYS-HW] +    0.5s  21.05 GB
+[PHYS-HW] +    0.5s  22.58 GB
+[PHYS-HW] +    0.6s  24.19 GB
+[PHYS-HW] +    0.6s  24.31 GB
+[PHYS-HW] +    0.9s  24.31 GB
+[PHYS-HW] +    1.0s  24.44 GB
+[PHYS-HW] +    1.0s  24.47 GB
+[PHYS-HW] +    1.1s  24.57 GB
+[PHYS-HW] +    1.1s  24.60 GB
+[PHYS-HW] +    1.1s  24.63 GB
+[PHYS-HW] +    1.2s  24.66 GB
+[PHYS-HW] +    1.2s  24.68 GB
+[PHYS-HW] +    1.2s  24.72 GB
+[PHYS-HW] +    1.3s  24.75 GB
+[PHYS-HW] +    1.3s  24.78 GB
+[PHYS-HW] +    1.3s  24.80 GB
+[PHYS-HW] +    1.4s  24.83 GB
+[PHYS-HW] +    1.4s  24.87 GB
+[PHYS-HW] +    1.5s  24.88 GB
+[BlockStreamer] bound 48 blocks · group=2 · slots 2×1475 MiB (2.88 GiB resident) · sweep 34.56 GiB · block-resident 18450 KiB (12 tensors/block)
+[progress] denoise 1/8  stage 1/2
+[BlockStreamer] streaming set 0 from bf16
+[progress] denoise 2/8  stage 1/2
+[progress] denoise 3/8  stage 1/2
+[progress] denoise 4/8  stage 1/2
+[progress] denoise 5/8  stage 1/2
+[progress] denoise 6/8  stage 1/2
+[progress] denoise 7/8  stage 1/2
+[progress] denoise 8/8  stage 1/2
+[progress] upsample (no sub-steps)
+[progress] denoise 1/3  stage 2/2
+[progress] denoise 2/3  stage 2/2
+[progress] denoise 3/3  stage 2/2
+[progress] decode (no sub-steps)
+[progress] decode 1/32
+[progress] decode 2/32
+[progress] decode 3/32
+[progress] decode 4/32
+[progress] decode 5/32
+[progress] decode 6/32
+[progress] decode 7/32
+[progress] decode 8/32
+[progress] decode 9/32
+[progress] decode 10/32
+[progress] decode 11/32
+[progress] decode 12/32
+[progress] decode 13/32
+[progress] decode 14/32
+[progress] decode 15/32
+[progress] decode 16/32
+[progress] decode 17/32
+[progress] decode 18/32
+[progress] decode 19/32
+[progress] decode 20/32
+[progress] decode 21/32
+[progress] decode 22/32
+[progress] decode 23/32
+[progress] decode 24/32
+[progress] decode 25/32
+[progress] decode 26/32
+[progress] decode 27/32
+[progress] decode 28/32
+[progress] decode 29/32
+[progress] decode 30/32
+[progress] decode 31/32
+[progress] decode 32/32
+[progress] postprocess (no sub-steps)
+[PHYS-HW] +  585.6s  24.95 GB
+[PHYS-HW] +  586.1s  25.07 GB
+[PHYS-HW] +  586.6s  25.15 GB
+[PHYS-HW] +  587.3s  25.79 GB
+[PHYS-HW] +  587.3s  27.76 GB
+[PHYS-HW] +  587.4s  27.94 GB
+[PHYS-HW] +  587.4s  29.38 GB
+[PHYS-HW] +  587.4s  30.94 GB
+[PHYS-HW] +  587.5s  33.06 GB
+[PHYS-HW] +  587.5s  34.65 GB
+[PHYS-HW] +  587.5s  36.74 GB
+[PHYS-HW] +  587.6s  38.16 GB
+[PHYS-HW] +  602.6s  38.38 GB
+[PHYS-HW] +  602.7s  38.40 GB
+[PHYS-HW] +  602.7s  38.70 GB
+[PHYS-HW] +  602.9s  38.73 GB
+[PHYS-HW] +  603.0s  39.13 GB
+[PHYS-HW] +  603.0s  39.30 GB
+[PHYS-HW] +  603.1s  40.58 GB
+[PHYS-HW] +  603.1s  41.33 GB
+[PHYS-HW] +  603.1s  41.42 GB
+[PHYS-HW] +  603.2s  41.68 GB
+[PHYS-HW] +  603.2s  42.73 GB
+[PHYS-HW] +  603.2s  42.98 GB
+[PHYS-HW] +  603.3s  43.75 GB
+[PHYS-HW] +  603.4s  44.23 GB
+[PHYS-HW] +  603.4s  46.88 GB
+[PHYS-HW] +  603.4s  48.93 GB
+[PHYS-HW] +  603.5s  50.78 GB
+[PHYS-HW] +  603.5s  51.92 GB
+[PHYS-HW] +  603.5s  53.87 GB
+[PHYS-HW] +  603.6s  56.50 GB
+[PHYS-HW] +  603.6s  59.26 GB
+[PHYS-HW] +  603.6s  60.08 GB
+[PHYS-HW] +  603.7s  60.37 GB
+[PHYS-HW] +  604.9s  60.41 GB
+[PHYS-HW] +  620.1s  60.53 GB
+[PHYS-HW] +  620.3s  60.57 GB
+[PHYS-HW] +  620.8s  60.90 GB
+[PHYS-HW] +  622.3s  60.92 GB
+[PHYS-HW] +  625.7s  60.92 GB
+[PHYS-HW] +  637.7s  61.04 GB
+[PHYS-HW] +  637.8s  61.07 GB
+[PHYS-HW] + 1443.4s  61.11 GB
+[PHYS-HW] + 1443.5s  61.14 GB
+[PHYS-HW] + 2283.3s  61.17 GB
+[PHYS-HW] + 2283.4s  61.20 GB
+[PHYS-HW] + 3912.9s  61.41 GB
+[PHYS-HW] + 3977.5s  62.72 GB
+[PHYS-HW] + 3977.6s  63.13 GB
+[t2v-spot25] run 4054.2s  mp4 35.4 MB
+[t2v-spot25] SPLIT lane=STREAMED mode=t2v quant=bf16 enc=bf16 · resident(held)=0.82 GB act=62.31 GB peak=63.13 GB · [afterLoad=5.51 retain=0.82 — neither is declarable under eviction]
+[t2v-spot25] DECLARE → residentBytes=0.82 GB peakActivationBytes=62.31 GB
+[t2v-spot25] ACCEPTANCE tier=max128 budget=115.45 GB (governor: Metal recommendedMaxWorkingSetSize on this host) · measured stage-max 63.13 GB → ✅ WITHIN · legacy 0.7×nominal denominator 89.60 GB
+[t2v-spot25] ⚠️ one geometry, one run — a tier DECLARATION needs the profile's own clamped geometry and a repeat, not this single point
+[queue] exit 0 · end 2026-11-16 02:22:02
