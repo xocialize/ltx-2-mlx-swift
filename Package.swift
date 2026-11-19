@@ -38,9 +38,17 @@ let package = Package(
         .library(name: "MLXLTX2", targets: ["MLXLTX2"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMinor(from: "0.32.3")),
-        // 3.32.3 is the first tag carrying #387 (`6608a35`) and the Gemma-4 SPI (#530); it
-        // requires mlx-swift 0.32.3.
+        // The fleet's mlx-swift fork, 0.33.1 = upstream 0.33.0 with the vendored MLX's head-dim-split
+        // attention routes disabled (AB-R-1009, AB-D-0264). Upstream 0.33.0 aborts on M5 in this
+        // package's Gemma encoders (head 256, 1024-token masked prefill), and its pending fix gives
+        // the Gemma-3 tap a mean cosine of 0.925. Same package identity as ml-explore's URL; a ROOT
+        // declaration of ml-explore's URL wins and brings the unpatched build back, so hosts that
+        // declare mlx-swift should name this fork. Back to upstream once a release gates clean.
+        .package(url: "https://github.com/xocialize/mlx-swift", .upToNextMinor(from: "0.33.1")),
+        // 3.32.3 is the first tag carrying #387 (`6608a35`) and the Gemma-4 SPI (#530). The floor is
+        // 3.33.0, the first release on mlx-swift 0.33 (the fork above needs it): the SPI is unchanged
+        // and our Gemma-3 config sets `rope_scaling`, so #723's `rope_parameters` fallback does not
+        // apply. The cap stays at the next minor because the SPI is not covered by semver.
         // ⚠️ Traits disabled deliberately — because we do not CONSUME the adapter. mlx-swift-lm's
         // default-on `FoundationModelsIntegration` trait builds MLXFoundationModels, the adapter
         // for APPLE's FoundationModels framework; LTX consumes only MLXLLM / MLXLMCommon /
@@ -49,7 +57,7 @@ let package = Package(
         // 🚨 URL + VERSION, NOT a path dep — a path dependency makes this package externally
         // UNCONSUMABLE (AB-T-0073). The version pin is consumable: upstream's `unsafeFlags(["-w"])`
         // sits only on the MLXCXGrammar target, which LTX does not link.
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", "3.32.3" ..< "3.33.0", traits: []),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", "3.33.0" ..< "3.34.0", traits: []),
         // mlx-swift-lm 3.x decoupled the HF stack — the consumer provides these for
         // the #huggingFaceLoadModel macro (same pins as mlx-qwen-llm-swift).
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
@@ -82,20 +90,22 @@ let package = Package(
         // 0.70.0 = contract 1.55.0: typed adapters (1.53.0 — `AdapterSupport`, `resolvedAdapters`,
         // `AdapterDescriptor`, the ADP gate) plus `conditioningGroups` (1.55.0), which Ingredients'
         // sheet-or-subjects slots need (AB-A-0197).
-        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.70.0"),
+        // ≥0.82.1: mlx-swift from the fleet's 0.33.1 fork (AB-D-0264), the same floor this package
+        // declares above.
+        .package(url: "https://github.com/xocialize/mlx-engine-swift", from: "0.82.1"),
         // HV2 weight streaming substrate (BlockStreamKit) — the model-agnostic core
         // extracted from this package's in-tree implementation (and wan-core's) once the
         // second consumer pinned the seam. Versioned dep since 2026-08-14: the kit repo
         // went public + tagged v0.5.0, which is the condition the old path dep was
         // waiting on (a URL dep on a private repo needs git creds at SPM resolve).
-        .package(url: "https://github.com/xocialize/mlx-block-stream-swift", from: "0.5.1"),
+        .package(url: "https://github.com/xocialize/mlx-block-stream-swift", from: "0.5.2"),
         // Shared env-gated profiling harness (timing + phys_footprint/paging instrumentation).
         // Faithful superset of the old in-tree LTX2Profiler — same manual span API + Row fields +
         // ⚠PAGING flag + CSV export, plus region/barrier closures. Env var is MLX_PROFILE (not
         // LTX_PROFILE); MLX_PROFILE=csv writes MLX_PROFILE_CSV (default /tmp/mlx-profile.csv).
         .package(url: "https://github.com/xocialize/mlx-profiling", from: "0.1.0"),
         // Exact small-depth conv3d for the video VAE (mlx#3785 sends it to lossy Winograd).
-        .package(url: "https://github.com/xocialize/mlx-exact-conv-swift", from: "0.1.0"),
+        .package(url: "https://github.com/xocialize/mlx-exact-conv-swift", from: "0.1.2"),
     ],
     targets: [
         .target(
