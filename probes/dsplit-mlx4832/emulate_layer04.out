@@ -1,0 +1,12 @@
+padded rows: 1003 x 16 heads
+  emulated unfused vs chunked512 (MLX):  cos 0.933189  maxAbs 17.0552
+  emulated NAX     vs fused d-split:     cos 0.961875  maxAbs 16.9447
+  emulated unfused vs emulated NAX:      cos 0.961736
+  MLX chunked512   vs MLX fused:         cos 0.933482
+  (head,row) pairs whose surviving-key set size differs: 1963 / 16048
+  e.g. head 10, row 17: unfused keeps 1 keys, NAX keeps 39; max scaled score 32.55
+  uniform-over-mask-max vs chunked512:   cos 0.999997  maxAbs 0.1517
+  uniform-over-mask-max vs fused d-split: cos 0.933484
+  NAX emulation, fp64- vs fp32-accumulated scores: cos 1.000000  (keys flipped across the grid: 0)
+  exact fp64 vs chunked512 (uniform):     cos 0.564641
+  exact fp64 vs fused d-split:            cos 0.606520

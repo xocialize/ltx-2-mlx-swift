@@ -1,0 +1,11 @@
+[gemma-gate] goldens: /Volumes/Satechi/Development/mlxengine-video-ltx/LTX_DEV/ltx-2-mlx-swift/parity/goldens/text_encode/goldens.safetensors
+[gemma-gate] gemma:   /Volumes/DEV_VOL1/Models/Models/mlx-community/gemma-3-12b-it-4bit
+[gemma-gate] got 49 states, shape [1, 1024, 3840]
+[gemma-gate] layer 00 cosine=1.000000 (valid-only 1.000000, padded 1.000000) maxAbs=0.0000
+[gemma-gate] layer 01 cosine=1.000000 (valid-only 1.000000, padded 1.000000) maxAbs=1.0000
+[gemma-gate] layer 02 cosine=1.000000 (valid-only 1.000000, padded 1.000000) maxAbs=2.0000
+[gemma-gate] layer 48 cosine=0.999948 (valid-only 0.999992, padded 0.999946) maxAbs=6144.0000
+[gemma-gate] mean cosine=0.999866  worst=0.999338 (layer 25)  maxAbs=14336.0000
+[gemma-gate] valid-only (21 of 1024 positions): mean=0.999999  worst=0.999992 (layer 48)  maxAbs=2048.0000
+[gemma-gate] padded-only (1003 positions): mean=0.999850  worst=0.999268 (layer 25)
+[gemma-gate] PASS ✅
