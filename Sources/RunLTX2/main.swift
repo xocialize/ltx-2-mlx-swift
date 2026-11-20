@@ -113,16 +113,54 @@ func gemmaGate(goldensPath: String, gemmaDir: String) async throws {
     eval(states)
     print("[gemma-gate] got \(states.count) states, shape \(states[0].shape)")
 
+    // Valid-only and padded-only cosines, alongside the whole-array one (the --gemma4-gate
+    // split). The fixture prompt is 21 tokens left-padded to 1024, so ~98% of the whole-array
+    // figure is FULLY MASKED query rows — and their output is not defined under the finite
+    // -1e9 mask: MLX's unfused path averages them uniformly (bf16 loses the scores), while the
+    // fused steel/NAX kernels keep scores above ~44 (fp32, log2 domain). mlx v0.32.4 routes
+    // head-256 qL>=1024 to the fused head-dim-split kernel, which moves the padded rows only
+    // (whole-array 0.929, valid 0.999998 on prebuilt mlx 0.32.4; probes/dsplit-mlx4832/,
+    // AB-R-1009). The connector zeroes padded positions and replaces them with registers, so
+    // the valid figure is the one that reaches the pipeline. The count is printed, not assumed.
+    let maskInts = mask.reshaped(-1).asArray(Int32.self)
+    let validIdx = MLXArray((0 ..< maskInts.count).filter { maskInts[$0] != 0 }.map { Int32($0) })
+    let padIdx = MLXArray((0 ..< maskInts.count).filter { maskInts[$0] == 0 }.map { Int32($0) })
+    let hasPad = padIdx.size > 0
+
     var worstCos: Float = 1, sumCos: Float = 0, worstMax: Float = 0, worstIdx = 0
+    var worstValid: Float = 1, sumValid: Float = 0, worstValidIdx = 0, worstValidMax: Float = 0
+    var worstPad: Float = 1, sumPad: Float = 0, worstPadIdx = 0
     for i in 0 ..< states.count {
         guard let exp = goldens[String(format: "gemma_hidden_%02d", i)] else { fatalError("missing golden \(i)") }
         let c = cosine(states[i], exp), m = maxAbs(states[i], exp)
+        let sv = states[i].take(validIdx, axis: 1), ev = exp.take(validIdx, axis: 1)
+        let cv = cosine(sv, ev), mv = maxAbs(sv, ev)
+        let cp = hasPad ? cosine(states[i].take(padIdx, axis: 1), exp.take(padIdx, axis: 1)) : 1
         sumCos += c; worstMax = max(worstMax, m)
+        sumValid += cv; worstValidMax = max(worstValidMax, mv)
+        sumPad += cp
         if c < worstCos { worstCos = c; worstIdx = i }
-        if i < 3 || i == states.count - 1 { print(String(format: "[gemma-gate] layer %02d cosine=%.6f maxAbs=%.4f", i, c, m)) }
+        if cv < worstValid { worstValid = cv; worstValidIdx = i }
+        if cp < worstPad { worstPad = cp; worstPadIdx = i }
+        if i < 3 || i == states.count - 1 {
+            print(String(format: "[gemma-gate] layer %02d cosine=%.6f (valid-only %.6f, padded %.6f) maxAbs=%.4f",
+                         i, c, cv, cp, m))
+        }
     }
+    let n = Float(states.count)
     print(String(format: "[gemma-gate] mean cosine=%.6f  worst=%.6f (layer %d)  maxAbs=%.4f",
-                 sumCos / Float(states.count), worstCos, worstIdx, worstMax))
+                 sumCos / n, worstCos, worstIdx, worstMax))
+    print(String(format: "[gemma-gate] valid-only (%d of %d positions): mean=%.6f  worst=%.6f (layer %d)  maxAbs=%.4f",
+                 validIdx.size, maskInts.count, sumValid / n, worstValid, worstValidIdx, worstValidMax))
+    if hasPad {
+        print(String(format: "[gemma-gate] padded-only (%d positions): mean=%.6f  worst=%.6f (layer %d)",
+                     padIdx.size, sumPad / n, worstPad, worstPadIdx))
+    }
+    // PASS/FAIL stays on the whole-array cosine, deliberately: that is the contract every
+    // earlier receipt of this gate was measured against (0.999866 / 0.999338 on mlx-swift
+    // 0.32.3). Re-defining it would make past and future runs incomparable. Read the
+    // valid-only line to judge a change that moves only padded rows, such as re-enabling
+    // the head-dim-split SDPA route (AB-D-0264).
     let pass = worstCos >= 0.999
     print(pass ? "[gemma-gate] PASS ✅" : "[gemma-gate] FAIL ❌")
     if !pass { exit(1) }
